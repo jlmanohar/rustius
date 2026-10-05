@@ -3,8 +3,9 @@
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
   import { invoke } from '@tauri-apps/api/core';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { listen } from '@tauri-apps/api/event';
   import { appState } from '../stores/appState.svelte';
+  import { DisposableStore } from '../utils/disposable';
   import { RotateCcw, X } from '@lucide/svelte';
   import '@xterm/xterm/css/xterm.css';
   import type { TabSession } from '../types';
@@ -14,17 +15,21 @@
   let terminalContainer: HTMLDivElement | null = $state(null);
   let term: Terminal | null = null;
   let fitAddon: FitAddon | null = null;
-  let resizeObserver: ResizeObserver | null = null;
-  let unlistenData: UnlistenFn | null = null;
-  let unlistenExit: UnlistenFn | null = null;
-  let onDataDisposable: { dispose(): void } | null = null;
   let isConnecting = false;
   let isTauriLive = false;
   let isDisconnected = $state(false);
 
+  // Disposable stores:
+  // componentDisposables manages the lifetime of DOM listeners, observers, and the Terminal instance.
+  // sessionDisposables manages the lifetime of data streams (Tauri data events, onData handlers) for a single connection attempt.
+  const componentDisposables = new DisposableStore();
+  const sessionDisposables = new DisposableStore();
+  let sessionGeneration = 0;
+
   $effect(() => {
-    if (appState.activeTabId === session.id && term) {
+    if (appState.activeTabId === session.id && term && !componentDisposables.isDisposed) {
       setTimeout(() => {
+        if (componentDisposables.isDisposed) return;
         try {
           fitAddon?.fit();
           term?.focus();
@@ -34,28 +39,31 @@
   });
 
   async function startSession() {
-    if (isConnecting) return;
+    if (isConnecting || componentDisposables.isDisposed) return;
     isConnecting = true;
+    const currentGen = ++sessionGeneration;
+
     try {
       isDisconnected = false;
       session.status = 'connected';
 
-      if (unlistenData) {
-        unlistenData();
-        unlistenData = null;
-      }
-      if (onDataDisposable) {
-        onDataDisposable.dispose();
-        onDataDisposable = null;
-      }
+      // Always clear any previous session listeners (xterm onData, tauri terminal-data)
+      sessionDisposables.clear();
 
       if (session.type === 'local_terminal') {
         try {
-          unlistenData = await listen<number[]>(`terminal-data-${session.id}`, (event) => {
+          const unlisten = await listen<number[]>(`terminal-data-${session.id}`, (event) => {
             if (term && event.payload) {
               term.write(new Uint8Array(event.payload));
             }
           });
+
+          // Check if session was superseded or component unmounted while awaiting listen
+          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
+            unlisten();
+            return;
+          }
+          sessionDisposables.add(unlisten);
 
           await invoke('pty_spawn', {
             tabId: session.id,
@@ -63,15 +71,23 @@
             rows: term?.rows || 24,
           });
 
+          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
+            invoke('pty_close', { tabId: session.id }).catch(() => {});
+            return;
+          }
+
           isTauriLive = true;
 
-          onDataDisposable = term?.onData((data) => {
+          const onDataDisposable = term?.onData((data) => {
             if (isDisconnected) return;
             const encoded = Array.from(new TextEncoder().encode(data));
             invoke('pty_write', { tabId: session.id, data: encoded }).catch((err) => {
               console.error('Failed to write to PTY:', err);
             });
-          }) ?? null;
+          });
+          if (onDataDisposable) {
+            sessionDisposables.add(onDataDisposable);
+          }
         } catch (e) {
           console.warn('Tauri PTY unavailable (running in web preview mode):', e);
           setupFallbackEcho();
@@ -80,26 +96,40 @@
         try {
           term?.writeln(`\x1b[90mConnecting to remote SSH host...\x1b[0m\r\n`);
 
-          unlistenData = await listen<number[]>(`terminal-data-${session.id}`, (event) => {
+          const unlisten = await listen<number[]>(`terminal-data-${session.id}`, (event) => {
             if (term && event.payload) {
               term.write(new Uint8Array(event.payload));
             }
           });
+
+          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
+            unlisten();
+            return;
+          }
+          sessionDisposables.add(unlisten);
 
           await invoke('ssh_connect', {
             tabId: session.id,
             connectionId: session.connectionId,
           });
 
+          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
+            invoke('ssh_disconnect', { tabId: session.id }).catch(() => {});
+            return;
+          }
+
           isTauriLive = true;
 
-          onDataDisposable = term?.onData((data) => {
+          const onDataDisposable = term?.onData((data) => {
             if (isDisconnected) return;
             const encoded = Array.from(new TextEncoder().encode(data));
             invoke('ssh_write', { tabId: session.id, data: encoded }).catch((err) => {
               console.error('Failed to write to SSH session:', err);
             });
-          }) ?? null;
+          });
+          if (onDataDisposable) {
+            sessionDisposables.add(onDataDisposable);
+          }
         } catch (e: any) {
           console.warn('SSH connection failed or running in web preview mode:', e);
           if (term) {
@@ -141,7 +171,7 @@
   }
 
   async function reconnect() {
-    if (!term || isConnecting) return;
+    if (!term || isConnecting || componentDisposables.isDisposed) return;
     isDisconnected = false;
     session.status = 'connected';
     term.reset();
@@ -183,9 +213,12 @@
       allowTransparency: false,
       scrollback: 5000,
     });
+    componentDisposables.add(term);
 
     fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
+    componentDisposables.add(fitAddon);
+
     term.open(terminalContainer);
     fitAddon.fit();
 
@@ -271,17 +304,23 @@
       }
     };
 
-    terminalContainer.addEventListener('contextmenu', handleContextMenu);
+    // Track DOM listener with auto-cleanup
+    componentDisposables.trackEventListener(terminalContainer, 'contextmenu', handleContextMenu);
 
     // Listen for terminal exit event from Rust backend
-    unlistenExit = await listen<number>(`terminal-exit-${session.id}`, (event) => {
+    const unlistenExit = await listen<number>(`terminal-exit-${session.id}`, (event) => {
       handleSessionExit(event.payload ?? 0);
     });
+    if (componentDisposables.isDisposed) {
+      unlistenExit();
+      return;
+    }
+    componentDisposables.add(unlistenExit);
 
     await startSession();
 
     // Resize observer to keep xterm fitting parent container
-    resizeObserver = new ResizeObserver(() => {
+    const resizeObserver = new ResizeObserver(() => {
       try {
         fitAddon?.fit();
         if (isTauriLive && term) {
@@ -295,19 +334,18 @@
       } catch {}
     });
     resizeObserver.observe(terminalContainer);
+    componentDisposables.add(resizeObserver);
   });
 
   function setupFallbackEcho() {
-    if (!term) return;
-    if (onDataDisposable) {
-      onDataDisposable.dispose();
-      onDataDisposable = null;
-    }
+    if (!term || componentDisposables.isDisposed) return;
+    sessionDisposables.clear();
+
     term.writeln(`\x1b[90m┌─ \x1b[37;1mrustius\x1b[0m \x1b[90m${session.title} (${session.badge || session.type})\x1b[0m`);
     term.writeln(`\x1b[90m└─ Status: \x1b[32mconnected (web preview mode)\x1b[0m\r\n`);
     term.write('\x1b[90mps\x1b[0m \x1b[37m>\x1b[0m ');
 
-    onDataDisposable = term.onData((data) => {
+    const onData = term.onData((data) => {
       if (data === '\r') {
         term?.write('\r\n\x1b[90mps\x1b[0m \x1b[37m>\x1b[0m ');
       } else if (data === '\u007f') {
@@ -316,27 +354,21 @@
         term?.write(data);
       }
     });
+    sessionDisposables.add(onData);
   }
 
   onDestroy(() => {
-    resizeObserver?.disconnect();
-    if (unlistenData) {
-      unlistenData();
-      unlistenData = null;
-    }
-    if (unlistenExit) {
-      unlistenExit();
-      unlistenExit = null;
-    }
-    if (onDataDisposable) {
-      onDataDisposable.dispose();
-      onDataDisposable = null;
-    }
+    // 1. Dispose all session-level listeners and subscriptions (data stream, onData)
+    sessionDisposables.dispose();
+
+    // 2. Dispose all component-level listeners, observers, DOM events, and terminal instance
+    componentDisposables.dispose();
+
+    // 3. Gracefully terminate backend process if still running
     if (isTauriLive) {
       const closeCmd = session.type === 'ssh' ? 'ssh_disconnect' : 'pty_close';
       invoke(closeCmd, { tabId: session.id }).catch(() => {});
     }
-    term?.dispose();
   });
 </script>
 

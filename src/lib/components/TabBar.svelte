@@ -5,14 +5,28 @@
     ArrowLeftRight,
     Monitor,
     X,
-    Plus
+    Plus,
+    XCircle
   } from '@lucide/svelte';
+
+  let contextMenu = $state<{ x: number; y: number; tabId: string } | null>(null);
 
   function handleClose(e: MouseEvent, id: string) {
     e.stopPropagation();
     appState.closeTab(id);
   }
+
+  function handleTabContextMenu(e: MouseEvent, tabId: string) {
+    e.preventDefault();
+    contextMenu = { x: e.clientX, y: e.clientY, tabId };
+  }
+
+  function closeContextMenu() {
+    contextMenu = null;
+  }
 </script>
+
+<svelte:window onclick={closeContextMenu} />
 
 <div class="tab-strip">
   <div class="tabs-container">
@@ -23,6 +37,7 @@
         tabindex="0"
         onclick={() => (appState.activeTabId = tab.id)}
         onkeydown={(e) => e.key === 'Enter' && (appState.activeTabId = tab.id)}
+        oncontextmenu={(e) => handleTabContextMenu(e, tab.id)}
       >
         <span class="tab-icon">
           {#if tab.type === 'ssh'}
@@ -52,23 +67,86 @@
       </div>
     {/each}
 
-    <!-- Add Tab Button -->
-    <button
-      class="add-btn"
-      title="New Local Shell"
-      onclick={() => {
-        appState.openTab({
-          title: 'Local Shell',
-          type: 'local_terminal',
-          status: 'connected',
-          badge: 'POWERSHELL',
-        });
-      }}
-    >
-      <Plus size={13} />
-    </button>
+    <!-- Tab Actions -->
+    <div class="tab-actions">
+      <button
+        class="add-btn"
+        title="New Local Shell"
+        onclick={() => {
+          appState.openTab({
+            title: 'Local Shell',
+            type: 'local_terminal',
+            status: 'connected',
+            badge: 'POWERSHELL',
+          });
+        }}
+      >
+        <Plus size={13} />
+      </button>
+
+      {#if appState.tabs.length > 1}
+        <button
+          class="add-btn"
+          title="Close All Tabs"
+          onclick={() => appState.closeAllTabs()}
+        >
+          <XCircle size={13} />
+        </button>
+      {/if}
+    </div>
   </div>
 </div>
+
+{#if contextMenu}
+  <div
+    class="tab-context-menu"
+    role="menu"
+    tabindex="-1"
+    style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
+    onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => e.key === 'Escape' && closeContextMenu()}
+  >
+    <button
+      class="context-menu-item"
+      onclick={() => {
+        if (contextMenu) appState.closeTab(contextMenu.tabId);
+        closeContextMenu();
+      }}
+    >
+      <span>Close Tab</span>
+    </button>
+    <button
+      class="context-menu-item"
+      onclick={() => {
+        if (contextMenu) appState.closeOtherTabs(contextMenu.tabId);
+        closeContextMenu();
+      }}
+    >
+      <span>Close Other Tabs</span>
+    </button>
+    {#if appState.tabs.some((t) => t.status === 'disconnected')}
+      <button
+        class="context-menu-item"
+        onclick={() => {
+          appState.closeDisconnectedTabs();
+          closeContextMenu();
+        }}
+      >
+        <span>Close Disconnected Tabs</span>
+      </button>
+    {/if}
+    <div class="menu-divider"></div>
+    <button
+      class="context-menu-item text-danger"
+      onclick={() => {
+        appState.closeAllTabs();
+        closeContextMenu();
+      }}
+    >
+      <span>Close All Tabs</span>
+    </button>
+  </div>
+{/if}
 
 <style>
   .tab-strip {
@@ -176,5 +254,62 @@
   .add-btn:hover {
     color: var(--ink);
     background: var(--canvas-hover);
+  }
+
+  .tab-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: 2px;
+  }
+
+  .tab-context-menu {
+    position: fixed;
+    z-index: 1000;
+    min-width: 170px;
+    background: #0a0a0a;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    padding: 4px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    animation: fadeIn 0.1s ease-out;
+  }
+
+  .context-menu-item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ink-secondary);
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.1s ease;
+  }
+
+  .context-menu-item:hover {
+    background: var(--canvas-hover);
+    color: var(--ink);
+  }
+
+  .context-menu-item.text-danger {
+    color: #ff4d4d;
+  }
+
+  .context-menu-item.text-danger:hover {
+    background: rgba(255, 77, 77, 0.1);
+    color: #ff4d4d;
+  }
+
+  .menu-divider {
+    height: 1px;
+    background: var(--hairline);
+    margin: 3px 0;
   }
 </style>

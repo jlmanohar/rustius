@@ -23,6 +23,7 @@
     appState.tabs.find((t) => t.id === appState.activeTabId) || null
   );
 </script>
+<svelte:window onbeforeunload={() => appState.closeAllTabs()} />
 
 <div class="app-viewport">
   <!-- Sidebar Navigation -->

@@ -196,13 +196,46 @@ export class AppStore {
       }
 
       // Explicitly disconnect backend sessions
-      if (tab.type === 'ssh') {
-        invoke('ssh_disconnect', { tabId }).catch(() => {});
-      } else if (tab.type === 'sftp') {
-        invoke('sftp_disconnect', { tabId }).catch(() => {});
-      } else if (tab.type === 'local_terminal') {
-        invoke('pty_close', { tabId }).catch(() => {});
-      }
+      this.terminateSession(tab);
+    }
+  }
+
+  closeAllTabs() {
+    const tabsToClose = [...this.tabs];
+    this.tabs = [];
+    this.activeTabId = null;
+    for (const tab of tabsToClose) {
+      this.terminateSession(tab);
+    }
+  }
+
+  closeOtherTabs(keepTabId: string) {
+    const tabsToClose = this.tabs.filter((t) => t.id !== keepTabId);
+    this.tabs = this.tabs.filter((t) => t.id === keepTabId);
+    this.activeTabId = keepTabId;
+    for (const tab of tabsToClose) {
+      this.terminateSession(tab);
+    }
+  }
+
+  closeDisconnectedTabs() {
+    const disconnected = this.tabs.filter((t) => t.status === 'disconnected');
+    this.tabs = this.tabs.filter((t) => t.status !== 'disconnected');
+    if (this.activeTabId && !this.tabs.some((t) => t.id === this.activeTabId)) {
+      this.activeTabId = this.tabs.length > 0 ? this.tabs[this.tabs.length - 1].id : null;
+    }
+    for (const tab of disconnected) {
+      this.terminateSession(tab);
+    }
+  }
+
+  private terminateSession(tab: TabSession) {
+    if (tab.type === 'ssh') {
+      invoke('ssh_disconnect', { tabId: tab.id }).catch(() => {});
+    } else if (tab.type === 'sftp') {
+      invoke('sftp_disconnect', { tabId: tab.id }).catch(() => {});
+    } else if (tab.type === 'local_terminal') {
+      invoke('pty_close', { tabId: tab.id }).catch(() => {});
     }
   }
 
