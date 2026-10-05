@@ -4089,6 +4089,7 @@ name = "rustius"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "rustius-core",
  "rustius-rdp",
  "rustius-ssh",
@@ -4138,6 +4139,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "russh",
  "russh-sftp",
  "rustius-core",

@@ -27,6 +27,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
 uuid.workspace = true
+chrono.workspace = true
 
 # Internal crates
 rustius-core = { path = "../crates/rustius-core" }

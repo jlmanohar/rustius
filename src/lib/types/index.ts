@@ -95,3 +95,21 @@ export interface TabSession {
   status: 'connecting' | 'connected' | 'disconnected' | 'error';
   badge?: string;
 }
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+  modified?: string;
+  permissions?: string;
+}
+
+export interface TransferItem {
+  id: string;
+  source: string;
+  dest: string;
+  direction: 'upload' | 'download';
+  status: 'pending' | 'transferring' | 'completed' | 'failed';
+  error?: string;
+}
