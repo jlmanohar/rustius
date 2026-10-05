@@ -44,7 +44,7 @@
             {:else if tab.type === 'sftp'}
               <SftpView session={tab} />
             {:else if tab.type === 'rdp'}
-              <RdpView session={tab} />
+              <RdpView bind:session={appState.tabs[i]} />
             {/if}
           </div>
         {/each}

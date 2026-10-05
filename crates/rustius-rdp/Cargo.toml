@@ -13,3 +13,5 @@ anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 serde.workspace = true
+parking_lot = "0.12"
+

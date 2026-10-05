@@ -37,7 +37,7 @@ russh = { version = "0.63", default-features = false, features = ["ring", "flate
 russh-sftp = "3.0"
 
 # RDP
-ironrdp = "0.17"
+ironrdp = { version = "0.17", default-features = false, features = ["core", "pdu", "session", "graphics", "input"] }
 
 # Terminal
 portable-pty = "0.9"
@@ -78,4 +78,7 @@ codegen-units = 16       # 16 parallel LLVM code generation units (utilizes mult
 panic = "abort"          # Remove unwinding tables for smaller binary and faster execution
 strip = true             # Strip all debug symbols for a clean portable single executable
 overflow-checks = false  # Optimize hot path arithmetic in production
+
+
+
 

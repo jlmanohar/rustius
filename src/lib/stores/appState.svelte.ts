@@ -236,6 +236,8 @@ export class AppStore {
       invoke('sftp_disconnect', { tabId: tab.id }).catch(() => {});
     } else if (tab.type === 'local_terminal') {
       invoke('pty_close', { tabId: tab.id }).catch(() => {});
+    } else if (tab.type === 'rdp') {
+      invoke('rdp_disconnect', { tabId: tab.id }).catch(() => {});
     }
   }
 
