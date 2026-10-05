@@ -15,8 +15,9 @@ pub async fn pty_spawn(
 ) -> Result<(), String> {
     info!("Spawning local PTY session for tab: {}", tab_id);
     let (output_tx, mut output_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (exit_tx, mut exit_rx) = mpsc::channel::<u32>(1);
 
-    let terminal = LocalTerminal::spawn(cols, rows, output_tx).map_err(|e| e.to_string())?;
+    let terminal = LocalTerminal::spawn(cols, rows, output_tx, exit_tx).map_err(|e| e.to_string())?;
     let terminal = Arc::new(terminal);
 
     // Save in state (closing any previous session for this tab)
@@ -36,14 +37,31 @@ pub async fn pty_spawn(
     let tab_id_clone = tab_id.clone();
 
     tokio::spawn(async move {
-        while let Some(bytes) = output_rx.recv().await {
-            if let Err(e) = app_clone.emit(&data_event, bytes) {
-                error!("Failed to emit terminal data event: {:?}", e);
-                break;
+        loop {
+            tokio::select! {
+                Some(bytes) = output_rx.recv() => {
+                    if let Err(e) = app_clone.emit(&data_event, bytes) {
+                        error!("Failed to emit terminal data event: {:?}", e);
+                        break;
+                    }
+                }
+                Some(code) = exit_rx.recv() => {
+                    // Drain any remaining buffered output bytes from the PTY
+                    while let Ok(bytes) = output_rx.try_recv() {
+                        let _ = app_clone.emit(&data_event, bytes);
+                    }
+                    info!("PTY session exited with code: {} for tab: {}", code, tab_id_clone);
+                    let _ = app_clone.emit(&exit_event, code);
+                    break;
+                }
+                else => {
+                    info!("PTY output channel closed for tab: {}", tab_id_clone);
+                    let _ = app_clone.emit(&exit_event, 0u32);
+                    break;
+                }
             }
         }
         debug!("PTY output forwarding loop exited for tab: {}", tab_id_clone);
-        let _ = app_clone.emit(&exit_event, 0u32);
     });
 
     Ok(())

@@ -1,14 +1,14 @@
 use anyhow::Result;
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 pub struct LocalTerminal {
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
-    child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
+    killer: Arc<Mutex<Box<dyn ChildKiller + Send + Sync>>>,
 }
 
 impl Drop for LocalTerminal {
@@ -22,6 +22,7 @@ impl LocalTerminal {
         cols: u16,
         rows: u16,
         output_tx: mpsc::UnboundedSender<Vec<u8>>,
+        exit_tx: mpsc::Sender<u32>,
     ) -> Result<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system.openpty(PtySize {
@@ -47,9 +48,27 @@ impl LocalTerminal {
             cmd.cwd(cwd);
         }
 
-        let child = pair.slave.spawn_command(cmd)?;
+        let mut child = pair.slave.spawn_command(cmd)?;
         // Drop slave in this process now that child has spawned
         drop(pair.slave);
+
+        let killer = child.clone_killer();
+
+        // Background watcher thread: waits for child process (e.g. on `exit`)
+        // and immediately signals exit_tx with the process exit code.
+        std::thread::Builder::new()
+            .name("pty-child-watcher".into())
+            .spawn(move || {
+                let code = match child.wait() {
+                    Ok(status) => status.exit_code(),
+                    Err(e) => {
+                        debug!("Error waiting for child process: {:?}", e);
+                        0
+                    }
+                };
+                debug!("PTY child process exited with code {}", code);
+                let _ = exit_tx.try_send(code);
+            })?;
 
         let mut reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
@@ -73,7 +92,7 @@ impl LocalTerminal {
                             }
                         }
                         Err(e) => {
-                            error!("Error reading from PTY: {:?}", e);
+                            debug!("Error reading from PTY: {:?}", e);
                             break;
                         }
                     }
@@ -83,13 +102,13 @@ impl LocalTerminal {
         Ok(Self {
             writer: Arc::new(Mutex::new(writer)),
             master: Arc::new(Mutex::new(master)),
-            child: Arc::new(Mutex::new(child)),
+            killer: Arc::new(Mutex::new(killer)),
         })
     }
 
     pub fn close(&self) {
-        if let Ok(mut child) = self.child.lock() {
-            let _ = child.kill();
+        if let Ok(mut killer) = self.killer.lock() {
+            let _ = killer.kill();
         }
     }
 
@@ -120,7 +139,8 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_and_write() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let terminal = LocalTerminal::spawn(80, 24, tx).expect("Failed to spawn local terminal");
+        let (exit_tx, mut _exit_rx) = mpsc::channel(1);
+        let terminal = LocalTerminal::spawn(80, 24, tx, exit_tx).expect("Failed to spawn local terminal");
 
         // Write a simple echo command
         terminal.write(b"echo 'rustius-test'\r\n").expect("Failed to write to terminal");

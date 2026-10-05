@@ -53,6 +53,10 @@ pub async fn ssh_connect(
                     }
                 }
                 Some(code) = exit_rx.recv() => {
+                    // Drain any remaining buffered output bytes from the SSH session
+                    while let Ok(bytes) = output_rx.try_recv() {
+                        let _ = app_handle.emit(&data_event, bytes);
+                    }
                     info!("SSH session exited with code: {} for tab: {}", code, tab_id_clone);
                     let _ = app_handle.emit(&exit_event, code);
                     break;
