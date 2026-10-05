@@ -1,0 +1,15 @@
+[package]
+name = "rustius-rdp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "RDP client implementation for Rustius"
+
+[dependencies]
+rustius-core = { path = "../rustius-core" }
+ironrdp.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "rustius-terminal"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Local pseudo-terminal management for Rustius"
+
+[dependencies]
+portable-pty.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

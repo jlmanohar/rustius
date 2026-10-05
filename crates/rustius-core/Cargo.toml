@@ -1,0 +1,17 @@
+[package]
+name = "rustius-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Core data models, config management, and storage abstraction for Rustius"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tokio.workspace = true

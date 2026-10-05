@@ -1,0 +1,221 @@
+:root {
+  /* Vercel Geist Dark Tokens */
+  --canvas: #000000;
+  --canvas-subtle: #080808;
+  --canvas-elevated: #0f0f0f;
+  --canvas-surface: #141414;
+  --canvas-hover: #1a1a1a;
+  --canvas-active: #222222;
+
+  --hairline: #262626;
+  --hairline-soft: #1a1a1a;
+  --hairline-focus: #ffffff;
+  --hairline-hover: #404040;
+
+  --ink: #ffffff;
+  --ink-secondary: #ededed;
+  --body: #a1a1a1;
+  --mute: #707070;
+  --faint: #444444;
+
+  --accent-blue: #0070f3;
+  --accent-blue-deep: #0761d1;
+  --accent-blue-soft: rgba(0, 112, 243, 0.12);
+
+  --accent-cyan: #50e3c2;
+  --accent-violet: #7928ca;
+  --accent-amber: #f5a623;
+  --accent-red: #ee0000;
+  --accent-green: #0070f3;
+
+  /* Geist Typography */
+  --font-sans: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Radius Scale */
+  --radius-none: 0px;
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 100px;
+  --radius-full: 9999px;
+
+  /* Shadows (Whisper & Floating) */
+  --shadow-flat: none;
+  --shadow-whisper: 0px 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-floating: 0px 12px 36px rgba(0, 0, 0, 0.8), 0 0 0 1px var(--hairline);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--canvas);
+  color: var(--ink-secondary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+}
+
+/* Minimalist scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #262626;
+  border-radius: var(--radius-sm);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #404040;
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  outline: none;
+  white-space: nowrap;
+}
+
+.btn-primary {
+  background-color: #ffffff;
+  color: #000000;
+  border-color: #ffffff;
+}
+.btn-primary:hover {
+  background-color: #e5e5e5;
+  border-color: #e5e5e5;
+}
+.btn-primary:active {
+  background-color: #d4d4d4;
+}
+
+.btn-secondary {
+  background-color: var(--canvas-elevated);
+  border: 1px solid var(--hairline);
+  color: var(--ink-secondary);
+}
+.btn-secondary:hover {
+  background-color: var(--canvas-hover);
+  border-color: var(--hairline-hover);
+  color: var(--ink);
+}
+.btn-secondary:active {
+  background-color: var(--canvas-active);
+}
+
+.btn-pill {
+  border-radius: var(--radius-pill);
+  padding: 0 16px;
+  height: 34px;
+}
+
+.btn-icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--body);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s ease;
+}
+.btn-icon:hover {
+  background: var(--canvas-hover);
+  border-color: var(--hairline);
+  color: var(--ink);
+}
+
+/* Inputs & Form Controls */
+.input-field {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  background: var(--canvas-elevated);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  transition: border-color 0.12s ease;
+  outline: none;
+}
+.input-field:focus {
+  border-color: var(--hairline-focus);
+}
+.input-field::placeholder {
+  color: var(--mute);
+}
+
+select.input-field {
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1a1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px;
+  padding-right: 28px;
+}
+
+/* Monospace Eyebrow & Badges */
+.mono-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--mute);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--hairline);
+  background: var(--canvas-elevated);
+  color: var(--body);
+}
+
+/* Vercel Mesh Gradient Hero Backdrop (confined strictly to hero) */
+.vercel-mesh {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 700px;
+  height: 260px;
+  background: radial-gradient(circle at 50% 0%, rgba(120, 119, 198, 0.15), rgba(255, 255, 255, 0));
+  filter: blur(60px);
+  pointer-events: none;
+  z-index: 0;
+}

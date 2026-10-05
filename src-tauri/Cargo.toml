@@ -1,0 +1,37 @@
+[package]
+name = "rustius"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "A portable SSH/SFTP/RDP desktop client"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "rustius_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+tauri.workspace = true
+tauri-plugin-opener.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+uuid.workspace = true
+
+# Internal crates
+rustius-core = { path = "../crates/rustius-core" }
+rustius-ssh = { path = "../crates/rustius-ssh" }
+rustius-rdp = { path = "../crates/rustius-rdp" }
+rustius-terminal = { path = "../crates/rustius-terminal" }
+
+

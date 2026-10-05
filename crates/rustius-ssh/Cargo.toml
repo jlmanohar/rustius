@@ -1,0 +1,17 @@
+[package]
+name = "rustius-ssh"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "SSH and SFTP client implementation for Rustius"
+
+[dependencies]
+rustius-core = { path = "../rustius-core" }
+russh = { workspace = true, default-features = false }
+russh-sftp.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+async-trait.workspace = true
