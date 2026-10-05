@@ -238,7 +238,7 @@ mod tests {
             22,
             AuthMethod::Password {
                 username: "root".into(),
-                password: "toor".into(),
+                password: Some("toor".into()),
             },
         );
         let conn_id = conn.id;
@@ -276,7 +276,7 @@ mod tests {
             22,
             AuthMethod::Password {
                 username: "deploy".into(),
-                password: "secret".into(),
+                password: Some("secret".into()),
             },
         );
         let conn_id = conn.id;
@@ -319,7 +319,7 @@ mod tests {
             22,
             AuthMethod::Password {
                 username: "user".into(),
-                password: "pass".into(),
+                password: Some("pass".into()),
             },
         );
         let conn_id = conn.id;

@@ -43,7 +43,7 @@ ironrdp = "0.17"
 portable-pty = "0.9"
 
 # UUID for connection IDs
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
 
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }

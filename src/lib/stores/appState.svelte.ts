@@ -92,10 +92,13 @@ export class AppStore {
 
   async addConnection(conn: Connection, parentFolderId?: string | null) {
     try {
-      await invoke('add_connection', {
+      const assignedId = await invoke<string>('add_connection', {
         connection: conn,
         parentFolderId: parentFolderId || null,
       });
+      if (assignedId) {
+        conn.id = assignedId;
+      }
       await this.loadConfig();
     } catch (err) {
       console.error('Failed to add connection via Tauri:', err);

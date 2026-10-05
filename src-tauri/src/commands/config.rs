@@ -1,7 +1,6 @@
 use crate::state::AppState;
 use rustius_core::connection::{AppSettings, Connection, RustiusConfig};
 use tauri::State;
-use uuid::Uuid;
 
 #[tauri::command]
 pub async fn get_config(state: State<'_, AppState>) -> Result<RustiusConfig, String> {
@@ -27,16 +26,19 @@ pub async fn add_connection(
     connection: Connection,
     parent_folder_id: Option<String>,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let parent_uuid = parent_folder_id
-        .map(|id| Uuid::parse_str(&id).map_err(|e| e.to_string()))
-        .transpose()?;
+        .filter(|s| !s.trim().is_empty())
+        .map(|id| rustius_core::connection::parse_uuid_or_fallback(&id));
 
+    let conn_id = connection.id.to_string();
     state
         .config_manager
         .add_connection(connection, parent_uuid)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    Ok(conn_id)
 }
 
 #[tauri::command]
@@ -46,8 +48,8 @@ pub async fn add_folder(
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let parent_uuid = parent_folder_id
-        .map(|id| Uuid::parse_str(&id).map_err(|e| e.to_string()))
-        .transpose()?;
+        .filter(|s| !s.trim().is_empty())
+        .map(|id| rustius_core::connection::parse_uuid_or_fallback(&id));
 
     let folder_id = state
         .config_manager
@@ -60,7 +62,7 @@ pub async fn add_folder(
 
 #[tauri::command]
 pub async fn remove_node(node_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let uuid = Uuid::parse_str(&node_id).map_err(|e| e.to_string())?;
+    let uuid = rustius_core::connection::parse_uuid_or_fallback(&node_id);
     state
         .config_manager
         .remove_node(uuid)

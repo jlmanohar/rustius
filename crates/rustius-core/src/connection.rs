@@ -19,11 +19,13 @@ pub enum ConnectionType {
 pub enum AuthMethod {
     Password {
         username: String,
-        password: String,
+        #[serde(default)]
+        password: Option<String>,
     },
     KeyFile {
         username: String,
         key_path: String,
+        #[serde(default)]
         passphrase: Option<String>,
     },
     Agent {
@@ -31,19 +33,54 @@ pub enum AuthMethod {
     },
 }
 
+pub fn parse_uuid_or_fallback(s: &str) -> Uuid {
+    let trimmed = s.trim();
+    Uuid::parse_str(trimmed).unwrap_or_else(|_| Uuid::new_v5(&Uuid::NAMESPACE_OID, trimmed.as_bytes()))
+}
+
+fn deserialize_uuid_or_fallback<'de, D>(deserializer: D) -> std::result::Result<Uuid, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    Ok(parse_uuid_or_fallback(&s))
+}
+
+fn deserialize_opt_uuid_or_fallback<'de, D>(deserializer: D) -> std::result::Result<Option<Uuid>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<String>::deserialize(deserializer)?;
+    match opt {
+        Some(s) if !s.trim().is_empty() => Ok(Some(parse_uuid_or_fallback(&s))),
+        _ => Ok(None),
+    }
+}
+
+fn default_timestamp() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
 /// A single connection definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Connection {
+    #[serde(default = "Uuid::new_v4", deserialize_with = "deserialize_uuid_or_fallback")]
     pub id: Uuid,
     pub name: String,
+    #[serde(alias = "conn_type")]
     pub connection_type: ConnectionType,
     pub host: String,
     pub port: u16,
     pub auth: AuthMethod,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub environment: Option<String>,
+    #[serde(default)]
     pub notes: Option<String>,
+    #[serde(default = "default_timestamp")]
     pub created_at: String,
+    #[serde(default = "default_timestamp")]
     pub updated_at: String,
     /// Optional SSH-specific settings.
     pub ssh_config: Option<SshConfig>,
@@ -58,9 +95,20 @@ pub struct SshConfig {
     #[serde(default)]
     pub allow_legacy_algorithms: bool,
     /// Custom terminal type (e.g., "xterm-256color").
+    #[serde(default)]
     pub terminal_type: Option<String>,
     /// Keep-alive interval in seconds.
+    #[serde(default, alias = "keepalive_interval_secs")]
     pub keepalive_interval: Option<u64>,
+    /// Connect timeout in seconds.
+    #[serde(default)]
+    pub connect_timeout_secs: Option<u64>,
+    /// Legacy ciphers toggle.
+    #[serde(default)]
+    pub legacy_ciphers: bool,
+    /// Legacy kex toggle.
+    #[serde(default)]
+    pub legacy_kex: bool,
     /// Port forwarding rules.
     #[serde(default)]
     pub port_forwards: Vec<PortForward>,
@@ -74,12 +122,27 @@ pub struct PortForward {
     pub remote_port: u16,
 }
 
+fn default_rdp_width() -> u32 {
+    1280
+}
+
+fn default_rdp_height() -> u32 {
+    800
+}
+
+fn default_rdp_color_depth() -> u8 {
+    24
+}
+
 /// RDP-specific configuration for a connection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RdpConfig {
+    #[serde(default = "default_rdp_width")]
     pub width: u32,
+    #[serde(default = "default_rdp_height")]
     pub height: u32,
     /// Color depth: 16, 24, or 32.
+    #[serde(default = "default_rdp_color_depth")]
     pub color_depth: u8,
     #[serde(default)]
     pub fullscreen: bool,
@@ -94,8 +157,10 @@ fn default_true() -> bool {
 /// A folder that can contain connections and sub-folders.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Folder {
+    #[serde(default = "Uuid::new_v4", deserialize_with = "deserialize_uuid_or_fallback")]
     pub id: Uuid,
     pub name: String,
+    #[serde(default, deserialize_with = "deserialize_opt_uuid_or_fallback")]
     pub parent_id: Option<Uuid>,
     #[serde(default)]
     pub children: Vec<TreeNode>,
@@ -174,6 +239,7 @@ impl Connection {
             port,
             auth,
             tags: Vec::new(),
+            environment: None,
             notes: None,
             created_at: now.clone(),
             updated_at: now,
@@ -196,7 +262,7 @@ mod tests {
             22,
             AuthMethod::Password {
                 username: "admin".into(),
-                password: "secret".into(),
+                password: Some("secret".into()),
             },
         );
 
@@ -215,6 +281,28 @@ mod tests {
         let parsed: RustiusConfig = toml::from_str(&toml_str).expect("Failed to deserialize");
         assert_eq!(parsed.version, "1.0.0");
         assert_eq!(parsed.tree.len(), 1);
+    }
+
+    #[test]
+    fn test_flexible_deserialization() {
+        let json_input = r#"{
+            "id": "conn-17282828",
+            "name": "Frontend Test",
+            "conn_type": "ssh",
+            "host": "localhost",
+            "port": 2222,
+            "environment": "Production",
+            "auth": {
+                "type": "password",
+                "username": "root"
+            }
+        }"#;
+
+        let conn: Connection = serde_json::from_str(json_input).expect("Should deserialize leniently");
+        assert_eq!(conn.name, "Frontend Test");
+        assert_eq!(conn.connection_type, ConnectionType::Ssh);
+        assert_eq!(conn.environment.as_deref(), Some("Production"));
+        assert_eq!(conn.id, parse_uuid_or_fallback("conn-17282828"));
     }
 
     #[test]

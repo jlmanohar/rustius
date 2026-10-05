@@ -113,9 +113,14 @@
         console.warn('SSH connection failed or running in web preview mode:', e);
         if (term) {
           term.writeln(`\x1b[31;1mConnection failed:\x1b[0m \x1b[90m${e?.message || e}\x1b[0m\r\n`);
-          term.writeln(`\x1b[90mFalling back to demo terminal emulator:\x1b[0m\r\n`);
         }
-        setupFallbackEcho();
+        const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+        if (!isTauri) {
+          if (term) {
+            term.writeln(`\x1b[90mFalling back to demo terminal emulator:\x1b[0m\r\n`);
+          }
+          setupFallbackEcho();
+        }
       }
     } else {
       setupFallbackEcho();

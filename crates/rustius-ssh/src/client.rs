@@ -59,14 +59,15 @@ impl SshSession {
         let addr = format!("{}:{}", connection.host, connection.port);
         info!("Connecting SSH to {}", addr);
 
-        let mut handle = russh::client::connect(config, &addr, handler)
+        let mut handle = russh::client::connect(config, (connection.host.as_str(), connection.port), handler)
             .await
             .context(format!("Failed to connect to {}", addr))?;
 
         // Authenticate
         match &connection.auth {
             AuthMethod::Password { username, password } => {
-                let res = handle.authenticate_password(username, password.as_str()).await?;
+                let pass = password.as_deref().unwrap_or("");
+                let res = handle.authenticate_password(username, pass).await?;
                 if !matches!(res, russh::client::AuthResult::Success) {
                     anyhow::bail!("Password authentication failed for user {}", username);
                 }

@@ -4,7 +4,6 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
-use uuid::Uuid;
 
 #[tauri::command]
 pub async fn ssh_connect(
@@ -15,12 +14,12 @@ pub async fn ssh_connect(
 ) -> Result<(), String> {
     info!("Starting SSH session for tab: {}, conn: {}", tab_id, connection_id);
 
-    let uuid = Uuid::parse_str(&connection_id).map_err(|e| e.to_string())?;
+    let uuid = rustius_core::connection::parse_uuid_or_fallback(&connection_id);
     let connection = state
         .config_manager
         .get_connection(uuid)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Connection not found (ID: {connection_id}): {e}"))?;
 
     let (output_tx, mut output_rx) = mpsc::unbounded_channel::<Vec<u8>>();
 

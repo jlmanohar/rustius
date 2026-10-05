@@ -65,15 +65,18 @@
       .map((t) => t.trim())
       .filter((t) => t.length > 0);
 
+    const id = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'conn-' + Date.now();
     const newConnection: Connection = {
-      id: 'conn-' + Date.now(),
+      id,
       name: name.trim(),
       conn_type: connType,
+      connection_type: connType,
       host: host.trim(),
       port: Number(port),
       environment: environment.trim() || undefined,
       tags,
       created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
       auth:
         authType === 'password'
           ? {

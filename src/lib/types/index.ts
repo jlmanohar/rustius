@@ -43,14 +43,17 @@ export interface Connection {
   id: string;
   name: string;
   conn_type: ConnectionType;
+  connection_type?: ConnectionType;
   host: string;
   port: number;
   auth: AuthMethod;
   environment?: string;
   tags: string[];
+  notes?: string;
   ssh_config?: SshConfig;
   rdp_config?: RdpConfig;
   created_at: string;
+  updated_at?: string;
   last_connected?: string;
 }
 
