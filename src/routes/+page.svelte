@@ -3,6 +3,7 @@
   import Sidebar from '$lib/components/Sidebar.svelte';
   import TabBar from '$lib/components/TabBar.svelte';
   import ConnectionModal from '$lib/components/ConnectionModal.svelte';
+  import SettingsModal from '$lib/components/SettingsModal.svelte';
   import TerminalView from '$lib/components/TerminalView.svelte';
   import SftpView from '$lib/components/SftpView.svelte';
   import RdpView from '$lib/components/RdpView.svelte';
@@ -175,6 +176,11 @@
   <!-- Connection Configuration Modal -->
   {#if appState.isConnectionModalOpen}
     <ConnectionModal />
+  {/if}
+
+  <!-- Application Settings Modal -->
+  {#if appState.isSettingsModalOpen}
+    <SettingsModal />
   {/if}
 </div>
 

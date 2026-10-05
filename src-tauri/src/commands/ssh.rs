@@ -22,8 +22,9 @@ pub async fn ssh_connect(
         .map_err(|e| format!("Connection not found (ID: {connection_id}): {e}"))?;
 
     let (output_tx, mut output_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (exit_tx, mut exit_rx) = mpsc::channel::<u32>(1);
 
-    let session = SshSession::connect(&connection, output_tx)
+    let session = SshSession::connect(&connection, output_tx, exit_tx)
         .await
         .map_err(|e| e.to_string())?;
     let session = Arc::new(session);
@@ -33,15 +34,33 @@ pub async fn ssh_connect(
         sessions.insert(tab_id.clone(), session);
     }
 
-    let event_name = format!("terminal-data-{}", tab_id);
+    let data_event = format!("terminal-data-{}", tab_id);
+    let exit_event = format!("terminal-exit-{}", tab_id);
+    let app_handle = app.clone();
+    let tab_id_clone = tab_id.clone();
+
     tokio::spawn(async move {
-        while let Some(bytes) = output_rx.recv().await {
-            if let Err(e) = app.emit(&event_name, bytes) {
-                error!("Failed to emit SSH output: {:?}", e);
-                break;
+        loop {
+            tokio::select! {
+                Some(bytes) = output_rx.recv() => {
+                    if let Err(e) = app_handle.emit(&data_event, bytes) {
+                        error!("Failed to emit SSH output: {:?}", e);
+                        break;
+                    }
+                }
+                Some(code) = exit_rx.recv() => {
+                    info!("SSH session exited with code: {} for tab: {}", code, tab_id_clone);
+                    let _ = app_handle.emit(&exit_event, code);
+                    break;
+                }
+                else => {
+                    info!("SSH session closed for tab: {}", tab_id_clone);
+                    let _ = app_handle.emit(&exit_event, 0u32);
+                    break;
+                }
             }
         }
-        debug!("SSH output loop exited for tab: {}", tab_id);
+        debug!("SSH output loop exited for tab: {}", tab_id_clone);
     });
 
     Ok(())

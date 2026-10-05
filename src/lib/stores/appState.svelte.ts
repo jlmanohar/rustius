@@ -1,4 +1,4 @@
-import type { RustiusConfig, TabSession, Connection, TreeNode, Folder } from '../types';
+import type { RustiusConfig, TabSession, Connection, TreeNode, Folder, AppSettings } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 
 export class AppStore {
@@ -23,6 +23,7 @@ export class AppStore {
   // Modal states
   isConnectionModalOpen = $state<boolean>(false);
   isFolderModalOpen = $state<boolean>(false);
+  isSettingsModalOpen = $state<boolean>(false);
   editingConnection = $state<Connection | null>(null);
   targetFolderId = $state<string | null>(null);
 
@@ -192,6 +193,16 @@ export class AppStore {
       if (this.activeTabId === tabId) {
         this.activeTabId = this.tabs.length > 0 ? this.tabs[Math.max(0, idx - 1)].id : null;
       }
+    }
+  }
+
+  async saveAppSettings(settings: AppSettings) {
+    try {
+      await invoke('save_app_settings', { settings });
+      this.config.app_settings = settings;
+    } catch (err) {
+      console.error('Failed to save settings via Tauri:', err);
+      this.config.app_settings = settings;
     }
   }
 }

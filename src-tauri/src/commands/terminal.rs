@@ -26,15 +26,20 @@ pub async fn pty_spawn(
     }
 
     // Spawn async background task to forward bytes to Tauri event
-    let event_name = format!("terminal-data-{}", tab_id);
+    let data_event = format!("terminal-data-{}", tab_id);
+    let exit_event = format!("terminal-exit-{}", tab_id);
+    let app_clone = app.clone();
+    let tab_id_clone = tab_id.clone();
+
     tokio::spawn(async move {
         while let Some(bytes) = output_rx.recv().await {
-            if let Err(e) = app.emit(&event_name, bytes) {
+            if let Err(e) = app_clone.emit(&data_event, bytes) {
                 error!("Failed to emit terminal data event: {:?}", e);
                 break;
             }
         }
-        debug!("PTY output forwarding loop exited for tab: {}", tab_id);
+        debug!("PTY output forwarding loop exited for tab: {}", tab_id_clone);
+        let _ = app_clone.emit(&exit_event, 0u32);
     });
 
     Ok(())

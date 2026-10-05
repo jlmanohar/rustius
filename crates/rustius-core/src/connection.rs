@@ -196,6 +196,8 @@ pub struct AppSettings {
     pub default_terminal_type: String,
     pub show_sidebar: bool,
     pub sidebar_width: u32,
+    #[serde(default)]
+    pub close_tab_on_exit: bool,
 }
 
 impl Default for AppSettings {
@@ -207,6 +209,7 @@ impl Default for AppSettings {
             default_terminal_type: "xterm-256color".into(),
             show_sidebar: true,
             sidebar_width: 280,
+            close_tab_on_exit: false,
         }
     }
 }

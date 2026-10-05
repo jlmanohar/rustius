@@ -14,7 +14,8 @@
     ChevronDown,
     Trash2,
     Play,
-    Server
+    Server,
+    Settings
   } from '@lucide/svelte';
 
   let environments = $derived.by(() => {
@@ -92,14 +93,10 @@
       </button>
       <button
         class="btn-icon"
-        title="New Connection"
-        onclick={() => {
-          appState.editingConnection = null;
-          appState.targetFolderId = null;
-          appState.isConnectionModalOpen = true;
-        }}
+        title="Settings"
+        onclick={() => (appState.isSettingsModalOpen = true)}
       >
-        <Plus size={15} />
+        <Settings size={14} />
       </button>
     </div>
   </div>

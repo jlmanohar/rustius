@@ -10,6 +10,7 @@ use tracing::info;
 
 pub struct SshClientHandler {
     output_tx: mpsc::UnboundedSender<Vec<u8>>,
+    exit_tx: mpsc::Sender<u32>,
 }
 
 impl Handler for SshClientHandler {
@@ -42,6 +43,34 @@ impl Handler for SshClientHandler {
         let _ = self.output_tx.send(data.to_vec());
         async { Ok(()) }
     }
+
+    fn channel_close(
+        &mut self,
+        _channel: russh::ChannelId,
+        _session: &mut client::Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        let _ = self.exit_tx.try_send(0);
+        async { Ok(()) }
+    }
+
+    fn channel_eof(
+        &mut self,
+        _channel: russh::ChannelId,
+        _session: &mut client::Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        let _ = self.exit_tx.try_send(0);
+        async { Ok(()) }
+    }
+
+    fn exit_status(
+        &mut self,
+        _channel: russh::ChannelId,
+        exit_status: u32,
+        _session: &mut client::Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        let _ = self.exit_tx.try_send(exit_status);
+        async { Ok(()) }
+    }
 }
 
 pub struct SshSession {
@@ -52,9 +81,10 @@ impl SshSession {
     pub async fn connect(
         connection: &Connection,
         output_tx: mpsc::UnboundedSender<Vec<u8>>,
+        exit_tx: mpsc::Sender<u32>,
     ) -> Result<Self> {
         let config = Arc::new(russh::client::Config::default());
-        let handler = SshClientHandler { output_tx };
+        let handler = SshClientHandler { output_tx, exit_tx };
 
         let addr = format!("{}:{}", connection.host, connection.port);
         info!("Connecting SSH to {}", addr);

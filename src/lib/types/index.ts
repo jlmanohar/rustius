@@ -76,6 +76,7 @@ export interface AppSettings {
   default_terminal_type: string;
   show_sidebar: boolean;
   sidebar_width: number;
+  close_tab_on_exit?: boolean;
 }
 
 export interface RustiusConfig {
