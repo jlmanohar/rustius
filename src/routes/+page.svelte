@@ -36,10 +36,10 @@
     <!-- Content Workspace -->
     <div class="workspace-panel">
       {#if appState.tabs.length > 0}
-        {#each appState.tabs as tab (tab.id)}
+        {#each appState.tabs as tab, i (tab.id)}
           <div class="tab-pane {tab.id === appState.activeTabId ? 'active-pane' : ''}">
             {#if tab.type === 'ssh' || tab.type === 'local_terminal'}
-              <TerminalView session={tab} />
+              <TerminalView bind:session={appState.tabs[i]} />
             {:else if tab.type === 'sftp'}
               <SftpView session={tab} />
             {:else if tab.type === 'rdp'}

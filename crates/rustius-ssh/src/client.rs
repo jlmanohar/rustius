@@ -36,11 +36,14 @@ impl Handler for SshClientHandler {
     fn extended_data(
         &mut self,
         _channel: russh::ChannelId,
-        _ext: u32,
+        ext: u32,
         data: &[u8],
         _session: &mut client::Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        let _ = self.output_tx.send(data.to_vec());
+        // SSH_EXTENDED_DATA_STDERR is 1; ignore any duplicate/other stream types
+        if ext == 1 {
+            let _ = self.output_tx.send(data.to_vec());
+        }
         async { Ok(()) }
     }
 
@@ -125,7 +128,7 @@ impl SshSession {
 
         channel
             .request_pty(
-                false,
+                true,
                 "xterm-256color",
                 80,
                 24,
@@ -135,7 +138,7 @@ impl SshSession {
             )
             .await?;
 
-        channel.request_shell(false).await?;
+        channel.request_shell(true).await?;
 
         Ok(Self {
             channel: Arc::new(tokio::sync::Mutex::new(channel)),

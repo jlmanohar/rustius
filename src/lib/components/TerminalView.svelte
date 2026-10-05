@@ -9,7 +9,7 @@
   import '@xterm/xterm/css/xterm.css';
   import type { TabSession } from '../types';
 
-  let { session }: { session: TabSession } = $props();
+  let { session = $bindable() }: { session: TabSession } = $props();
 
   let terminalContainer: HTMLDivElement | null = $state(null);
   let term: Terminal | null = null;
@@ -17,6 +17,8 @@
   let resizeObserver: ResizeObserver | null = null;
   let unlistenData: UnlistenFn | null = null;
   let unlistenExit: UnlistenFn | null = null;
+  let onDataDisposable: { dispose(): void } | null = null;
+  let isConnecting = false;
   let isTauriLive = false;
   let isDisconnected = $state(false);
 
@@ -32,82 +34,92 @@
   });
 
   async function startSession() {
-    isDisconnected = false;
-    session.status = 'connected';
+    if (isConnecting) return;
+    isConnecting = true;
+    try {
+      isDisconnected = false;
+      session.status = 'connected';
 
-    if (unlistenData) {
-      unlistenData();
-      unlistenData = null;
-    }
+      if (unlistenData) {
+        unlistenData();
+        unlistenData = null;
+      }
+      if (onDataDisposable) {
+        onDataDisposable.dispose();
+        onDataDisposable = null;
+      }
 
-    if (session.type === 'local_terminal') {
-      try {
-        unlistenData = await listen<number[]>(`terminal-data-${session.id}`, (event) => {
-          if (term && event.payload) {
-            term.write(new Uint8Array(event.payload));
-          }
-        });
-
-        await invoke('pty_spawn', {
-          tabId: session.id,
-          cols: term?.cols || 80,
-          rows: term?.rows || 24,
-        });
-
-        isTauriLive = true;
-
-        term?.onData((data) => {
-          if (isDisconnected) return;
-          const encoded = Array.from(new TextEncoder().encode(data));
-          invoke('pty_write', { tabId: session.id, data: encoded }).catch((err) => {
-            console.error('Failed to write to PTY:', err);
+      if (session.type === 'local_terminal') {
+        try {
+          unlistenData = await listen<number[]>(`terminal-data-${session.id}`, (event) => {
+            if (term && event.payload) {
+              term.write(new Uint8Array(event.payload));
+            }
           });
-        });
-      } catch (e) {
-        console.warn('Tauri PTY unavailable (running in web preview mode):', e);
+
+          await invoke('pty_spawn', {
+            tabId: session.id,
+            cols: term?.cols || 80,
+            rows: term?.rows || 24,
+          });
+
+          isTauriLive = true;
+
+          onDataDisposable = term?.onData((data) => {
+            if (isDisconnected) return;
+            const encoded = Array.from(new TextEncoder().encode(data));
+            invoke('pty_write', { tabId: session.id, data: encoded }).catch((err) => {
+              console.error('Failed to write to PTY:', err);
+            });
+          }) ?? null;
+        } catch (e) {
+          console.warn('Tauri PTY unavailable (running in web preview mode):', e);
+          setupFallbackEcho();
+        }
+      } else if (session.type === 'ssh' && session.connectionId) {
+        try {
+          term?.writeln(`\x1b[90mConnecting to remote SSH host...\x1b[0m\r\n`);
+
+          unlistenData = await listen<number[]>(`terminal-data-${session.id}`, (event) => {
+            if (term && event.payload) {
+              term.write(new Uint8Array(event.payload));
+            }
+          });
+
+          await invoke('ssh_connect', {
+            tabId: session.id,
+            connectionId: session.connectionId,
+          });
+
+          isTauriLive = true;
+
+          onDataDisposable = term?.onData((data) => {
+            if (isDisconnected) return;
+            const encoded = Array.from(new TextEncoder().encode(data));
+            invoke('ssh_write', { tabId: session.id, data: encoded }).catch((err) => {
+              console.error('Failed to write to SSH session:', err);
+            });
+          }) ?? null;
+        } catch (e: any) {
+          console.warn('SSH connection failed or running in web preview mode:', e);
+          if (term) {
+            term.writeln(`\x1b[31;1mConnection failed:\x1b[0m \x1b[90m${e?.message || e}\x1b[0m\r\n`);
+          }
+          const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+          if (!isTauri) {
+            if (term) {
+              term.writeln(`\x1b[90mFalling back to demo terminal emulator:\x1b[0m\r\n`);
+            }
+            setupFallbackEcho();
+          } else {
+            handleSessionExit(1);
+          }
+        }
+      } else {
         setupFallbackEcho();
       }
-    } else if (session.type === 'ssh' && session.connectionId) {
-      try {
-        term?.writeln(`\x1b[90mConnecting to remote SSH host...\x1b[0m\r\n`);
-
-        unlistenData = await listen<number[]>(`terminal-data-${session.id}`, (event) => {
-          if (term && event.payload) {
-            term.write(new Uint8Array(event.payload));
-          }
-        });
-
-        await invoke('ssh_connect', {
-          tabId: session.id,
-          connectionId: session.connectionId,
-        });
-
-        isTauriLive = true;
-
-        term?.onData((data) => {
-          if (isDisconnected) return;
-          const encoded = Array.from(new TextEncoder().encode(data));
-          invoke('ssh_write', { tabId: session.id, data: encoded }).catch((err) => {
-            console.error('Failed to write to SSH session:', err);
-          });
-        });
-      } catch (e: any) {
-        console.warn('SSH connection failed or running in web preview mode:', e);
-        if (term) {
-          term.writeln(`\x1b[31;1mConnection failed:\x1b[0m \x1b[90m${e?.message || e}\x1b[0m\r\n`);
-        }
-        const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
-        if (!isTauri) {
-          if (term) {
-            term.writeln(`\x1b[90mFalling back to demo terminal emulator:\x1b[0m\r\n`);
-          }
-          setupFallbackEcho();
-        } else {
-          handleSessionExit(1);
-        }
-      }
-    } else {
-      setupFallbackEcho();
+    } finally {
+      isConnecting = false;
     }
   }
 
@@ -129,7 +141,7 @@
   }
 
   async function reconnect() {
-    if (!term) return;
+    if (!term || isConnecting) return;
     isDisconnected = false;
     session.status = 'connected';
     term.reset();
@@ -287,11 +299,15 @@
 
   function setupFallbackEcho() {
     if (!term) return;
+    if (onDataDisposable) {
+      onDataDisposable.dispose();
+      onDataDisposable = null;
+    }
     term.writeln(`\x1b[90m┌─ \x1b[37;1mrustius\x1b[0m \x1b[90m${session.title} (${session.badge || session.type})\x1b[0m`);
     term.writeln(`\x1b[90m└─ Status: \x1b[32mconnected (web preview mode)\x1b[0m\r\n`);
     term.write('\x1b[90mps\x1b[0m \x1b[37m>\x1b[0m ');
 
-    term.onData((data) => {
+    onDataDisposable = term.onData((data) => {
       if (data === '\r') {
         term?.write('\r\n\x1b[90mps\x1b[0m \x1b[37m>\x1b[0m ');
       } else if (data === '\u007f') {
@@ -306,9 +322,15 @@
     resizeObserver?.disconnect();
     if (unlistenData) {
       unlistenData();
+      unlistenData = null;
     }
     if (unlistenExit) {
       unlistenExit();
+      unlistenExit = null;
+    }
+    if (onDataDisposable) {
+      onDataDisposable.dispose();
+      onDataDisposable = null;
     }
     if (isTauriLive) {
       const closeCmd = session.type === 'ssh' ? 'ssh_disconnect' : 'pty_close';

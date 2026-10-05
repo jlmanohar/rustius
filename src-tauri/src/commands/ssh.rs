@@ -31,6 +31,10 @@ pub async fn ssh_connect(
 
     {
         let mut sessions = state.ssh_sessions.write().await;
+        if let Some(old) = sessions.remove(&tab_id) {
+            info!("Disconnecting previous SSH session for tab: {}", tab_id);
+            let _ = old.disconnect().await;
+        }
         sessions.insert(tab_id.clone(), session);
     }
 

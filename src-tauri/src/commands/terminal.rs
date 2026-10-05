@@ -19,9 +19,13 @@ pub async fn pty_spawn(
     let terminal = LocalTerminal::spawn(cols, rows, output_tx).map_err(|e| e.to_string())?;
     let terminal = Arc::new(terminal);
 
-    // Save in state
+    // Save in state (closing any previous session for this tab)
     {
         let mut terminals = state.local_terminals.write().await;
+        if let Some(old) = terminals.remove(&tab_id) {
+            info!("Closing previous PTY session for tab: {}", tab_id);
+            old.close();
+        }
         terminals.insert(tab_id.clone(), terminal);
     }
 
