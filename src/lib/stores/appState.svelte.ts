@@ -189,9 +189,19 @@ export class AppStore {
   closeTab(tabId: string) {
     const idx = this.tabs.findIndex((t) => t.id === tabId);
     if (idx !== -1) {
+      const tab = this.tabs[idx];
       this.tabs.splice(idx, 1);
       if (this.activeTabId === tabId) {
         this.activeTabId = this.tabs.length > 0 ? this.tabs[Math.max(0, idx - 1)].id : null;
+      }
+
+      // Explicitly disconnect backend sessions
+      if (tab.type === 'ssh') {
+        invoke('ssh_disconnect', { tabId }).catch(() => {});
+      } else if (tab.type === 'sftp') {
+        invoke('sftp_disconnect', { tabId }).catch(() => {});
+      } else if (tab.type === 'local_terminal') {
+        invoke('pty_close', { tabId }).catch(() => {});
       }
     }
   }

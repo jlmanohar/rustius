@@ -54,8 +54,8 @@ tauri-build = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 
 [profile.release]
-codegen-units = 1
-lto = true
 opt-level = 3
+lto = "thin"
+codegen-units = 16
 panic = "abort"
 strip = true

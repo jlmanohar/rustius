@@ -1,5 +1,5 @@
 use anyhow::Result;
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -8,6 +8,13 @@ use tracing::{debug, error, info};
 pub struct LocalTerminal {
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
+    child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
+}
+
+impl Drop for LocalTerminal {
+    fn drop(&mut self) {
+        self.close();
+    }
 }
 
 impl LocalTerminal {
@@ -40,7 +47,7 @@ impl LocalTerminal {
             cmd.cwd(cwd);
         }
 
-        let _child = pair.slave.spawn_command(cmd)?;
+        let child = pair.slave.spawn_command(cmd)?;
         // Drop slave in this process now that child has spawned
         drop(pair.slave);
 
@@ -76,7 +83,14 @@ impl LocalTerminal {
         Ok(Self {
             writer: Arc::new(Mutex::new(writer)),
             master: Arc::new(Mutex::new(master)),
+            child: Arc::new(Mutex::new(child)),
         })
+    }
+
+    pub fn close(&self) {
+        if let Ok(mut child) = self.child.lock() {
+            let _ = child.kill();
+        }
     }
 
     pub fn write(&self, data: &[u8]) -> Result<()> {

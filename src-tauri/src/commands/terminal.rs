@@ -86,8 +86,13 @@ pub async fn pty_resize(
 
 #[tauri::command]
 pub async fn pty_close(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mut terminals = state.local_terminals.write().await;
-    terminals.remove(&tab_id);
+    let term = {
+        let mut terminals = state.local_terminals.write().await;
+        terminals.remove(&tab_id)
+    };
+    if let Some(t) = term {
+        t.close();
+    }
     info!("Closed PTY session for tab: {}", tab_id);
     Ok(())
 }
