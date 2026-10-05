@@ -57,6 +57,82 @@
     term.open(terminalContainer);
     fitAddon.fit();
 
+    // Custom keyboard handler for copy / paste
+    term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      // Ctrl+C with text selected -> Copy to clipboard (prevent SIGINT)
+      if (event.ctrlKey && (event.key === 'c' || event.key === 'C') && term?.hasSelection()) {
+        if (event.type === 'keydown') {
+          const selected = term.getSelection();
+          if (selected) {
+            navigator.clipboard.writeText(selected).catch((err) => {
+              console.error('Failed to copy to clipboard:', err);
+            });
+          }
+        }
+        return false;
+      }
+
+      // Ctrl+Shift+C -> Copy to clipboard
+      if (event.ctrlKey && event.shiftKey && (event.key === 'c' || event.key === 'C')) {
+        if (event.type === 'keydown' && term?.hasSelection()) {
+          const selected = term.getSelection();
+          if (selected) {
+            navigator.clipboard.writeText(selected).catch(() => {});
+          }
+        }
+        return false;
+      }
+
+      // Ctrl+V or Ctrl+Shift+V -> Paste from clipboard
+      if (
+        (event.ctrlKey && (event.key === 'v' || event.key === 'V')) ||
+        (event.ctrlKey && event.shiftKey && (event.key === 'v' || event.key === 'V'))
+      ) {
+        if (event.type === 'keydown') {
+          navigator.clipboard
+            .readText()
+            .then((text) => {
+              if (text && term) {
+                term.paste(text);
+              }
+            })
+            .catch((err) => {
+              console.error('Failed to paste from clipboard:', err);
+            });
+        }
+        return false;
+      }
+
+      return true;
+    });
+
+    // Right-click support: copy if text is selected, or paste if nothing selected
+    const handleContextMenu = async (e: MouseEvent) => {
+      e.preventDefault();
+      if (term?.hasSelection()) {
+        const text = term.getSelection();
+        if (text) {
+          try {
+            await navigator.clipboard.writeText(text);
+          } catch (err) {
+            console.error('Copy on right-click failed:', err);
+          }
+          term.clearSelection();
+        }
+      } else {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text && term) {
+            term.paste(text);
+          }
+        } catch (err) {
+          console.error('Paste on right-click failed:', err);
+        }
+      }
+    };
+
+    terminalContainer.addEventListener('contextmenu', handleContextMenu);
+
     if (session.type === 'local_terminal') {
       try {
         // Listen for output streaming from Rust PTY
@@ -193,10 +269,20 @@
     height: 100%;
     padding: 10px 14px;
     background: #000000;
+    user-select: text !important;
   }
 
   :global(.xterm) {
     height: 100%;
+    user-select: text !important;
+  }
+
+  :global(.xterm-screen) {
+    user-select: text !important;
+  }
+
+  :global(.xterm-rows) {
+    user-select: text !important;
   }
 
   :global(.xterm-viewport) {

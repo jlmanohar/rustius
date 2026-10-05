@@ -306,6 +306,44 @@ mod tests {
     }
 
     #[test]
+    fn test_save_exact_frontend_connection() {
+        let json_input = r#"{
+            "id": "9ea70796-e4ca-4074-97ee-c5b842da5d74",
+            "name": "test",
+            "conn_type": "ssh",
+            "host": "localhost",
+            "port": 2222,
+            "environment": "Production",
+            "tags": [],
+            "created_at": "2026-10-05T17:22:00.000Z",
+            "updated_at": "2026-10-05T17:22:00.000Z",
+            "auth": {
+                "type": "password",
+                "username": "root",
+                "password": "test"
+            },
+            "ssh_config": {
+                "connect_timeout_secs": 15,
+                "keepalive_interval_secs": 30,
+                "legacy_ciphers": false,
+                "legacy_kex": false,
+                "port_forwards": []
+            }
+        }"#;
+
+        let conn: Connection = serde_json::from_str(json_input).expect("Should deserialize frontend JSON");
+        let config = RustiusConfig {
+            version: "1.0.0".into(),
+            app_settings: AppSettings::default(),
+            tree: vec![TreeNode::Connection(conn)],
+        };
+
+        let toml_str = toml::to_string_pretty(&config).expect("Failed to serialize to TOML");
+        let parsed: RustiusConfig = toml::from_str(&toml_str).expect("Failed to parse TOML back");
+        assert_eq!(parsed.tree.len(), 1);
+    }
+
+    #[test]
     fn test_default_config() {
         let config = RustiusConfig::default();
         assert_eq!(config.version, "1.0.0");

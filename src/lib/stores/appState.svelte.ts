@@ -102,6 +102,10 @@ export class AppStore {
       await this.loadConfig();
     } catch (err) {
       console.error('Failed to add connection via Tauri:', err);
+      const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+      if (isTauri) {
+        throw err;
+      }
       // Fallback local update for preview
       if (parentFolderId) {
         const folder = this.findFolder(this.config.tree, parentFolderId);

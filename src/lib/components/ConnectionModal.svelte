@@ -54,7 +54,7 @@
     port = type === 'rdp' ? 3389 : 22;
   }
 
-  function handleSave(connectNow: boolean = false) {
+  async function handleSave(connectNow: boolean = false) {
     if (!name.trim() || !host.trim()) {
       alert('Session Name and Host address are required.');
       return;
@@ -70,7 +70,6 @@
       id,
       name: name.trim(),
       conn_type: connType,
-      connection_type: connType,
       host: host.trim(),
       port: Number(port),
       environment: environment.trim() || undefined,
@@ -112,19 +111,24 @@
           : undefined,
     };
 
-    appState.addConnection(newConnection, parentFolderId || null);
+    try {
+      await appState.addConnection(newConnection, parentFolderId || null);
 
-    if (connectNow) {
-      appState.openTab({
-        title: newConnection.name,
-        type: newConnection.conn_type,
-        connectionId: newConnection.id,
-        status: 'connected',
-        badge: `${newConnection.conn_type.toUpperCase()} · ${newConnection.host}`,
-      });
+      if (connectNow) {
+        appState.openTab({
+          title: newConnection.name,
+          type: newConnection.conn_type,
+          connectionId: newConnection.id,
+          status: 'connected',
+          badge: `${newConnection.conn_type.toUpperCase()} · ${newConnection.host}`,
+        });
+      }
+
+      appState.isConnectionModalOpen = false;
+    } catch (err: any) {
+      console.error('Failed to save connection:', err);
+      alert(`Failed to save connection: ${err?.message || err}`);
     }
-
-    appState.isConnectionModalOpen = false;
   }
 </script>
 
