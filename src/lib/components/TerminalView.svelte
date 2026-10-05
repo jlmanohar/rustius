@@ -20,6 +20,17 @@
   let isTauriLive = false;
   let isDisconnected = $state(false);
 
+  $effect(() => {
+    if (appState.activeTabId === session.id && term) {
+      setTimeout(() => {
+        try {
+          fitAddon?.fit();
+          term?.focus();
+        } catch {}
+      }, 50);
+    }
+  });
+
   async function startSession() {
     isDisconnected = false;
     session.status = 'connected';

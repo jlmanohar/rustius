@@ -35,14 +35,18 @@
 
     <!-- Content Workspace -->
     <div class="workspace-panel">
-      {#if activeSession}
-        {#if activeSession.type === 'ssh' || activeSession.type === 'local_terminal'}
-          <TerminalView session={activeSession} />
-        {:else if activeSession.type === 'sftp'}
-          <SftpView session={activeSession} />
-        {:else if activeSession.type === 'rdp'}
-          <RdpView session={activeSession} />
-        {/if}
+      {#if appState.tabs.length > 0}
+        {#each appState.tabs as tab (tab.id)}
+          <div class="tab-pane {tab.id === appState.activeTabId ? 'active-pane' : ''}">
+            {#if tab.type === 'ssh' || tab.type === 'local_terminal'}
+              <TerminalView session={tab} />
+            {:else if tab.type === 'sftp'}
+              <SftpView session={tab} />
+            {:else if tab.type === 'rdp'}
+              <RdpView session={tab} />
+            {/if}
+          </div>
+        {/each}
       {:else}
         <!-- Geist Hero & Dashboard -->
         <div class="hero-container">
@@ -207,6 +211,19 @@
     position: relative;
     overflow: hidden;
     background: var(--canvas);
+  }
+
+  .tab-pane {
+    display: none;
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    inset: 0;
+  }
+
+  .tab-pane.active-pane {
+    display: flex;
+    flex-direction: column;
   }
 
   .hero-container {
