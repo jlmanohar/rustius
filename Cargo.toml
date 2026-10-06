@@ -6,6 +6,9 @@ members = [
     "crates/rustius-rdp",
     "crates/rustius-terminal",
 ]
+exclude = [
+    "workers/rustius-rdp-worker",
+]
 resolver = "2"
 
 [workspace.package]
@@ -78,7 +81,3 @@ codegen-units = 16       # 16 parallel LLVM code generation units (utilizes mult
 panic = "abort"          # Remove unwinding tables for smaller binary and faster execution
 strip = true             # Strip all debug symbols for a clean portable single executable
 overflow-checks = false  # Optimize hot path arithmetic in production
-
-
-
-
