@@ -21,7 +21,8 @@
     y: number;
     width: number;
     height: number;
-    data: number[];
+    b64?: string;
+    data?: number[];
   }
 
   let { session = $bindable() }: { session: TabSession } = $props();
@@ -112,7 +113,7 @@
       const unlistenFrame = await listen<RdpFramePayload>(`rdp-frame-${session.id}`, (event) => {
         if (!canvasRef || !ctx) return;
         const frame = event.payload;
-        if (!frame || !frame.data) return;
+        if (!frame || (!frame.b64 && !frame.data)) return;
 
         // Auto-adjust canvas dimensions if first full frame arrives
         if (frame.x === 0 && frame.y === 0 && frame.width > 0 && frame.height > 0) {
@@ -125,7 +126,20 @@
         }
 
         try {
-          const clamped = new Uint8ClampedArray(frame.data);
+          let clamped: Uint8ClampedArray<ArrayBuffer>;
+          if (frame.b64) {
+            const binary = atob(frame.b64);
+            const len = binary.length;
+            clamped = new Uint8ClampedArray(len);
+            for (let i = 0; i < len; i++) {
+              clamped[i] = binary.charCodeAt(i);
+            }
+          } else if (frame.data) {
+            clamped = new Uint8ClampedArray(frame.data);
+          } else {
+            return;
+          }
+
           const imgData = new ImageData(clamped, frame.width, frame.height);
           ctx.putImageData(imgData, frame.x, frame.y);
           recordFrameRendered();

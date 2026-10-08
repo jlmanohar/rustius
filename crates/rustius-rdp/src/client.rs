@@ -17,6 +17,8 @@ const MAGIC_FRAME: [u8; 4] = [0x52, 0x44, 0x50, 0x46]; // "RDPF"
 const MAGIC_CTRL: [u8; 4] = [0x52, 0x44, 0x50, 0x43];  // "RDPC"
 const MAGIC_INPUT: [u8; 4] = [0x52, 0x44, 0x50, 0x49]; // "RDPI"
 
+use base64::Engine;
+
 /// Decoded frame data to send to the frontend Canvas.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RdpFrame {
@@ -24,8 +26,8 @@ pub struct RdpFrame {
     pub y: u32,
     pub width: u32,
     pub height: u32,
-    /// RGBA pixel data for this frame region (size = width * height * 4).
-    pub data: Vec<u8>,
+    /// Base64 encoded RGBA pixel data for this frame region (size = width * height * 4).
+    pub b64: String,
 }
 
 /// RDP input events forwarded from the frontend Canvas.
@@ -159,7 +161,8 @@ impl RdpSession {
                     let data_len = u32::from_le_bytes([hdr[16], hdr[17], hdr[18], hdr[19]]) as usize;
                     let mut data = vec![0u8; data_len];
                     child_stdout.read_exact(&mut data).await.context("Failed reading initial frame data")?;
-                    let _ = frame_tx.send(RdpFrame { x, y, width: w, height: h, data });
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    let _ = frame_tx.send(RdpFrame { x, y, width: w, height: h, b64 });
                 }
             }
             Ok(Err(e)) => {
@@ -208,12 +211,13 @@ impl RdpSession {
                             break;
                         }
 
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
                         let _ = frame_tx.send(RdpFrame {
                             x,
                             y,
                             width: w,
                             height: h,
-                            data,
+                            b64,
                         });
                     } else if read_magic == MAGIC_CTRL {
                         let mut len_buf = [0u8; 4];

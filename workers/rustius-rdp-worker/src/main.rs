@@ -166,7 +166,7 @@ fn run() -> Result<()> {
         timezone_info: ironrdp::pdu::rdp::client_info::TimezoneInfo::default(),
         compression_type: None,
         enable_server_pointer: false,
-        pointer_software_rendering: true,
+        pointer_software_rendering: false,
         multitransport_flags: None,
     };
 
@@ -217,8 +217,8 @@ fn run() -> Result<()> {
     let actual_h = connection_result.desktop_size.height as u32;
     info!("RDP session established successfully! Desktop resolution: {}x{}", actual_w, actual_h);
 
-    // Switch underlying TCP stream to low latency read timeout for active session loop
-    let _ = upgraded_framed.get_inner_mut().0.sock.set_read_timeout(Some(Duration::from_millis(50)));
+    // Switch underlying TCP stream to low latency 16ms read timeout (~60 FPS polling)
+    let _ = upgraded_framed.get_inner_mut().0.sock.set_read_timeout(Some(Duration::from_millis(16)));
 
     send_ctrl_msg(
         &mut stdout,
@@ -345,7 +345,7 @@ fn run() -> Result<()> {
         // 3. Process frame with IronRDP ActiveStage
         match active_stage.process(&mut image, action, &payload) {
             Ok(outputs) => {
-                let mut has_update = false;
+                let mut dirty_box: Option<(u32, u32, u32, u32)> = None;
                 for out in outputs {
                     match out {
                         ActiveStageOutput::ResponseFrame(frame) => {
@@ -354,8 +354,17 @@ fn run() -> Result<()> {
                                 break;
                             }
                         }
-                        ActiveStageOutput::GraphicsUpdate(_rect) => {
-                            has_update = true;
+                        ActiveStageOutput::GraphicsUpdate(rect) => {
+                            let left = rect.left as u32;
+                            let top = rect.top as u32;
+                            let right = rect.right as u32;
+                            let bottom = rect.bottom as u32;
+                            dirty_box = match dirty_box {
+                                Some((min_x, min_y, max_x, max_y)) => {
+                                    Some((min_x.min(left), min_y.min(top), max_x.max(right), max_y.max(bottom)))
+                                }
+                                None => Some((left, top, right, bottom)),
+                            };
                         }
                         ActiveStageOutput::Terminate(reason) => {
                             info!("RDP server requested terminate: {:?}", reason);
@@ -366,12 +375,35 @@ fn run() -> Result<()> {
                     }
                 }
 
-                if has_update || !initial_sent {
-                    // Send full image buffer or dirty region to frontend
+                if !initial_sent {
+                    // Send full initial desktop frame
                     initial_sent = true;
                     if let Err(e) = send_frame(&mut stdout, 0, 0, actual_w, actual_h, image.data()) {
-                        warn!("Failed to stream frame to parent process: {:?}", e);
+                        warn!("Failed to stream initial frame to parent process: {:?}", e);
                         break;
+                    }
+                } else if let Some((min_x, min_y, max_x, max_y)) = dirty_box {
+                    let x = min_x.min(actual_w.saturating_sub(1));
+                    let y = min_y.min(actual_h.saturating_sub(1));
+                    let w = (max_x.saturating_sub(min_x) + 1).min(actual_w - x);
+                    let h = (max_y.saturating_sub(min_y) + 1).min(actual_h - y);
+
+                    if w > 0 && h > 0 {
+                        let mut sub_buf = Vec::with_capacity((w * h * 4) as usize);
+                        let img_bytes = image.data();
+                        let stride = (actual_w * 4) as usize;
+                        let row_bytes = (w * 4) as usize;
+                        for row in 0..h {
+                            let src_start = ((y + row) as usize * stride) + (x as usize * 4);
+                            let src_end = src_start + row_bytes;
+                            if src_end <= img_bytes.len() {
+                                sub_buf.extend_from_slice(&img_bytes[src_start..src_end]);
+                            }
+                        }
+                        if let Err(e) = send_frame(&mut stdout, x, y, w, h, &sub_buf) {
+                            warn!("Failed to stream dirty frame to parent process: {:?}", e);
+                            break;
+                        }
                     }
                 }
             }
