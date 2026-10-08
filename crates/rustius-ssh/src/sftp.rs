@@ -161,11 +161,28 @@ impl SftpClient {
         Ok(())
     }
 
+    /// Read all bytes of a remote file into memory.
+    pub async fn download_bytes(&self, remote_path: &str) -> Result<Vec<u8>> {
+        let mut remote_file = self.session.open(remote_path).await?;
+        let mut buffer = Vec::new();
+        tokio::io::copy(&mut remote_file, &mut buffer).await?;
+        Ok(buffer)
+    }
+
     /// Upload a local file to a remote destination path.
     pub async fn upload(&self, local_path: &str, remote_path: &str) -> Result<()> {
         let mut local_file = tokio::fs::File::open(local_path).await?;
         let mut remote_file = self.session.create(remote_path).await?;
         tokio::io::copy(&mut local_file, &mut remote_file).await?;
+        remote_file.flush().await?;
+        Ok(())
+    }
+
+    /// Upload a byte buffer directly to a remote destination path.
+    pub async fn upload_bytes(&self, data: &[u8], remote_path: &str) -> Result<()> {
+        let mut remote_file = self.session.create(remote_path).await?;
+        let mut cursor = std::io::Cursor::new(data);
+        tokio::io::copy(&mut cursor, &mut remote_file).await?;
         remote_file.flush().await?;
         Ok(())
     }

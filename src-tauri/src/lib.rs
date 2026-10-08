@@ -5,8 +5,9 @@ use commands::config::{add_connection, add_folder, get_config, remove_node, save
 use commands::rdp::{rdp_connect, rdp_disconnect, rdp_key_event, rdp_mouse_event};
 use commands::sftp::{
     local_get_home_dir, local_list_dir, local_mkdir, local_remove, local_rename,
-    sftp_connect, sftp_disconnect, sftp_download, sftp_list_dir, sftp_mkdir, sftp_remove,
-    sftp_rename, sftp_upload,
+    sftp_connect, sftp_disconnect, sftp_download, sftp_download_bytes,
+    sftp_download_to_downloads, sftp_list_dir, sftp_mkdir, sftp_remove,
+    sftp_rename, sftp_upload, sftp_upload_bytes,
 };
 use commands::ssh::{ssh_connect, ssh_disconnect, ssh_resize, ssh_write};
 use commands::terminal::{pty_close, pty_resize, pty_spawn, pty_write};
@@ -54,7 +55,10 @@ pub fn run() {
             sftp_remove,
             sftp_rename,
             sftp_upload,
+            sftp_upload_bytes,
             sftp_download,
+            sftp_download_to_downloads,
+            sftp_download_bytes,
             local_get_home_dir,
             local_list_dir,
             local_mkdir,

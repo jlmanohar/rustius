@@ -6,18 +6,55 @@
   import { listen } from '@tauri-apps/api/event';
   import { appState } from '../stores/appState.svelte';
   import { DisposableStore } from '../utils/disposable';
-  import { RotateCcw, X } from '@lucide/svelte';
+  import { RotateCcw, X, FolderTree } from '@lucide/svelte';
+  import SftpSidebar from './SftpSidebar.svelte';
   import '@xterm/xterm/css/xterm.css';
   import type { TabSession } from '../types';
 
   let { session = $bindable() }: { session: TabSession } = $props();
 
+  let shellElement: HTMLDivElement | null = $state(null);
   let terminalContainer: HTMLDivElement | null = $state(null);
   let term: Terminal | null = null;
   let fitAddon: FitAddon | null = null;
   let isConnecting = false;
   let isTauriLive = false;
   let isDisconnected = $state(false);
+
+  // MobaXterm-style SFTP side file navigator state
+  let isSftpOpen = $state(true);
+  let sftpWidth = $state(260);
+  let isDraggingSplitter = $state(false);
+
+  function toggleSftp() {
+    isSftpOpen = !isSftpOpen;
+    setTimeout(() => {
+      fitAddon?.fit();
+    }, 50);
+  }
+
+  function startResizeSplitter(e: MouseEvent) {
+    e.preventDefault();
+    isDraggingSplitter = true;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!shellElement) return;
+      const rect = shellElement.getBoundingClientRect();
+      const newWidth = moveEvent.clientX - rect.left;
+      sftpWidth = Math.max(180, Math.min(500, newWidth));
+      fitAddon?.fit();
+    };
+
+    const onMouseUp = () => {
+      isDraggingSplitter = false;
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      setTimeout(() => fitAddon?.fit(), 20);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }
 
   // Disposable stores:
   // componentDisposables manages the lifetime of DOM listeners, observers, and the Terminal instance.
@@ -276,6 +313,14 @@
         return false;
       }
 
+      // Ctrl+Shift+F -> Toggle SFTP side file navigator
+      if (event.ctrlKey && event.shiftKey && (event.key === 'f' || event.key === 'F')) {
+        if (event.type === 'keydown' && session.type === 'ssh') {
+          toggleSftp();
+        }
+        return false;
+      }
+
       return true;
     });
 
@@ -368,12 +413,44 @@
     if (isTauriLive) {
       const closeCmd = session.type === 'ssh' ? 'ssh_disconnect' : 'pty_close';
       invoke(closeCmd, { tabId: session.id }).catch(() => {});
+      if (session.type === 'ssh') {
+        invoke('sftp_disconnect', { tabId: session.id }).catch(() => {});
+      }
     }
   });
 </script>
 
-<div class="terminal-shell">
-  {#if isDisconnected}
+<div class="terminal-shell" bind:this={shellElement}>
+  <!-- Top Utility Bar for SSH sessions with MobaXterm-style SFTP toggle -->
+  {#if session.type === 'ssh'}
+    <div class="terminal-topbar">
+      <div class="topbar-left">
+        <button
+          class="sftp-toggle-btn {isSftpOpen ? 'active' : ''}"
+          onclick={toggleSftp}
+          title="Toggle SFTP Side File Navigator (Ctrl+Shift+F)"
+        >
+          <FolderTree size={12} />
+          <span>SFTP Browser</span>
+        </button>
+      </div>
+
+      {#if isDisconnected}
+        <div class="disconnect-inline">
+          <span class="status-indicator"></span>
+          <span class="disconnect-text">Session closed</span>
+          <button class="reconnect-btn small" onclick={reconnect}>
+            <RotateCcw size={11} />
+            <span>Reconnect</span>
+          </button>
+          <button class="close-btn small" onclick={() => appState.closeTab(session.id)}>
+            <X size={11} />
+            <span>Close</span>
+          </button>
+        </div>
+      {/if}
+    </div>
+  {:else if isDisconnected}
     <div class="disconnect-bar">
       <div class="disconnect-left">
         <span class="status-indicator"></span>
@@ -391,7 +468,32 @@
       </div>
     </div>
   {/if}
-  <div class="terminal-body" bind:this={terminalContainer}></div>
+
+  <!-- Split Workspace containing SFTP navigator and terminal -->
+  <div class="workspace-split">
+    {#if session.type === 'ssh' && isSftpOpen && session.connectionId}
+      <div class="sftp-sidebar-pane" style="width: {sftpWidth}px;">
+        <SftpSidebar
+          tabId={session.id}
+          connectionId={session.connectionId}
+          onclose={toggleSftp}
+          onresize={() => fitAddon?.fit()}
+        />
+      </div>
+
+      <!-- Resizable Splitter Handle -->
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <div
+        class="split-divider {isDraggingSplitter ? 'dragging' : ''}"
+        onmousedown={startResizeSplitter}
+        role="separator"
+        aria-orientation="vertical"
+        tabindex="-1"
+      ></div>
+    {/if}
+
+    <div class="terminal-body" bind:this={terminalContainer}></div>
+  </div>
 </div>
 
 <style>
@@ -402,6 +504,101 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+
+  .terminal-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px 10px;
+    background: #09090b;
+    border-bottom: 1px solid #1f1f23;
+    min-height: 26px;
+    flex-shrink: 0;
+  }
+
+  .topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .sftp-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 7px;
+    background: transparent;
+    border: 1px solid #27272a;
+    border-radius: 4px;
+    color: #a1a1aa;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+
+  .sftp-toggle-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #ffffff;
+    border-color: #3f3f46;
+  }
+
+  .sftp-toggle-btn.active {
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.35);
+    color: #fbbf24;
+  }
+
+  .disconnect-inline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+  }
+
+  .workspace-split {
+    flex: 1;
+    display: flex;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .sftp-sidebar-pane {
+    height: 100%;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  .split-divider {
+    width: 4px;
+    height: 100%;
+    background: #18181b;
+    border-left: 1px solid #27272a;
+    cursor: col-resize;
+    flex-shrink: 0;
+    transition: background 0.12s ease;
+    position: relative;
+    z-index: 5;
+  }
+
+  .split-divider:hover,
+  .split-divider.dragging {
+    background: #3b82f6;
+    border-left-color: #3b82f6;
+  }
+
+  .reconnect-btn.small {
+    padding: 2px 7px;
+    font-size: 10.5px;
+  }
+
+  .close-btn.small {
+    padding: 2px 6px;
+    font-size: 10.5px;
   }
 
   .disconnect-bar {

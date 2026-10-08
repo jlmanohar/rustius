@@ -163,6 +163,82 @@ pub async fn sftp_download(
         .map_err(|e| format!("Failed to download '{remote_path}' to '{local_path}': {e}"))
 }
 
+#[tauri::command]
+pub async fn sftp_download_to_downloads(
+    tab_id: String,
+    remote_path: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let client = {
+        let sessions = state.sftp_sessions.read().await;
+        sessions.get(&tab_id).cloned()
+    }
+    .ok_or_else(|| format!("SFTP session not active for tab: {tab_id}"))?;
+
+    let file_name = Path::new(&remote_path)
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| "downloaded_file".to_string());
+
+    let downloads_dir = if let Ok(profile) = std::env::var("USERPROFILE") {
+        std::path::PathBuf::from(profile).join("Downloads")
+    } else if let Ok(home) = std::env::var("HOME") {
+        std::path::PathBuf::from(home).join("Downloads")
+    } else {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join("Downloads")
+    };
+
+    if !downloads_dir.exists() {
+        let _ = tokio::fs::create_dir_all(&downloads_dir).await;
+    }
+
+    let local_path = downloads_dir.join(&file_name).to_string_lossy().to_string();
+
+    client
+        .download(&remote_path, &local_path)
+        .await
+        .map_err(|e| format!("Failed to download '{remote_path}' to '{local_path}': {e}"))?;
+
+    Ok(local_path)
+}
+
+#[tauri::command]
+pub async fn sftp_download_bytes(
+    tab_id: String,
+    remote_path: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<u8>, String> {
+    let client = {
+        let sessions = state.sftp_sessions.read().await;
+        sessions.get(&tab_id).cloned()
+    }
+    .ok_or_else(|| format!("SFTP session not active for tab: {tab_id}"))?;
+
+    client
+        .download_bytes(&remote_path)
+        .await
+        .map_err(|e| format!("Failed to download bytes from '{remote_path}': {e}"))
+}
+
+#[tauri::command]
+pub async fn sftp_upload_bytes(
+    tab_id: String,
+    remote_path: String,
+    data: Vec<u8>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let client = {
+        let sessions = state.sftp_sessions.read().await;
+        sessions.get(&tab_id).cloned()
+    }
+    .ok_or_else(|| format!("SFTP session not active for tab: {tab_id}"))?;
+
+    client
+        .upload_bytes(&data, &remote_path)
+        .await
+        .map_err(|e| format!("Failed to upload to '{remote_path}': {e}"))
+}
+
 // ==========================================
 // Local Filesystem Operations for Dual-Pane
 // ==========================================
