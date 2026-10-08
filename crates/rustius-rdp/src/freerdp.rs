@@ -183,10 +183,9 @@ impl FreeRdpSession {
         // Performance & Hardware Acceleration Flags
         cmd.arg("/cert:ignore")
             .arg("+dynamic-resolution")
-            .arg("/smart-sizing")
             .arg("+clipboard")
             .arg("/sound")
-            .arg("/gfx:AVC444:on,AVC420:on,RFX:on")
+            .arg("/gfx")
             .arg("/network:auto")
             .arg("/bpp:32");
 
