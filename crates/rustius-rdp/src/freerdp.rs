@@ -9,14 +9,14 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::process::{Child, Command};
-use tracing::{info, warn};
+use tracing::info;
 
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::HWND;
 #[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, SetWindowPos, ShowWindow, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
+    DestroyWindow, EnumChildWindows, EnumWindows, GetWindowThreadProcessId, SetWindowPos, ShowWindow,
+    SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
 };
 
 /// Configuration for launching an embedded FreeRDP session.
@@ -38,13 +38,44 @@ pub struct FreeRdpConfig {
 pub struct FreeRdpSession {
     pub host: String,
     pub port: u16,
-    child_hwnd: isize,
+    parent_hwnd: isize,
+    child_pid: u32,
+    child_hwnd: parking_lot::Mutex<isize>,
     is_connected: Arc<AtomicBool>,
     child_process: parking_lot::Mutex<Option<Child>>,
 }
 
-fn encode_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
+#[cfg(windows)]
+unsafe extern "system" fn enum_child_proc(hwnd: HWND, lparam: isize) -> i32 {
+    let mut pid = 0;
+    GetWindowThreadProcessId(hwnd, &mut pid);
+    let target = &mut *(lparam as *mut (u32, HWND));
+    if pid == target.0 {
+        target.1 = hwnd;
+        return 0; // stop enumeration
+    }
+    1 // continue
+}
+
+#[cfg(windows)]
+pub fn find_freerdp_hwnd(parent: HWND, pid: u32) -> HWND {
+    let mut result: (u32, HWND) = (pid, std::ptr::null_mut());
+    unsafe {
+        if !parent.is_null() {
+            EnumChildWindows(
+                parent,
+                Some(enum_child_proc),
+                &mut result as *mut _ as isize,
+            );
+        }
+        if result.1.is_null() {
+            EnumWindows(
+                Some(enum_child_proc),
+                &mut result as *mut _ as isize,
+            );
+        }
+    }
+    result.1
 }
 
 /// Locate the prebuilt or installed FreeRDP executable.
@@ -110,46 +141,6 @@ impl FreeRdpSession {
         let freerdp_bin = find_freerdp_executable().context("Locating FreeRDP binary")?;
         info!("Launching FreeRDP from: {}", freerdp_bin.display());
 
-        let mut child_hwnd: isize = 0;
-
-        #[cfg(windows)]
-        {
-            if config.parent_window != 0 {
-                let class_name = encode_wide("STATIC");
-                let title = encode_wide("RustiusFreeRdpHost");
-
-                let created = unsafe {
-                    CreateWindowExW(
-                        0,
-                        class_name.as_ptr(),
-                        title.as_ptr(),
-                        WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VISIBLE,
-                        config.x,
-                        config.y,
-                        config.width.max(10),
-                        config.height.max(10),
-                        config.parent_window as HWND,
-                        0 as _,
-                        0 as _,
-                        std::ptr::null(),
-                    )
-                };
-
-                if !created.is_null() {
-                    child_hwnd = created as isize;
-                    info!("Created native Win32 child host HWND: 0x{:X}", child_hwnd);
-                } else {
-                    warn!("Failed to create Win32 child window, falling back to parent HWND");
-                    child_hwnd = config.parent_window;
-                }
-            }
-        }
-
-        #[cfg(not(windows))]
-        {
-            child_hwnd = config.parent_window;
-        }
-
         let mut cmd = Command::new(&freerdp_bin);
 
         // Core connection target
@@ -175,9 +166,14 @@ impl FreeRdpSession {
             }
         }
 
-        // Native Window Embedding
-        if child_hwnd != 0 {
-            cmd.arg(format!("/parent-window:{}", child_hwnd));
+        // Native Window Embedding directly into the application window
+        if config.parent_window != 0 {
+            cmd.arg(format!("/parent-window:{}", config.parent_window));
+        }
+
+        // Size
+        if config.width > 0 && config.height > 0 {
+            cmd.arg(format!("/size:{}x{}", config.width.max(100), config.height.max(100)));
         }
 
         // Performance & Hardware Acceleration Flags
@@ -200,12 +196,15 @@ impl FreeRdpSession {
         }
 
         let child = cmd.spawn().context("Failed to spawn FreeRDP process")?;
-        info!("FreeRDP session started with PID: {:?}", child.id());
+        let child_pid = child.id().unwrap_or(0);
+        info!("FreeRDP session started with PID: {}", child_pid);
 
         Ok(Self {
             host: config.host,
             port: config.port,
-            child_hwnd,
+            parent_hwnd: config.parent_window,
+            child_pid,
+            child_hwnd: parking_lot::Mutex::new(0),
             is_connected: Arc::new(AtomicBool::new(true)),
             child_process: parking_lot::Mutex::new(Some(child)),
         })
@@ -214,17 +213,28 @@ impl FreeRdpSession {
     /// Dynamically reposition and resize the embedded FreeRDP window to match the tab layout.
     pub fn update_bounds(&self, x: i32, y: i32, width: i32, height: i32) -> Result<()> {
         #[cfg(windows)]
-        if self.child_hwnd != 0 {
-            unsafe {
-                SetWindowPos(
-                    self.child_hwnd as HWND,
-                    0 as HWND, // HWND_TOP
-                    x,
-                    y,
-                    width.max(10),
-                    height.max(10),
-                    SWP_NOACTIVATE | SWP_SHOWWINDOW,
-                );
+        {
+            let mut hwnd = *self.child_hwnd.lock();
+            if hwnd == 0 && self.child_pid != 0 {
+                let discovered = find_freerdp_hwnd(self.parent_hwnd as HWND, self.child_pid);
+                if !discovered.is_null() {
+                    hwnd = discovered as isize;
+                    *self.child_hwnd.lock() = hwnd;
+                    info!("Discovered FreeRDP HWND: 0x{:X}", hwnd);
+                }
+            }
+            if hwnd != 0 {
+                unsafe {
+                    SetWindowPos(
+                        hwnd as HWND,
+                        0 as HWND, // HWND_TOP
+                        x,
+                        y,
+                        width.max(10),
+                        height.max(10),
+                        SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                    );
+                }
             }
         }
         Ok(())
@@ -233,21 +243,31 @@ impl FreeRdpSession {
     /// Show or hide the native embedded window when switching tabs.
     pub fn set_visibility(&self, visible: bool) -> Result<()> {
         #[cfg(windows)]
-        if self.child_hwnd != 0 {
-            unsafe {
-                if visible {
-                    SetWindowPos(
-                        self.child_hwnd as HWND,
-                        0 as HWND,
-                        0,
-                        0,
-                        0,
-                        0,
-                        SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE,
-                    );
-                    ShowWindow(self.child_hwnd as HWND, SW_SHOW);
-                } else {
-                    ShowWindow(self.child_hwnd as HWND, SW_HIDE);
+        {
+            let mut hwnd = *self.child_hwnd.lock();
+            if hwnd == 0 && self.child_pid != 0 {
+                let discovered = find_freerdp_hwnd(self.parent_hwnd as HWND, self.child_pid);
+                if !discovered.is_null() {
+                    hwnd = discovered as isize;
+                    *self.child_hwnd.lock() = hwnd;
+                }
+            }
+            if hwnd != 0 {
+                unsafe {
+                    if visible {
+                        SetWindowPos(
+                            hwnd as HWND,
+                            0 as HWND,
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE,
+                        );
+                        ShowWindow(hwnd as HWND, SW_SHOW);
+                    } else {
+                        ShowWindow(hwnd as HWND, SW_HIDE);
+                    }
                 }
             }
         }
@@ -263,10 +283,13 @@ impl FreeRdpSession {
         }
 
         #[cfg(windows)]
-        if self.child_hwnd != 0 {
-            unsafe {
-                ShowWindow(self.child_hwnd as HWND, SW_HIDE);
-                DestroyWindow(self.child_hwnd as HWND);
+        {
+            let hwnd = *self.child_hwnd.lock();
+            if hwnd != 0 {
+                unsafe {
+                    ShowWindow(hwnd as HWND, SW_HIDE);
+                    DestroyWindow(hwnd as HWND);
+                }
             }
         }
         info!("Disconnected FreeRDP session for {}:{}", self.host, self.port);
