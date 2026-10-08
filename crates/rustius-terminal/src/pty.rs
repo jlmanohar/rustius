@@ -124,7 +124,15 @@ impl LocalTerminal {
         Ok(())
     }
 
+    /// Resize the pseudo-terminal window dimensions.
+    ///
+    /// Ignores dimension requests smaller than 10 columns or 2 rows (such as those caused
+    /// by collapsed/hidden UI panes) to avoid crushing ConPTY's screen buffer and truncating
+    /// terminal scrollback history on Windows.
     pub fn resize(&self, cols: u16, rows: u16) -> Result<()> {
+        if cols < 10 || rows < 2 {
+            return Ok(());
+        }
         let master = self
             .master
             .lock()

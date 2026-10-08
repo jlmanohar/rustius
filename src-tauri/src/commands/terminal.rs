@@ -106,6 +106,10 @@ pub async fn pty_resize(
     rows: u16,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    if cols < 10 || rows < 2 {
+        return Ok(());
+    }
+
     let terminal = {
         let terminals = state.local_terminals.read().await;
         terminals.get(&tab_id).cloned()

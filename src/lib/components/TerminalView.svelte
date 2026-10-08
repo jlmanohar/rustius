@@ -121,9 +121,10 @@
         if (componentDisposables.isDisposed) return;
         try {
           fitAddon?.fit();
+          term?.refresh(0, term.rows - 1);
           term?.focus();
         } catch {}
-      }, 50);
+      }, 30);
     }
   });
 
@@ -461,10 +462,15 @@
     }, 50);
 
     // Resize observer to keep xterm fitting parent container
-    const resizeObserver = new ResizeObserver(() => {
+    const resizeObserver = new ResizeObserver((entries) => {
       try {
+        const entry = entries[0];
+        // Ignore collapsed/zero dimensions when hidden or transitioning
+        if (!entry || entry.contentRect.width < 50 || entry.contentRect.height < 50) {
+          return;
+        }
         fitAddon?.fit();
-        if (isTauriLive && term) {
+        if (isTauriLive && term && term.cols >= 10 && term.rows >= 2) {
           const command = session.type === 'ssh' ? 'ssh_resize' : 'pty_resize';
           invoke(command, {
             tabId: session.id,

@@ -215,16 +215,23 @@
   }
 
   .tab-pane {
-    display: none;
-    width: 100%;
-    height: 100%;
+    visibility: hidden;
+    pointer-events: none;
     position: absolute;
     inset: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    z-index: 0;
+    opacity: 0;
   }
 
   .tab-pane.active-pane {
-    display: flex;
-    flex-direction: column;
+    visibility: visible;
+    pointer-events: auto;
+    z-index: 1;
+    opacity: 1;
   }
 
   .hero-container {

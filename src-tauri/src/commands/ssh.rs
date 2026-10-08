@@ -123,6 +123,10 @@ pub async fn ssh_resize(
     rows: u32,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    if cols < 10 || rows < 2 {
+        return Ok(());
+    }
+
     let session = {
         let sessions = state.ssh_sessions.read().await;
         sessions.get(&tab_id).cloned()
