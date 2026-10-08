@@ -15,6 +15,7 @@ pub struct AppState {
     pub ssh_sessions: Arc<RwLock<HashMap<String, Arc<SshSession>>>>,
     pub sftp_sessions: Arc<RwLock<HashMap<String, Arc<SftpClient>>>>,
     pub rdp_sessions: Arc<RwLock<HashMap<String, Arc<RdpSession>>>>,
+    pub freerdp_sessions: Arc<RwLock<HashMap<String, Arc<rustius_rdp::freerdp::FreeRdpSession>>>>,
 }
 
 impl AppState {
@@ -39,6 +40,7 @@ impl AppState {
         let ssh_sessions = Arc::new(RwLock::new(HashMap::new()));
         let sftp_sessions = Arc::new(RwLock::new(HashMap::new()));
         let rdp_sessions = Arc::new(RwLock::new(HashMap::new()));
+        let freerdp_sessions = Arc::new(RwLock::new(HashMap::new()));
 
         Ok(Self {
             config_manager,
@@ -46,6 +48,7 @@ impl AppState {
             ssh_sessions,
             sftp_sessions,
             rdp_sessions,
+            freerdp_sessions,
         })
     }
 }

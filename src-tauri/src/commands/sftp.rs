@@ -191,30 +191,28 @@ pub async fn local_list_dir(path: String) -> Result<Vec<FileEntry>, String> {
         .map_err(|e| format!("Failed to read local directory '{path}': {e}"))?;
 
     let mut results = Vec::new();
-    for entry_res in read_dir {
-        if let Ok(entry) = entry_res {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let full_path = entry.path().to_string_lossy().to_string();
-            let meta = entry.metadata().ok();
+    for entry in read_dir.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let full_path = entry.path().to_string_lossy().to_string();
+        let meta = entry.metadata().ok();
 
-            let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-            let modified = meta.as_ref().and_then(|m| {
-                m.modified().ok().map(|st| {
-                    let dt: chrono::DateTime<chrono::Utc> = st.into();
-                    dt.format("%Y-%m-%d %H:%M").to_string()
-                })
-            });
+        let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let modified = meta.as_ref().and_then(|m| {
+            m.modified().ok().map(|st| {
+                let dt: chrono::DateTime<chrono::Utc> = st.into();
+                dt.format("%Y-%m-%d %H:%M").to_string()
+            })
+        });
 
-            results.push(FileEntry {
-                name,
-                path: full_path,
-                is_dir,
-                size,
-                modified,
-                permissions: None,
-            });
-        }
+        results.push(FileEntry {
+            name,
+            path: full_path,
+            is_dir,
+            size,
+            modified,
+            permissions: None,
+        });
     }
 
     results.sort_by(|a, b| {

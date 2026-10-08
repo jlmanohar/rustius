@@ -13,7 +13,8 @@
     X,
     Cpu,
     Sparkles,
-    Shield
+    Shield,
+    Zap
   } from '@lucide/svelte';
 
   interface RdpFramePayload {
@@ -28,8 +29,10 @@
   let { session = $bindable() }: { session: TabSession } = $props();
 
   let containerRef: HTMLDivElement | null = $state(null);
+  let viewportRef: HTMLDivElement | null = $state(null);
   let canvasRef: HTMLCanvasElement | null = $state(null);
   let ctx: CanvasRenderingContext2D | null = null;
+  let isFreeRdpNative = $state(false);
 
   let desktopWidth = $state(1280);
   let desktopHeight = $state(800);
@@ -108,10 +111,105 @@
 
     sessionDisposables.clear();
 
+    const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+    if (isTauri && session.connectionId) {
+      try {
+        const nativeOk = await startFreeRdpSession(currentGen);
+        if (nativeOk) return;
+      } catch (nativeErr) {
+        console.warn('FreeRDP native connection attempt failed, falling back to IronRDP canvas:', nativeErr);
+      }
+    }
+
+    await startCanvasSession(currentGen);
+  }
+
+  async function startFreeRdpSession(currentGen: number): Promise<boolean> {
+    // 1. Calculate physical viewport coordinates on the desktop
+    let x = 0, y = 0, width = 1280, height = 800;
+    const dpr = window.devicePixelRatio || 1;
+    if (viewportRef) {
+      const rect = viewportRef.getBoundingClientRect();
+      x = Math.round(rect.left * dpr);
+      y = Math.round(rect.top * dpr);
+      width = Math.round(Math.max(rect.width * dpr, 200));
+      height = Math.round(Math.max(rect.height * dpr, 200));
+    }
+
+    // 2. Listen for session exit event
+    const unlistenExit = await listen<number>(`rdp-exit-${session.id}`, (event) => {
+      if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
+      isConnected = false;
+      isConnecting = false;
+      isDisconnected = true;
+      session.status = 'disconnected';
+      disconnectReason = event.payload === 0 ? 'FreeRDP session ended by user or server' : `FreeRDP exited with code ${event.payload}`;
+    });
+
+    if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
+      unlistenExit();
+      return false;
+    }
+    sessionDisposables.add(unlistenExit);
+
+    // 3. Invoke freerdp_connect backend command
+    await invoke('freerdp_connect', {
+      tabId: session.id,
+      connectionId: session.connectionId,
+      x,
+      y,
+      width,
+      height,
+    });
+
+    if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
+      invoke('freerdp_disconnect', { tabId: session.id }).catch(() => {});
+      return false;
+    }
+
+    isFreeRdpNative = true;
+    isConnected = true;
+    isConnecting = false;
+    isDisconnected = false;
+    session.status = 'connected';
+    isTauriLive = true;
+
+    // 4. Setup viewport bounds sync on container resize or window resize
+    const syncBounds = () => {
+      if (!isFreeRdpNative || !viewportRef || isDisconnected) return;
+      const rect = viewportRef.getBoundingClientRect();
+      const scale = window.devicePixelRatio || 1;
+      invoke('freerdp_update_bounds', {
+        tabId: session.id,
+        x: Math.round(rect.left * scale),
+        y: Math.round(rect.top * scale),
+        width: Math.round(Math.max(rect.width * scale, 100)),
+        height: Math.round(Math.max(rect.height * scale, 100)),
+      }).catch(() => {});
+    };
+
+    if (window.ResizeObserver && viewportRef) {
+      const ro = new ResizeObserver(() => {
+        syncBounds();
+      });
+      ro.observe(viewportRef);
+      sessionDisposables.add(() => ro.disconnect());
+    }
+    sessionDisposables.trackEventListener(window, 'resize', syncBounds);
+
+    return true;
+  }
+
+  async function startCanvasSession(currentGen: number) {
+    if (componentDisposables.isDisposed || currentGen !== sessionGeneration) return;
+    isFreeRdpNative = false;
+
     try {
       // 1. Listen for incoming RDP frame updates from Rustius backend
       const unlistenFrame = await listen<RdpFramePayload>(`rdp-frame-${session.id}`, (event) => {
-        if (!canvasRef || !ctx) return;
+        if (!canvasRef) return;
+        if (!ctx) ctx = canvasRef.getContext('2d', { alpha: false });
+        if (!ctx) return;
         const frame = event.payload;
         if (!frame || (!frame.b64 && !frame.data)) return;
 
@@ -468,6 +566,10 @@
     isConnected = false;
     isConnecting = true;
     disconnectReason = '';
+    if (isFreeRdpNative) {
+      await invoke('freerdp_disconnect', { tabId: session.id }).catch(() => {});
+      isFreeRdpNative = false;
+    }
     if (canvasRef && ctx) {
       ctx.clearRect(0, 0, canvasRef.width, canvasRef.height);
     }
@@ -478,9 +580,31 @@
     appState.closeTab(session.id);
   }
 
+  $effect(() => {
+    const isTabActive = appState.activeTabId === session.id;
+    if (isFreeRdpNative && isConnected) {
+      invoke('freerdp_set_visibility', { tabId: session.id, visible: isTabActive }).catch(() => {});
+      if (isTabActive) {
+        requestAnimationFrame(() => {
+          if (!viewportRef) return;
+          const rect = viewportRef.getBoundingClientRect();
+          const scale = window.devicePixelRatio || 1;
+          invoke('freerdp_update_bounds', {
+            tabId: session.id,
+            x: Math.round(rect.left * scale),
+            y: Math.round(rect.top * scale),
+            width: Math.round(Math.max(rect.width * scale, 100)),
+            height: Math.round(Math.max(rect.height * scale, 100)),
+          }).catch(() => {});
+        });
+      }
+    }
+  });
+
   onMount(async () => {
-    if (!canvasRef) return;
-    ctx = canvasRef.getContext('2d', { alpha: false });
+    if (canvasRef) {
+      ctx = canvasRef.getContext('2d', { alpha: false });
+    }
 
     // Track fullscreen change event
     const handleFsChange = () => {
@@ -497,7 +621,9 @@
     if (mouseThrottleTimer !== null) {
       window.cancelAnimationFrame(mouseThrottleTimer);
     }
-    if (isTauriLive) {
+    if (isFreeRdpNative) {
+      invoke('freerdp_disconnect', { tabId: session.id }).catch(() => {});
+    } else if (isTauriLive) {
       invoke('rdp_disconnect', { tabId: session.id }).catch(() => {});
     }
   });
@@ -521,8 +647,20 @@
         <span class="status-label">Disconnected</span>
       {/if}
 
+      {#if isFreeRdpNative}
+        <span class="acceleration-pill native" title="Direct3D Hardware-Accelerated FreeRDP Engine">
+          <Zap size={11} />
+          <span>Direct3D 60+ FPS</span>
+        </span>
+      {:else}
+        <span class="acceleration-pill canvas" title="Pure Rust IronRDP Software Canvas Engine">
+          <Cpu size={11} />
+          <span>IronRDP Canvas</span>
+        </span>
+      {/if}
+
       <span class="mono-eyebrow">{desktopWidth}×{desktopHeight} · 32-BIT</span>
-      {#if fps > 0}
+      {#if fps > 0 && !isFreeRdpNative}
         <span class="fps-badge">{fps} FPS</span>
       {/if}
     </div>
@@ -581,21 +719,32 @@
     </div>
   {/if}
 
-  <!-- RDP Canvas Stage Viewport -->
+  <!-- RDP Viewport Stage Surface -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-  <div class="rdp-viewport {scaleMode}">
-    <canvas
-      bind:this={canvasRef}
-      class="rdp-canvas"
-      tabindex="0"
-      onmousemove={handleMouseMove}
-      onmousedown={handleMouseDown}
-      onmouseup={handleMouseUp}
-      onwheel={handleWheel}
-      oncontextmenu={handleContextMenu}
-      onkeydown={handleKeyDown}
-      onkeyup={handleKeyUp}
-    ></canvas>
+  <div class="rdp-viewport {scaleMode}" bind:this={viewportRef}>
+    {#if isFreeRdpNative}
+      <div class="freerdp-native-backdrop">
+        {#if isConnecting}
+          <div class="native-connecting-msg">
+            <span class="status-indicator connecting"></span>
+            <span>Initializing Direct3D hardware-accelerated remote desktop...</span>
+          </div>
+        {/if}
+      </div>
+    {:else}
+      <canvas
+        bind:this={canvasRef}
+        class="rdp-canvas"
+        tabindex="0"
+        onmousemove={handleMouseMove}
+        onmousedown={handleMouseDown}
+        onmouseup={handleMouseUp}
+        onwheel={handleWheel}
+        oncontextmenu={handleContextMenu}
+        onkeydown={handleKeyDown}
+        onkeyup={handleKeyUp}
+      ></canvas>
+    {/if}
   </div>
 </div>
 
@@ -810,6 +959,49 @@
   .rdp-viewport.actual .rdp-canvas {
     width: auto;
     height: auto;
+  }
+
+  .acceleration-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    padding: 2px 7px;
+    border-radius: var(--radius-full);
+    border: 1px solid transparent;
+    user-select: none;
+  }
+
+  .acceleration-pill.native {
+    background: rgba(0, 223, 216, 0.12);
+    border-color: rgba(0, 223, 216, 0.35);
+    color: #00dfd8;
+  }
+
+  .acceleration-pill.canvas {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--hairline);
+    color: var(--mute);
+  }
+
+  .freerdp-native-backdrop {
+    width: 100%;
+    height: 100%;
+    background: #000000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--mute);
+    user-select: none;
+  }
+
+  .native-connecting-msg {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--body);
   }
 
   :global(.rdp-icon) {
