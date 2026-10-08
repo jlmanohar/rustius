@@ -197,6 +197,9 @@
     }
     sessionDisposables.trackEventListener(window, 'resize', syncBounds);
 
+    const unlistenMove = await listen('window-moved', () => syncBounds());
+    sessionDisposables.add(unlistenMove);
+
     return true;
   }
 

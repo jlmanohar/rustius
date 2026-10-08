@@ -14,6 +14,7 @@ use commands::sftp::{
 use commands::ssh::{ssh_connect, ssh_disconnect, ssh_resize, ssh_write};
 use commands::terminal::{pty_close, pty_resize, pty_spawn, pty_write};
 use state::AppState;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -35,6 +36,22 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Moved(_) = event {
+                let _ = window.emit("window-moved", ());
+                let state = window.state::<AppState>();
+                let sessions: Vec<_> = {
+                    if let Ok(guard) = state.freerdp_sessions.try_read() {
+                        guard.values().cloned().collect()
+                    } else {
+                        Vec::new()
+                    }
+                };
+                for session in sessions {
+                    session.sync_screen_position();
+                }
+            }
+        })
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             get_config,
