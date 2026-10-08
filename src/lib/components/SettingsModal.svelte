@@ -3,6 +3,7 @@
   import { X, Sliders, Check } from '@lucide/svelte';
 
   let autoClose = $state(appState.config.app_settings?.close_tab_on_exit ?? false);
+  let sftpFollowTerminal = $state(appState.config.app_settings?.sftp_follow_terminal_folder ?? true);
   let termType = $state(appState.config.app_settings?.default_terminal_type ?? 'xterm-256color');
   let fontSize = $state(appState.config.app_settings?.font_size ?? 13);
   let fontFamily = $state(appState.config.app_settings?.font_family ?? "'Geist Mono', monospace");
@@ -11,6 +12,7 @@
     const updated = {
       ...appState.config.app_settings,
       close_tab_on_exit: autoClose,
+      sftp_follow_terminal_folder: sftpFollowTerminal,
       default_terminal_type: termType.trim() || 'xterm-256color',
       font_size: Number(fontSize) || 13,
       font_family: fontFamily.trim() || "'Geist Mono', monospace",
@@ -65,6 +67,26 @@
               id="auto-close-toggle"
               type="checkbox"
               bind:checked={autoClose}
+            />
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Setting: Follow terminal directory in SFTP -->
+      <div class="setting-row">
+        <div class="setting-meta">
+          <label for="sftp-follow-toggle" class="setting-title">Follow terminal directory in SFTP</label>
+          <p class="setting-desc">
+            Automatically synchronize the SFTP file navigator whenever you change directories (cd) in the SSH terminal.
+          </p>
+        </div>
+        <div class="setting-control">
+          <label class="switch">
+            <input
+              id="sftp-follow-toggle"
+              type="checkbox"
+              bind:checked={sftpFollowTerminal}
             />
             <span class="slider"></span>
           </label>

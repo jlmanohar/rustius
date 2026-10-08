@@ -23,20 +23,67 @@
     FileCode,
     FileArchive,
     FileImage,
-    PanelLeftClose
+    PanelLeftClose,
+    FolderSync
   } from '@lucide/svelte';
+  import { appState } from '../stores/appState.svelte';
 
   let {
     tabId,
     connectionId,
+    terminalCwd = null,
     onclose,
     onresize
   }: {
     tabId: string;
     connectionId: string;
+    terminalCwd?: string | null;
     onclose: () => void;
     onresize?: () => void;
   } = $props();
+
+  let followTerminal = $state<boolean>(
+    appState.config.app_settings?.sftp_follow_terminal_folder ?? true
+  );
+
+  function toggleFollowTerminal() {
+    followTerminal = !followTerminal;
+  }
+
+  let cwdDebounceTimer: number | null = null;
+  let lastAttemptedPath = '';
+
+  // Reactively track terminal working directory when followTerminal is active (debounced by 350ms)
+  $effect(() => {
+    const cwd = terminalCwd;
+    if (!followTerminal || !isConnected || !cwd) return;
+
+    let target = cwd.trim();
+    if (target === '~') {
+      if (!initialHomePath) return;
+      target = initialHomePath;
+    } else if (target.startsWith('~/')) {
+      if (!initialHomePath) return;
+      target = `${initialHomePath}/${target.slice(2)}`;
+    }
+
+    if (target.length > 1 && target.endsWith('/')) {
+      target = target.slice(0, -1);
+    }
+
+    const normCurrent = currentPath.length > 1 && currentPath.endsWith('/') ? currentPath.slice(0, -1) : currentPath;
+
+    if (target && target !== normCurrent && target !== lastAttemptedPath) {
+      if (cwdDebounceTimer) {
+        window.clearTimeout(cwdDebounceTimer);
+      }
+      cwdDebounceTimer = window.setTimeout(() => {
+        if (!followTerminal || !isConnected || isLoading) return;
+        lastAttemptedPath = target;
+        loadDir(target);
+      }, 350);
+    }
+  });
 
   let currentPath = $state<string>('');
   let initialHomePath = $state<string>('');
@@ -317,6 +364,9 @@
     if (toastTimer) {
       window.clearTimeout(toastTimer);
     }
+    if (cwdDebounceTimer) {
+      window.clearTimeout(cwdDebounceTimer);
+    }
     invoke('sftp_disconnect', { tabId }).catch(() => {});
   });
 </script>
@@ -362,6 +412,14 @@
     <button class="tool-btn" onclick={refresh} disabled={!isConnected || isLoading} title="Refresh Directory">
       <RefreshCw size={13} class={isLoading ? 'spinning' : ''} />
     </button>
+    <button
+      class="tool-btn {followTerminal ? 'active' : ''}"
+      onclick={toggleFollowTerminal}
+      disabled={!isConnected}
+      title={followTerminal ? "Following terminal directory (click to pause)" : "Follow terminal directory (click to enable)"}
+    >
+      <FolderSync size={13} />
+    </button>
     <span class="strip-divider"></span>
     <button class="tool-btn" onclick={openNewFolderModal} disabled={!isConnected} title="New Folder">
       <FolderPlus size={13} />
@@ -380,7 +438,6 @@
           class="path-input"
           bind:value={pathInput}
           onblur={handlePathSubmit}
-          autoFocus
         />
       </form>
     {:else}
@@ -388,7 +445,7 @@
         class="path-display"
         onclick={() => { isEditingPath = true; }}
         role="button"
-        tabindex="0"
+        tabindex="-1"
         onkeydown={(e) => { if (e.key === 'Enter') isEditingPath = true; }}
         title="Click to edit path"
       >
@@ -640,6 +697,16 @@
   .tool-btn:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.08);
     color: #ffffff;
+  }
+
+  .tool-btn.active {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+  }
+
+  .tool-btn.active:hover:not(:disabled) {
+    background: rgba(245, 158, 11, 0.25);
+    color: #fbbf24;
   }
 
   .tool-btn:disabled {

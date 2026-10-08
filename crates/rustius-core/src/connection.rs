@@ -35,7 +35,8 @@ pub enum AuthMethod {
 
 pub fn parse_uuid_or_fallback(s: &str) -> Uuid {
     let trimmed = s.trim();
-    Uuid::parse_str(trimmed).unwrap_or_else(|_| Uuid::new_v5(&Uuid::NAMESPACE_OID, trimmed.as_bytes()))
+    Uuid::parse_str(trimmed)
+        .unwrap_or_else(|_| Uuid::new_v5(&Uuid::NAMESPACE_OID, trimmed.as_bytes()))
 }
 
 fn deserialize_uuid_or_fallback<'de, D>(deserializer: D) -> std::result::Result<Uuid, D::Error>
@@ -46,7 +47,9 @@ where
     Ok(parse_uuid_or_fallback(&s))
 }
 
-fn deserialize_opt_uuid_or_fallback<'de, D>(deserializer: D) -> std::result::Result<Option<Uuid>, D::Error>
+fn deserialize_opt_uuid_or_fallback<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<Uuid>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -64,7 +67,10 @@ fn default_timestamp() -> String {
 /// A single connection definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Connection {
-    #[serde(default = "Uuid::new_v4", deserialize_with = "deserialize_uuid_or_fallback")]
+    #[serde(
+        default = "Uuid::new_v4",
+        deserialize_with = "deserialize_uuid_or_fallback"
+    )]
     pub id: Uuid,
     pub name: String,
     #[serde(alias = "conn_type")]
@@ -157,7 +163,10 @@ fn default_true() -> bool {
 /// A folder that can contain connections and sub-folders.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Folder {
-    #[serde(default = "Uuid::new_v4", deserialize_with = "deserialize_uuid_or_fallback")]
+    #[serde(
+        default = "Uuid::new_v4",
+        deserialize_with = "deserialize_uuid_or_fallback"
+    )]
     pub id: Uuid,
     pub name: String,
     #[serde(default, deserialize_with = "deserialize_opt_uuid_or_fallback")]
@@ -198,6 +207,10 @@ pub struct AppSettings {
     pub sidebar_width: u32,
     #[serde(default)]
     pub close_tab_on_exit: bool,
+    /// Automatically synchronize SFTP file navigator with terminal working directory (e.g. on `cd`).
+    /// Mimics MobaXterm's "Follow terminal folder" feature using OSC 7 sequences and terminal title updates.
+    #[serde(default = "default_true")]
+    pub sftp_follow_terminal_folder: bool,
 }
 
 impl Default for AppSettings {
@@ -210,6 +223,7 @@ impl Default for AppSettings {
             show_sidebar: true,
             sidebar_width: 280,
             close_tab_on_exit: false,
+            sftp_follow_terminal_folder: true,
         }
     }
 }
@@ -301,7 +315,8 @@ mod tests {
             }
         }"#;
 
-        let conn: Connection = serde_json::from_str(json_input).expect("Should deserialize leniently");
+        let conn: Connection =
+            serde_json::from_str(json_input).expect("Should deserialize leniently");
         assert_eq!(conn.name, "Frontend Test");
         assert_eq!(conn.connection_type, ConnectionType::Ssh);
         assert_eq!(conn.environment.as_deref(), Some("Production"));
@@ -334,7 +349,8 @@ mod tests {
             }
         }"#;
 
-        let conn: Connection = serde_json::from_str(json_input).expect("Should deserialize frontend JSON");
+        let conn: Connection =
+            serde_json::from_str(json_input).expect("Should deserialize frontend JSON");
         let config = RustiusConfig {
             version: "1.0.0".into(),
             app_settings: AppSettings::default(),
@@ -352,6 +368,7 @@ mod tests {
         assert_eq!(config.version, "1.0.0");
         assert_eq!(config.app_settings.theme, "dark");
         assert_eq!(config.app_settings.font_size, 14);
+        assert!(config.app_settings.sftp_follow_terminal_folder);
         assert!(config.tree.is_empty());
     }
 }

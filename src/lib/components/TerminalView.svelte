@@ -15,8 +15,8 @@
 
   let shellElement: HTMLDivElement | null = $state(null);
   let terminalContainer: HTMLDivElement | null = $state(null);
-  let term: Terminal | null = null;
-  let fitAddon: FitAddon | null = null;
+  let term = $state<Terminal | null>(null);
+  let fitAddon = $state<FitAddon | null>(null);
   let isConnecting = false;
   let isTauriLive = false;
   let isDisconnected = $state(false);
@@ -25,6 +25,58 @@
   let isSftpOpen = $state(true);
   let sftpWidth = $state(260);
   let isDraggingSplitter = $state(false);
+  let terminalCwd = $state<string | null>(null);
+
+  // Helper to extract working directory from OSC 7 escape sequence (e.g. file://hostname/path)
+  function extractCwdFromOsc7(data: string): string | null {
+    if (!data) return null;
+    const raw = data.trim();
+    if (raw.startsWith('file://')) {
+      try {
+        const url = new URL(raw);
+        return decodeURIComponent(url.pathname);
+      } catch {
+        const match = /^file:\/\/[^/]*(\/.*)$/.exec(raw);
+        if (match) return decodeURIComponent(match[1]);
+      }
+    } else if (raw.startsWith('/') || raw.startsWith('~')) {
+      return raw;
+    }
+    return null;
+  }
+
+  // Helper to extract working directory from terminal title (OSC 0 / OSC 2 - default in Linux distributions)
+  function extractCwdFromTitle(title: string): string | null {
+    if (!title) return null;
+    const t = title.trim();
+
+    // Pattern 1: user@host: /path or user@host:/path or user@host: ~ or user@host:~
+    const userHostMatch = /^(?:[a-zA-Z0-9_.+-]+@)?[a-zA-Z0-9_.+-]+:\s*([/~].*)$/.exec(t);
+    if (userHostMatch && userHostMatch[1]) {
+      return userHostMatch[1].trim();
+    }
+
+    // Pattern 2: [user@host /path] or [user@host: /path] or (user@host)-[/path]
+    const bracketMatch = /^[\[(](?:[a-zA-Z0-9_.+-]+@)?[a-zA-Z0-9_.+-]+:?\s+([/~].*?)[\])]$/.exec(t);
+    if (bracketMatch && bracketMatch[1]) {
+      return bracketMatch[1].trim();
+    }
+
+    // Pattern 3: user@host - /path or host - /path
+    const dashMatch = /^(?:[a-zA-Z0-9_.+-]+@)?[a-zA-Z0-9_.+-]+\s*[-–—]\s*([/~].*)$/.exec(t);
+    if (dashMatch && dashMatch[1]) {
+      return dashMatch[1].trim();
+    }
+
+    // Pattern 4: Terminal title is simply the directory itself: "/var/log" or "~" or "~/projects"
+    if (t.startsWith('/') || t.startsWith('~')) {
+      if (!t.includes(' ') && !t.includes('\n')) {
+        return t;
+      }
+    }
+
+    return null;
+  }
 
   function toggleSftp() {
     isSftpOpen = !isSftpOpen;
@@ -156,6 +208,12 @@
           }
 
           isTauriLive = true;
+          setTimeout(() => {
+            try {
+              fitAddon?.fit();
+              term?.focus();
+            } catch {}
+          }, 30);
 
           const onDataDisposable = term?.onData((data) => {
             if (isDisconnected) return;
@@ -258,6 +316,11 @@
 
     term.open(terminalContainer);
     fitAddon.fit();
+    setTimeout(() => {
+      try {
+        term?.focus();
+      } catch {}
+    }, 30);
 
     // Custom keyboard handler for copy / paste and Enter-to-reconnect
     term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
@@ -352,6 +415,32 @@
     // Track DOM listener with auto-cleanup
     componentDisposables.trackEventListener(terminalContainer, 'contextmenu', handleContextMenu);
 
+    // Track working directory via OSC 7 (modern shells) and Title changes (default in Linux distributions)
+    try {
+      const osc7Disposable = term.parser.registerOscHandler(7, (data: string) => {
+        try {
+          const path = extractCwdFromOsc7(data);
+          if (path && path !== terminalCwd) {
+            terminalCwd = path;
+          }
+        } catch {}
+        return true;
+      });
+      componentDisposables.add(osc7Disposable);
+    } catch (e) {
+      console.warn('Failed to register OSC 7 handler:', e);
+    }
+
+    const titleDisposable = term.onTitleChange((title: string) => {
+      try {
+        const path = extractCwdFromTitle(title);
+        if (path && path !== terminalCwd) {
+          terminalCwd = path;
+        }
+      } catch {}
+    });
+    componentDisposables.add(titleDisposable);
+
     // Listen for terminal exit event from Rust backend
     const unlistenExit = await listen<number>(`terminal-exit-${session.id}`, (event) => {
       handleSessionExit(event.payload ?? 0);
@@ -363,6 +452,13 @@
     componentDisposables.add(unlistenExit);
 
     await startSession();
+
+    setTimeout(() => {
+      try {
+        fitAddon?.fit();
+        term?.focus();
+      } catch {}
+    }, 50);
 
     // Resize observer to keep xterm fitting parent container
     const resizeObserver = new ResizeObserver(() => {
@@ -420,7 +516,18 @@
   });
 </script>
 
-<div class="terminal-shell" bind:this={shellElement}>
+<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions a11y_no_static_element_interactions -->
+<div
+  class="terminal-shell"
+  role="presentation"
+  bind:this={shellElement}
+  onclick={(e) => {
+    const target = e.target as HTMLElement | null;
+    if (target && !target.closest('.sftp-sidebar-pane') && !target.closest('.terminal-topbar')) {
+      term?.focus();
+    }
+  }}
+>
   <!-- Top Utility Bar for SSH sessions with MobaXterm-style SFTP toggle -->
   {#if session.type === 'ssh'}
     <div class="terminal-topbar">
@@ -476,6 +583,7 @@
         <SftpSidebar
           tabId={session.id}
           connectionId={session.connectionId}
+          {terminalCwd}
           onclose={toggleSftp}
           onresize={() => fitAddon?.fit()}
         />
@@ -492,7 +600,14 @@
       ></div>
     {/if}
 
-    <div class="terminal-body" bind:this={terminalContainer}></div>
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions a11y_no_static_element_interactions -->
+    <div
+      class="terminal-body"
+      role="presentation"
+      bind:this={terminalContainer}
+      onclick={() => term?.focus()}
+      onmousedown={() => term?.focus()}
+    ></div>
   </div>
 </div>
 
@@ -692,6 +807,7 @@
 
   .terminal-body {
     flex: 1;
+    min-width: 0;
     width: 100%;
     height: 100%;
     padding: 10px 14px;

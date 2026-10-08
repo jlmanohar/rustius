@@ -1,10 +1,22 @@
-use crate::state::AppState;
-use rustius_ssh::client::SshSession;
 use std::sync::Arc;
+
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
+use rustius_ssh::client::SshSession;
+
+use crate::state::AppState;
+
+/// Initialize a new SSH terminal session for a specific tab.
+///
+/// 1. Retrieves connection configuration and credentials by UUID.
+/// 2. Spawns an SSH client session with pseudo-terminal allocation (`xterm-256color`).
+/// 3. Replaces any prior active session for the same `tab_id` cleanly.
+/// 4. Spawns an asynchronous background worker task that consumes incoming remote
+///    pty output bytes and emits them to the frontend via `terminal-data-{tab_id}` events.
+/// 5. Drains any residual output upon receiving session exit status before signaling
+///    `terminal-exit-{tab_id}` to avoid cutting off last-second output (e.g., prompt or exit message).
 #[tauri::command]
 pub async fn ssh_connect(
     tab_id: String,
@@ -12,7 +24,10 @@ pub async fn ssh_connect(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    info!("Starting SSH session for tab: {}, conn: {}", tab_id, connection_id);
+    info!(
+        "Starting SSH session for tab: {}, conn: {}",
+        tab_id, connection_id
+    );
 
     let uuid = rustius_core::connection::parse_uuid_or_fallback(&connection_id);
     let connection = state
@@ -74,6 +89,10 @@ pub async fn ssh_connect(
     Ok(())
 }
 
+/// Send keystrokes and raw user input bytes into the remote SSH session channel.
+///
+/// Minimizes lock hold time by cloning the session [`Arc`] out of the session map
+/// before awaiting asynchronous write operations.
 #[tauri::command]
 pub async fn ssh_write(
     tab_id: String,
@@ -93,6 +112,10 @@ pub async fn ssh_write(
     }
 }
 
+/// Request terminal window resize on the remote SSH pseudo-terminal (PTY).
+///
+/// Sends an SSH channel window change request with updated column and row dimensions
+/// so remote applications (vim, htop, bash) adapt layout accordingly.
 #[tauri::command]
 pub async fn ssh_resize(
     tab_id: String,
@@ -113,6 +136,7 @@ pub async fn ssh_resize(
     }
 }
 
+/// Gracefully terminate and remove the SSH session for the given tab ID.
 #[tauri::command]
 pub async fn ssh_disconnect(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let session = {

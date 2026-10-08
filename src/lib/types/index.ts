@@ -77,6 +77,7 @@ export interface AppSettings {
   show_sidebar: boolean;
   sidebar_width: number;
   close_tab_on_exit?: boolean;
+  sftp_follow_terminal_folder?: boolean;
 }
 
 export interface RustiusConfig {

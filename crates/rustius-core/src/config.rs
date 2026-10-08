@@ -31,8 +31,8 @@ impl ConfigManager {
             info!("No config found, creating defaults at: {:?}", config_path);
             let config = RustiusConfig::default();
             // Save the default config immediately
-            let content = toml::to_string_pretty(&config)
-                .context("Failed to serialize default config")?;
+            let content =
+                toml::to_string_pretty(&config).context("Failed to serialize default config")?;
             storage.write(&config_path, &content)?;
             config
         };
@@ -52,8 +52,7 @@ impl ConfigManager {
     /// Persist the current in-memory config to disk.
     pub async fn save(&self) -> Result<()> {
         let config = self.config.read().await;
-        let content = toml::to_string_pretty(&*config)
-            .context("Failed to serialize config")?;
+        let content = toml::to_string_pretty(&*config).context("Failed to serialize config")?;
         self.storage.write(&self.config_path, &content)?;
         debug!("Config saved to {:?}", self.config_path);
         Ok(())
@@ -96,11 +95,7 @@ impl ConfigManager {
     }
 
     /// Create a new folder in the tree.
-    pub async fn add_folder(
-        &self,
-        name: String,
-        parent_folder_id: Option<Uuid>,
-    ) -> Result<Uuid> {
+    pub async fn add_folder(&self, name: String, parent_folder_id: Option<Uuid>) -> Result<Uuid> {
         let folder_id = Uuid::new_v4();
         let folder = Folder {
             id: folder_id,
@@ -138,15 +133,13 @@ impl ConfigManager {
     pub async fn get_connection(&self, id: Uuid) -> Result<Connection> {
         let config = self.config.read().await;
         Self::find_connection_in_tree(&config.tree, id)
-            .ok_or_else(|| {
-                RustiusError::ConnectionNotFound(id.to_string()).into()
-            })
+            .ok_or_else(|| RustiusError::ConnectionNotFound(id.to_string()).into())
     }
 
     // --- Private helper methods for tree traversal ---
 
     /// Recursively insert a node into the folder with the given ID.
-    fn insert_into_folder(tree: &mut Vec<TreeNode>, folder_id: Uuid, node: TreeNode) -> bool {
+    fn insert_into_folder(tree: &mut [TreeNode], folder_id: Uuid, node: TreeNode) -> bool {
         for item in tree.iter_mut() {
             if let TreeNode::Folder(ref mut folder) = item {
                 if folder.id == folder_id {
@@ -243,13 +236,19 @@ mod tests {
         );
         let conn_id = conn.id;
 
-        manager.add_connection(conn, None).await.expect("Failed to add connection");
+        manager
+            .add_connection(conn, None)
+            .await
+            .expect("Failed to add connection");
 
         let config = manager.get_config().await;
         assert_eq!(config.tree.len(), 1);
 
         // Verify we can find it
-        let found = manager.get_connection(conn_id).await.expect("Connection not found");
+        let found = manager
+            .get_connection(conn_id)
+            .await
+            .expect("Connection not found");
         assert_eq!(found.name, "My Server");
 
         // Cleanup
@@ -299,7 +298,10 @@ mod tests {
         }
 
         // Should still be findable by ID
-        let found = manager.get_connection(conn_id).await.expect("Connection not found");
+        let found = manager
+            .get_connection(conn_id)
+            .await
+            .expect("Connection not found");
         assert_eq!(found.name, "Web Server");
 
         // Cleanup
