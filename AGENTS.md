@@ -387,7 +387,7 @@ This project uses **Svelte 5**. Do not use:
 # Development (starts Vite + Tauri simultaneously)
 cargo tauri dev
 
-# Build release binary
+# Build release binary (ALWAYS use this, NEVER raw 'cargo build')
 cargo tauri build
 
 # Run Rust tests
@@ -399,6 +399,11 @@ npm run check
 # Frontend only (no Tauri)
 npm run dev
 ```
+
+> [!WARNING]
+> **NEVER use `cargo build` or `cargo build --release` to produce the application executable.**
+> Raw `cargo build` bypasses the Tauri CLI pipeline and does NOT embed the compiled frontend assets from `frontendDist`. As a result, the binary expects `devUrl` (`http://localhost:1420`), causing the desktop app to hang and fail with a connection timeout.
+> **Always use `cargo tauri build`** (or `cargo tauri dev` during development) so frontend assets are bundled and embedded directly into the executable.
 
 ### 5.2 Adding a New Feature
 
