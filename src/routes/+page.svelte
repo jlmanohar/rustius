@@ -7,6 +7,7 @@
   import TerminalView from '$lib/components/TerminalView.svelte';
   import SftpView from '$lib/components/SftpView.svelte';
   import RdpView from '$lib/components/RdpView.svelte';
+  import TitleBar from '$lib/components/TitleBar.svelte';
   import {
     Terminal,
     ArrowLeftRight,
@@ -25,7 +26,11 @@
 </script>
 <svelte:window onbeforeunload={() => appState.closeAllTabs()} />
 
-<div class="app-viewport">
+<div class="window-shell">
+  <!-- Native App Title Bar & Window Controls -->
+  <TitleBar />
+
+  <div class="app-viewport">
   <!-- Sidebar Navigation -->
   <Sidebar />
 
@@ -178,6 +183,7 @@
       {/if}
     </div>
   </main>
+  </div>
 
   <!-- Connection Configuration Modal -->
   {#if appState.isConnectionModalOpen}
@@ -191,10 +197,20 @@
 </div>
 
 <style>
-  .app-viewport {
+  .window-shell {
     display: flex;
+    flex-direction: column;
     width: 100vw;
     height: 100vh;
+    background: var(--canvas);
+    overflow: hidden;
+  }
+
+  .app-viewport {
+    flex: 1;
+    display: flex;
+    width: 100%;
+    min-height: 0;
     background: var(--canvas);
     overflow: hidden;
   }
@@ -203,7 +219,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: 100%;
     min-width: 0;
     overflow: hidden;
   }

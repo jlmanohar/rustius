@@ -305,7 +305,7 @@
 <style>
   .sidebar {
     width: 270px;
-    height: 100vh;
+    height: 100%;
     background: var(--canvas);
     border-right: 1px solid var(--hairline);
     display: flex;

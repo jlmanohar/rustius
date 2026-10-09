@@ -10,6 +10,7 @@ use commands::sftp::{
 };
 use commands::ssh::{ssh_connect, ssh_disconnect, ssh_resize, ssh_write};
 use commands::terminal::{pty_close, pty_resize, pty_spawn, pty_write};
+use commands::window::{window_close, window_is_maximized, window_minimize, window_toggle_maximize};
 use state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -66,7 +67,11 @@ pub fn run() {
             rdp_connect,
             rdp_disconnect,
             rdp_key_event,
-            rdp_mouse_event
+            rdp_mouse_event,
+            window_minimize,
+            window_toggle_maximize,
+            window_close,
+            window_is_maximized
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
