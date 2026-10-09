@@ -70,14 +70,11 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <header class="titlebar" data-tauri-drag-region onmousedown={handleMouseDown}>
-  <!-- Left: Branding & App title -->
-  <div class="titlebar-section titlebar-left" data-tauri-drag-region>
-    <img src="/rustius_icon.svg" alt="Rustius" class="titlebar-logo" width="14" height="14" />
-    <span class="titlebar-brand-name">Rustius</span>
-  </div>
+  <!-- Left spacer (balances right controls for centered active pill) -->
+  <div class="titlebar-spacer" data-tauri-drag-region></div>
 
   <!-- Center: Active Tab Context / Draggable Area -->
-  <div class="titlebar-section titlebar-center" data-tauri-drag-region>
+  <div class="titlebar-center" data-tauri-drag-region>
     {#if activeSession}
       <div class="titlebar-active-pill" data-tauri-drag-region>
         <span class="session-indicator {activeSession.status}"></span>
@@ -154,37 +151,19 @@
     z-index: 1000;
   }
 
-  .titlebar-section {
-    display: flex;
-    align-items: center;
+  .titlebar-spacer {
+    width: 138px;
     height: 100%;
-  }
-
-  .titlebar-left {
-    padding-left: 12px;
-    gap: 8px;
-    min-width: 160px;
-  }
-
-  .titlebar-logo {
-    width: 14px;
-    height: 14px;
-    object-fit: contain;
     pointer-events: none;
-    filter: drop-shadow(0 1px 3px rgba(240, 67, 36, 0.3));
-  }
-
-  .titlebar-brand-name {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: -0.2px;
-    color: var(--ink-secondary);
-    pointer-events: none;
+    flex-shrink: 0;
   }
 
   .titlebar-center {
     flex: 1;
+    display: flex;
+    align-items: center;
     justify-content: center;
+    height: 100%;
     overflow: hidden;
     padding: 0 16px;
   }
