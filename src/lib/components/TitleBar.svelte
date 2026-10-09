@@ -1,11 +1,13 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onDestroy, onMount } from 'svelte';
   import { appState } from '../stores/appState.svelte';
   import { DisposableStore } from '../utils/disposable';
 
   let isMaximized = $state(false);
   const disposables = new DisposableStore();
+  const appWindow = getCurrentWindow();
 
   let activeSession = $derived(
     appState.tabs.find((t) => t.id === appState.activeTabId) || null
@@ -16,6 +18,16 @@
       isMaximized = await invoke<boolean>('window_is_maximized');
     } catch {
       // In dev browser fallback
+    }
+  }
+
+  function handleMouseDown(e: MouseEvent) {
+    if (e.button === 0 && !(e.target as HTMLElement).closest('.titlebar-controls')) {
+      if (e.detail === 2) {
+        handleToggleMaximize();
+      } else {
+        appWindow.startDragging().catch(() => {});
+      }
     }
   }
 
@@ -56,7 +68,8 @@
   });
 </script>
 
-<header class="titlebar" data-tauri-drag-region>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<header class="titlebar" data-tauri-drag-region onmousedown={handleMouseDown}>
   <!-- Left: Branding & App title -->
   <div class="titlebar-section titlebar-left" data-tauri-drag-region>
     <img src="/rustius_icon.svg" alt="Rustius" class="titlebar-logo" width="14" height="14" />
@@ -190,6 +203,7 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    pointer-events: none;
   }
 
   .session-indicator {
