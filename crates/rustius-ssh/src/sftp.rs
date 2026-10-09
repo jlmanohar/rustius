@@ -48,54 +48,85 @@ pub struct SftpClient {
 impl SftpClient {
     /// Connect to remote host and initialize SFTP subsystem.
     pub async fn connect(connection: &Connection) -> Result<Self> {
-        let config = Arc::new(russh::client::Config::default());
+        let config = Arc::new(russh::client::Config {
+            keepalive_interval: Some(std::time::Duration::from_secs(5)),
+            keepalive_max: 3,
+            inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
+            ..Default::default()
+        });
         let handler = SftpClientHandler;
         let addr = format!("{}:{}", connection.host, connection.port);
         info!("Connecting SFTP subsystem to {}", addr);
 
-        let mut handle =
-            russh::client::connect(config, (connection.host.as_str(), connection.port), handler)
-                .await
-                .context(format!("Failed to connect to {}", addr))?;
+        let connect_fut = async {
+            let mut handle = russh::client::connect(
+                config,
+                (connection.host.as_str(), connection.port),
+                handler,
+            )
+            .await
+            .context(format!("Failed to connect to {}", addr))?;
 
-        // Authenticate
-        match &connection.auth {
-            AuthMethod::Password { username, password } => {
-                let pass = password.as_deref().unwrap_or("");
-                let res = handle.authenticate_password(username, pass).await?;
-                if !matches!(res, russh::client::AuthResult::Success) {
-                    anyhow::bail!("Password authentication failed for user {}", username);
+            // Authenticate
+            match &connection.auth {
+                AuthMethod::Password { username, password } => {
+                    let pass = password.as_deref().unwrap_or("");
+                    let res = handle.authenticate_password(username, pass).await?;
+                    if !matches!(res, russh::client::AuthResult::Success) {
+                        anyhow::bail!("Password authentication failed for user {}", username);
+                    }
+                }
+                AuthMethod::KeyFile {
+                    username,
+                    key_path,
+                    passphrase,
+                } => {
+                    let key = russh::keys::load_secret_key(key_path, passphrase.as_deref())
+                        .context(format!("Failed to load key from {}", key_path))?;
+                    let key_with_alg =
+                        russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None);
+                    let res = handle
+                        .authenticate_publickey(username, key_with_alg)
+                        .await?;
+                    if !matches!(res, russh::client::AuthResult::Success) {
+                        anyhow::bail!("Public key authentication failed for user {}", username);
+                    }
+                }
+                AuthMethod::Agent { .. } => {
+                    anyhow::bail!("SSH agent authentication not yet implemented");
                 }
             }
-            AuthMethod::KeyFile {
-                username,
-                key_path,
-                passphrase,
-            } => {
-                let key = russh::keys::load_secret_key(key_path, passphrase.as_deref())
-                    .context(format!("Failed to load key from {}", key_path))?;
-                let key_with_alg = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None);
-                let res = handle
-                    .authenticate_publickey(username, key_with_alg)
-                    .await?;
-                if !matches!(res, russh::client::AuthResult::Success) {
-                    anyhow::bail!("Public key authentication failed for user {}", username);
-                }
-            }
-            AuthMethod::Agent { .. } => {
-                anyhow::bail!("SSH agent authentication not yet implemented");
-            }
-        }
 
-        let channel = handle.channel_open_session().await?;
-        channel.request_subsystem(false, "sftp").await?;
-        let stream = channel.into_stream();
-        let session = SftpSession::new(stream).await?;
+            let channel = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                handle.channel_open_session(),
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("Timed out opening SFTP channel"))?
+            .context("Failed to open channel for SFTP")?;
 
-        Ok(Self {
-            session,
-            _handle: handle,
-        })
+            channel.request_subsystem(false, "sftp").await?;
+            let stream = channel.into_stream();
+            let session = SftpSession::new(stream).await?;
+
+            Ok(Self {
+                session,
+                _handle: handle,
+            })
+        };
+
+        tokio::time::timeout(std::time::Duration::from_secs(12), connect_fut)
+            .await
+            .map_err(|_| anyhow::anyhow!("SFTP connection to {} timed out after 12 seconds", addr))?
+    }
+
+    /// Disconnect and terminate the SFTP session.
+    pub async fn disconnect(&self) -> Result<()> {
+        let _ = self
+            ._handle
+            .disconnect(russh::Disconnect::ByApplication, "", "")
+            .await;
+        Ok(())
     }
 
     /// Resolve canonical path (e.g. "." resolves to remote user home directory)

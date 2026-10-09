@@ -46,48 +46,75 @@ impl SshSession {
         output_tx: mpsc::UnboundedSender<Vec<u8>>,
         exit_tx: mpsc::Sender<u32>,
     ) -> Result<Self> {
-        let config = Arc::new(russh::client::Config::default());
+        let config = Arc::new(russh::client::Config {
+            // Send keepalive probes every 5 seconds; after 3 consecutive unanswered probes (15s total),
+            // the client cleanly terminates the dead connection.
+            keepalive_interval: Some(std::time::Duration::from_secs(5)),
+            keepalive_max: 3,
+            inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
+            ..Default::default()
+        });
         let handler = SshClientHandler;
 
         let addr = format!("{}:{}", connection.host, connection.port);
         info!("Connecting SSH to {}", addr);
 
-        let mut handle =
-            russh::client::connect(config, (connection.host.as_str(), connection.port), handler)
-                .await
-                .context(format!("Failed to connect to {}", addr))?;
+        let connect_fut = async {
+            let mut handle = russh::client::connect(
+                config,
+                (connection.host.as_str(), connection.port),
+                handler,
+            )
+            .await
+            .context(format!("Failed to connect to {}", addr))?;
 
-        // Authenticate
-        match &connection.auth {
-            AuthMethod::Password { username, password } => {
-                let pass = password.as_deref().unwrap_or("");
-                let res = handle.authenticate_password(username, pass).await?;
-                if !matches!(res, russh::client::AuthResult::Success) {
-                    anyhow::bail!("Password authentication failed for user {}", username);
+            // Authenticate
+            match &connection.auth {
+                AuthMethod::Password { username, password } => {
+                    let pass = password.as_deref().unwrap_or("");
+                    let res = handle.authenticate_password(username, pass).await?;
+                    if !matches!(res, russh::client::AuthResult::Success) {
+                        anyhow::bail!("Password authentication failed for user {}", username);
+                    }
+                }
+                AuthMethod::KeyFile {
+                    username,
+                    key_path,
+                    passphrase,
+                } => {
+                    let key = russh::keys::load_secret_key(key_path, passphrase.as_deref())
+                        .context(format!("Failed to load key from {}", key_path))?;
+                    let key_with_alg =
+                        russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None);
+                    let res = handle
+                        .authenticate_publickey(username, key_with_alg)
+                        .await?;
+                    if !matches!(res, russh::client::AuthResult::Success) {
+                        anyhow::bail!("Public key authentication failed for user {}", username);
+                    }
+                }
+                AuthMethod::Agent { .. } => {
+                    anyhow::bail!("SSH agent authentication not yet implemented");
                 }
             }
-            AuthMethod::KeyFile {
-                username,
-                key_path,
-                passphrase,
-            } => {
-                let key = russh::keys::load_secret_key(key_path, passphrase.as_deref())
-                    .context(format!("Failed to load key from {}", key_path))?;
-                let key_with_alg = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None);
-                let res = handle
-                    .authenticate_publickey(username, key_with_alg)
-                    .await?;
-                if !matches!(res, russh::client::AuthResult::Success) {
-                    anyhow::bail!("Public key authentication failed for user {}", username);
-                }
-            }
-            AuthMethod::Agent { .. } => {
-                anyhow::bail!("SSH agent authentication not yet implemented");
-            }
-        }
 
-        // Open channel and request PTY + shell
-        let channel = handle.channel_open_session().await?;
+            Ok(handle)
+        };
+
+        // 12-second connect/auth timeout prevents infinite hangs if remote host is shut down or unreachable
+        let handle = tokio::time::timeout(std::time::Duration::from_secs(12), connect_fut)
+            .await
+            .map_err(|_| anyhow::anyhow!("Connection to {} timed out after 12 seconds (host unreachable or offline)", addr))?
+            .context(format!("Failed to connect to {}", addr))?;
+
+        // Open channel and request PTY + shell with 5-second timeout
+        let channel = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            handle.channel_open_session(),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Timed out opening SSH channel"))?
+        .context("Failed to open SSH session channel")?;
 
         channel
             .request_pty(true, "xterm-256color", 80, 24, 0, 0, &[])
@@ -103,6 +130,7 @@ impl SshSession {
         // the queue fills up after 100 packets, blocking the russh connection event loop
         // and freezing all terminal I/O.
         tokio::spawn(async move {
+            let mut received_exit_status = false;
             while let Some(msg) = read_half.wait().await {
                 match msg {
                     russh::ChannelMsg::Data { data } => {
@@ -115,15 +143,22 @@ impl SshSession {
                         }
                     }
                     russh::ChannelMsg::ExitStatus { exit_status } => {
+                        received_exit_status = true;
                         let _ = exit_tx.send(exit_status).await;
                     }
-                    russh::ChannelMsg::Eof | russh::ChannelMsg::Close => {
+                    russh::ChannelMsg::Eof | russh::ChannelMsg::Close
+                        if !received_exit_status =>
+                    {
+                        received_exit_status = true;
                         let _ = exit_tx.try_send(0);
                     }
                     _ => {}
                 }
             }
-            let _ = exit_tx.try_send(0);
+            if !received_exit_status {
+                // Connection terminated abruptly midway (e.g. remote host shut down, keepalive timeout, broken pipe)
+                let _ = exit_tx.send(255).await;
+            }
         });
 
         Ok(Self {
@@ -152,10 +187,11 @@ impl SshSession {
 
     /// Close the interactive SSH channel.
     pub async fn disconnect(&self) -> Result<()> {
-        self.write_half
-            .close()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to close SSH channel: {e}"))?;
+        let _ = self.write_half.close().await;
+        let _ = self
+            ._handle
+            .disconnect(russh::Disconnect::ByApplication, "", "")
+            .await;
         Ok(())
     }
 }

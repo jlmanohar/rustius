@@ -135,7 +135,7 @@
 
     try {
       isDisconnected = false;
-      session.status = 'connected';
+      session.status = 'connecting';
 
       // Always clear any previous session listeners (xterm onData, tauri terminal-data)
       sessionDisposables.clear();
@@ -167,6 +167,7 @@
           }
 
           isTauriLive = true;
+          session.status = 'connected';
 
           const onDataDisposable = term?.onData((data) => {
             if (isDisconnected) return;
@@ -184,7 +185,7 @@
         }
       } else if (session.type === 'ssh' && session.connectionId) {
         try {
-          term?.writeln(`\x1b[90mConnecting to remote SSH host...\x1b[0m\r\n`);
+          term?.write(`\x1b[90mConnecting to remote SSH host...\x1b[0m\r`);
 
           const unlisten = await listen<number[]>(`terminal-data-${session.id}`, (event) => {
             if (term && event.payload) {
@@ -208,6 +209,9 @@
             return;
           }
 
+          // Clear connecting line so remote prompt/banner begins cleanly
+          term?.write('\x1b[2K\r');
+          session.status = 'connected';
           isTauriLive = true;
           setTimeout(() => {
             try {
@@ -221,6 +225,7 @@
             const encoded = Array.from(new TextEncoder().encode(data));
             invoke('ssh_write', { tabId: session.id, data: encoded }).catch((err) => {
               console.error('Failed to write to SSH session:', err);
+              handleSessionExit(255);
             });
           });
           if (onDataDisposable) {
@@ -228,10 +233,11 @@
           }
         } catch (e: any) {
           console.warn('SSH connection failed or running in web preview mode:', e);
+          const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
           if (term) {
+            term.write('\x1b[2K\r');
             term.writeln(`\x1b[31;1mConnection failed:\x1b[0m \x1b[90m${e?.message || e}\x1b[0m\r\n`);
           }
-          const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
           if (!isTauri) {
             if (term) {
               term.writeln(`\x1b[90mFalling back to demo terminal emulator:\x1b[0m\r\n`);
@@ -250,9 +256,10 @@
   }
 
   function handleSessionExit(exitCode: number = 0) {
+    if (isDisconnected) return;
     isDisconnected = true;
     isTauriLive = false;
-    session.status = 'disconnected';
+    session.status = exitCode === 0 ? 'disconnected' : 'error';
 
     if (appState.config.app_settings?.close_tab_on_exit) {
       appState.closeTab(session.id);
@@ -261,7 +268,11 @@
 
     if (term) {
       term.writeln(`\r\n\x1b[90m──────────────────────────────────────────────\x1b[0m`);
-      term.writeln(`\x1b[33;1m[Session closed]\x1b[0m \x1b[90mConnection closed (exit code: ${exitCode}).\x1b[0m`);
+      if (exitCode === 255) {
+        term.writeln(`\x1b[31;1m[Connection lost]\x1b[0m \x1b[90mRemote host terminated the connection or is offline.\x1b[0m`);
+      } else {
+        term.writeln(`\x1b[33;1m[Session closed]\x1b[0m \x1b[90mConnection closed (exit code: ${exitCode}).\x1b[0m`);
+      }
       term.writeln(`\x1b[90mPress \x1b[37;1m[Enter]\x1b[0m\x1b[90m or click \x1b[37;1mReconnect\x1b[0m\x1b[90m below to restart session.\x1b[0m\r\n`);
     }
   }
@@ -269,7 +280,7 @@
   async function reconnect() {
     if (!term || isConnecting || componentDisposables.isDisposed) return;
     isDisconnected = false;
-    session.status = 'connected';
+    session.status = 'connecting';
     term.reset();
     await startSession();
   }

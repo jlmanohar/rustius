@@ -119,7 +119,7 @@
           title: newConnection.name,
           type: newConnection.conn_type,
           connectionId: newConnection.id,
-          status: 'connected',
+          status: 'connecting',
           badge: `${newConnection.conn_type.toUpperCase()} · ${newConnection.host}`,
         });
       }

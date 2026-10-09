@@ -46,6 +46,9 @@ pub async fn sftp_connect(
     let client = Arc::new(client);
     {
         let mut sessions = state.sftp_sessions.write().await;
+        if let Some(old) = sessions.remove(&tab_id) {
+            let _ = old.disconnect().await;
+        }
         sessions.insert(tab_id, client);
     }
 
@@ -55,8 +58,13 @@ pub async fn sftp_connect(
 /// Disconnect and remove the active SFTP session for the given tab.
 #[tauri::command]
 pub async fn sftp_disconnect(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mut sessions = state.sftp_sessions.write().await;
-    sessions.remove(&tab_id);
+    let session = {
+        let mut sessions = state.sftp_sessions.write().await;
+        sessions.remove(&tab_id)
+    };
+    if let Some(s) = session {
+        let _ = s.disconnect().await;
+    }
     Ok(())
 }
 

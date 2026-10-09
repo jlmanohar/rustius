@@ -43,6 +43,7 @@ pub async fn pty_spawn(
     let exit_event = format!("terminal-exit-{}", tab_id);
     let app_clone = app.clone();
     let tab_id_clone = tab_id.clone();
+    let local_terminals = state.local_terminals.clone();
 
     tokio::spawn(async move {
         loop {
@@ -68,6 +69,10 @@ pub async fn pty_spawn(
                     break;
                 }
             }
+        }
+        {
+            let mut terminals = local_terminals.write().await;
+            terminals.remove(&tab_id_clone);
         }
         debug!(
             "PTY output forwarding loop exited for tab: {}",

@@ -57,6 +57,7 @@ pub async fn ssh_connect(
     let exit_event = format!("terminal-exit-{}", tab_id);
     let app_handle = app.clone();
     let tab_id_clone = tab_id.clone();
+    let sessions_map = state.ssh_sessions.clone();
 
     tokio::spawn(async move {
         loop {
@@ -78,9 +79,16 @@ pub async fn ssh_connect(
                 }
                 else => {
                     info!("SSH session closed for tab: {}", tab_id_clone);
-                    let _ = app_handle.emit(&exit_event, 0u32);
+                    let _ = app_handle.emit(&exit_event, 255u32);
                     break;
                 }
+            }
+        }
+        // Evict session from AppState and disconnect underlying transport cleanly
+        {
+            let mut sessions = sessions_map.write().await;
+            if let Some(s) = sessions.remove(&tab_id_clone) {
+                let _ = s.disconnect().await;
             }
         }
         debug!("SSH output loop exited for tab: {}", tab_id_clone);
@@ -105,7 +113,12 @@ pub async fn ssh_write(
     };
 
     if let Some(s) = session {
-        s.write(&data).await.map_err(|e| e.to_string())?;
+        if let Err(e) = s.write(&data).await {
+            // Write failed because connection or channel dropped midway. Evict from state.
+            let mut sessions = state.ssh_sessions.write().await;
+            sessions.remove(&tab_id);
+            return Err(e.to_string());
+        }
         Ok(())
     } else {
         Err(format!("SSH session not found for tab: {}", tab_id))

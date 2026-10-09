@@ -184,6 +184,7 @@
       selectedFile = null;
     } catch (err: any) {
       errorMessage = err?.message || String(err);
+      isConnected = false;
     } finally {
       isLoading = false;
     }
@@ -204,8 +205,14 @@
   }
 
   function refresh() {
+    if (!isConnected) {
+      initSession();
+      return;
+    }
     if (currentPath) {
       loadDir(currentPath);
+    } else {
+      initSession();
     }
   }
 

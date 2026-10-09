@@ -57,7 +57,7 @@
       title: conn.name,
       type: cType,
       connectionId: conn.id,
-      status: 'connected',
+      status: 'connecting',
       badge: `${cType.toUpperCase()} · ${conn.host}`,
     });
   }
