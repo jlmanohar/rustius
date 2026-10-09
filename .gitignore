@@ -63,3 +63,10 @@ Thumbs.db
 ehthumbs.db
 desktop.ini
 $RECYCLE.BIN/
+
+# SonarQube / SonarCloud
+.sonar/
+**/.sonar/
+.scannerwork/
+**/.scannerwork/
+
