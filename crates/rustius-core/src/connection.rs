@@ -132,16 +132,70 @@ fn default_timestamp() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
-/// A single connection definition.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Connection {
+/// Helper struct for flexible, fault-tolerant deserialization of `Connection`.
+/// Gracefully handles `connection_type`, `conn_type`, both simultaneously, or neither (defaults to `Ssh`),
+/// preventing duplicate-field or missing-field deserialization errors.
+#[derive(Deserialize)]
+struct ConnectionRaw {
     #[serde(
         default = "Uuid::new_v4",
         deserialize_with = "deserialize_uuid_or_fallback"
     )]
+    id: Uuid,
+    name: String,
+    #[serde(default)]
+    connection_type: Option<ConnectionType>,
+    #[serde(default)]
+    conn_type: Option<ConnectionType>,
+    host: String,
+    port: u16,
+    auth: AuthMethod,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    environment: Option<String>,
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default = "default_timestamp")]
+    created_at: String,
+    #[serde(default = "default_timestamp")]
+    updated_at: String,
+    #[serde(default)]
+    ssh_config: Option<SshConfig>,
+    #[serde(default)]
+    rdp_config: Option<RdpConfig>,
+}
+
+impl From<ConnectionRaw> for Connection {
+    fn from(raw: ConnectionRaw) -> Self {
+        let connection_type = raw
+            .connection_type
+            .or(raw.conn_type)
+            .unwrap_or(ConnectionType::Ssh);
+        Connection {
+            id: raw.id,
+            name: raw.name,
+            connection_type,
+            host: raw.host,
+            port: raw.port,
+            auth: raw.auth,
+            tags: raw.tags,
+            environment: raw.environment,
+            notes: raw.notes,
+            created_at: raw.created_at,
+            updated_at: raw.updated_at,
+            ssh_config: raw.ssh_config,
+            rdp_config: raw.rdp_config,
+        }
+    }
+}
+
+/// A single connection definition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "ConnectionRaw")]
+pub struct Connection {
     pub id: Uuid,
     pub name: String,
-    #[serde(default, alias = "conn_type")]
     pub connection_type: ConnectionType,
     pub host: String,
     pub port: u16,
@@ -471,5 +525,17 @@ mod tests {
         }"#;
         let conn_sftp: Connection = serde_json::from_str(json_connection_type).expect("Should parse connection_type");
         assert_eq!(conn_sftp.connection_type, ConnectionType::Sftp);
+
+        // Test with BOTH conn_type and connection_type present simultaneously
+        let json_both = r#"{
+            "name": "Both Fields Test",
+            "conn_type": "rdp",
+            "connection_type": "rdp",
+            "host": "192.168.1.4",
+            "port": 3389,
+            "auth": { "type": "password", "username": "admin" }
+        }"#;
+        let conn_both: Connection = serde_json::from_str(json_both).expect("Should parse both fields without duplicate error");
+        assert_eq!(conn_both.connection_type, ConnectionType::Rdp);
     }
 }
