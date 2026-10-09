@@ -553,8 +553,9 @@
           class="sftp-toggle-btn {isSftpOpen ? 'active' : ''}"
           onclick={toggleSftp}
           title="Toggle SFTP Side File Navigator (Ctrl+Shift+F)"
+          aria-label="Toggle SFTP Side File Navigator"
         >
-          <FolderTree size={12} />
+          <FolderTree size={14} />
           <span>SFTP Browser</span>
         </button>
       </div>

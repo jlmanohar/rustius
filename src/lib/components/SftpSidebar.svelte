@@ -6,6 +6,7 @@
   import {
     Folder,
     FileText,
+    ArrowUp,
     CornerLeftUp,
     Home,
     RefreshCw,
@@ -398,41 +399,72 @@
   <!-- Top Title Strip -->
   <div class="panel-header">
     <div class="header-title">
-      <Folder size={13} class="header-icon" />
+      <Folder size={14} class="header-icon" />
       <span>SFTP Navigator</span>
     </div>
     <div class="header-actions">
-      <button class="tool-btn" onclick={onclose} title="Collapse SFTP Browser">
-        <PanelLeftClose size={13} />
+      <button class="tool-btn" onclick={onclose} title="Close SFTP Navigator" aria-label="Close SFTP Navigator">
+        <PanelLeftClose size={15} />
       </button>
     </div>
   </div>
 
   <!-- Navigation & Action Strip -->
   <div class="action-strip">
-    <button class="tool-btn" onclick={goUp} disabled={!isConnected || currentPath === '/'} title="Up to Parent Directory">
-      <CornerLeftUp size={13} />
+    <button
+      class="tool-btn"
+      onclick={goUp}
+      disabled={!isConnected || currentPath === '/'}
+      title="Up to Parent Directory"
+      aria-label="Up to Parent Directory"
+    >
+      <ArrowUp size={15} />
     </button>
-    <button class="tool-btn" onclick={goHome} disabled={!isConnected} title="Remote Home">
-      <Home size={13} />
+    <button
+      class="tool-btn"
+      onclick={goHome}
+      disabled={!isConnected}
+      title="Go to Home Directory"
+      aria-label="Go to Home Directory"
+    >
+      <Home size={15} />
     </button>
-    <button class="tool-btn" onclick={refresh} disabled={!isConnected || isLoading} title="Refresh Directory">
-      <RefreshCw size={13} class={isLoading ? 'spinning' : ''} />
+    <button
+      class="tool-btn"
+      onclick={refresh}
+      disabled={!isConnected || isLoading}
+      title="Refresh Directory Listing"
+      aria-label="Refresh Directory Listing"
+    >
+      <RefreshCw size={15} class={isLoading ? 'spinning' : ''} />
     </button>
     <button
       class="tool-btn {followTerminal ? 'active' : ''}"
       onclick={toggleFollowTerminal}
       disabled={!isConnected}
-      title={followTerminal ? "Following terminal directory (click to pause)" : "Follow terminal directory (click to enable)"}
+      title={followTerminal ? "Sync with Terminal: ON (Tracks active shell directory - click to pause)" : "Sync with Terminal: OFF (Click to follow active shell directory)"}
+      aria-label="Follow Terminal Directory"
     >
-      <FolderSync size={13} />
+      <FolderSync size={15} />
     </button>
     <span class="strip-divider"></span>
-    <button class="tool-btn" onclick={openNewFolderModal} disabled={!isConnected} title="New Folder">
-      <FolderPlus size={13} />
+    <button
+      class="tool-btn"
+      onclick={openNewFolderModal}
+      disabled={!isConnected}
+      title="Create New Folder"
+      aria-label="Create New Folder"
+    >
+      <FolderPlus size={15} />
     </button>
-    <button class="tool-btn" onclick={triggerUploadPicker} disabled={!isConnected} title="Upload Files (or Drag & Drop)">
-      <Upload size={13} />
+    <button
+      class="tool-btn"
+      onclick={triggerUploadPicker}
+      disabled={!isConnected}
+      title="Upload Files (or Drag & Drop into folder)"
+      aria-label="Upload Files"
+    >
+      <Upload size={15} />
     </button>
   </div>
 
@@ -506,7 +538,7 @@
             role="listitem"
           >
             <div class="col-main">
-              <IconComponent size={14} class="row-icon {file.is_dir ? 'dir-icon' : 'file-icon'}" />
+              <IconComponent size={15} class="row-icon {file.is_dir ? 'dir-icon' : 'file-icon'}" />
               <span class="file-name" title={file.name}>{file.name}</span>
             </div>
             
@@ -522,24 +554,27 @@
                 <button
                   class="action-icon-btn"
                   onclick={(e) => { e.stopPropagation(); downloadFile(file); }}
-                  title="Download to Downloads"
+                  title="Download to local Downloads folder"
+                  aria-label="Download file"
                 >
-                  <Download size={11} />
+                  <Download size={13} />
                 </button>
               {/if}
               <button
                 class="action-icon-btn"
                 onclick={(e) => openRenameModal(file, e)}
-                title="Rename"
+                title="Rename file or folder"
+                aria-label="Rename"
               >
-                <Edit2 size={11} />
+                <Edit2 size={13} />
               </button>
               <button
                 class="action-icon-btn danger"
                 onclick={(e) => openDeleteModal(file, e)}
-                title="Delete"
+                title="Delete file or folder"
+                aria-label="Delete"
               >
-                <Trash2 size={11} />
+                <Trash2 size={13} />
               </button>
             </div>
           </div>
@@ -681,8 +716,8 @@
   .action-strip {
     display: flex;
     align-items: center;
-    gap: 3px;
-    padding: 4px 8px;
+    gap: 4px;
+    padding: 5px 8px;
     background: var(--canvas);
     border-bottom: 1px solid var(--hairline);
   }
@@ -691,19 +726,21 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
-    height: 22px;
+    width: 26px;
+    height: 26px;
     background: transparent;
     border: 1px solid transparent;
-    border-radius: var(--radius-sm, 4px);
-    color: var(--mute);
+    border-radius: var(--radius-sm, 6px);
+    color: var(--body);
     cursor: pointer;
     transition: all 0.12s ease;
+    flex-shrink: 0;
   }
 
   .tool-btn:hover:not(:disabled) {
     background: var(--canvas-hover);
     color: var(--ink);
+    border-color: var(--hairline);
   }
 
   .tool-btn.active {
@@ -719,15 +756,17 @@
   }
 
   .tool-btn:disabled {
-    opacity: 0.3;
+    opacity: 0.35;
     cursor: not-allowed;
+    pointer-events: auto;
   }
 
   .strip-divider {
     width: 1px;
-    height: 14px;
+    height: 16px;
     background: var(--hairline);
     margin: 0 4px;
+    flex-shrink: 0;
   }
 
   .path-bar {
@@ -899,25 +938,26 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
-    height: 18px;
-    background: #18181b;
-    border: 1px solid #27272a;
-    border-radius: 3px;
-    color: #a1a1aa;
+    width: 22px;
+    height: 22px;
+    background: var(--canvas-subtle);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm, 4px);
+    color: var(--body);
     cursor: pointer;
     transition: all 0.1s ease;
   }
 
   .action-icon-btn:hover {
-    background: #27272a;
-    color: #ffffff;
+    background: var(--canvas-hover);
+    color: var(--ink);
+    border-color: var(--hairline-hover);
   }
 
   .action-icon-btn.danger:hover {
-    background: #ef4444;
-    border-color: #ef4444;
-    color: #ffffff;
+    background: rgba(238, 0, 0, 0.15);
+    border-color: rgba(238, 0, 0, 0.4);
+    color: #ff4d4d;
   }
 
   .state-msg {
