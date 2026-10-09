@@ -559,15 +559,29 @@
   .vault-badge {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
     font-size: 10px;
-    font-family: var(--font-mono, monospace);
-    color: #10b981;
-    background: rgba(16, 185, 129, 0.1);
-    border: 1px solid rgba(16, 185, 129, 0.25);
-    padding: 2px 6px;
-    border-radius: 4px;
+    font-family: var(--font-mono);
+    color: var(--body);
+    background: var(--canvas-subtle);
+    border: 1px solid var(--hairline);
+    padding: 2px 8px;
+    border-radius: var(--radius-pill);
     letter-spacing: 0.02em;
+    transition: all 0.12s ease;
+  }
+
+  .vault-badge :global(svg) {
+    color: var(--mute);
+  }
+
+  .vault-badge:hover {
+    border-color: var(--hairline-hover);
+    color: var(--ink-secondary);
+  }
+
+  .vault-badge:hover :global(svg) {
+    color: var(--body);
   }
 
   .auth-tabs {

@@ -659,11 +659,11 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    padding: 2px 7px;
+    padding: 2px 8px;
     background: transparent;
-    border: 1px solid #27272a;
-    border-radius: 4px;
-    color: #a1a1aa;
+    border: 1px solid var(--hairline, #262626);
+    border-radius: var(--radius-sm, 6px);
+    color: var(--body, #a1a1a1);
     font-size: 11px;
     font-weight: 500;
     cursor: pointer;
@@ -671,15 +671,15 @@
   }
 
   .sftp-toggle-btn:hover {
-    background: rgba(255, 255, 255, 0.06);
-    color: #ffffff;
-    border-color: #3f3f46;
+    background: var(--canvas-hover, #1a1a1a);
+    color: var(--ink, #ffffff);
+    border-color: var(--hairline-hover, #404040);
   }
 
   .sftp-toggle-btn.active {
-    background: rgba(245, 158, 11, 0.12);
-    border-color: rgba(245, 158, 11, 0.35);
-    color: #fbbf24;
+    background: var(--canvas-elevated, #0f0f0f);
+    border-color: var(--hairline-focus, #ffffff);
+    color: var(--ink, #ffffff);
   }
 
   .disconnect-inline {

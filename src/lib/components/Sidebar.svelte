@@ -378,7 +378,7 @@
     align-items: center;
   }
 
-  :global(.search-icon) {
+  .search-box :global(.search-icon) {
     position: absolute;
     left: 8px;
     color: var(--mute);

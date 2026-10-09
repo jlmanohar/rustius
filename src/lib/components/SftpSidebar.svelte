@@ -463,7 +463,7 @@
 
   <!-- Search Filter -->
   <div class="search-strip">
-    <Search size={12} class="search-icon" />
+    <Search size={12} class="sftp-search-icon" />
     <input
       type="text"
       placeholder="Filter files..."
@@ -645,10 +645,10 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    background: #09090b;
-    border-right: 1px solid #27272a;
+    background: var(--canvas-subtle);
+    border-right: 1px solid var(--hairline);
     font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
-    color: #e4e4e7;
+    color: var(--ink-secondary);
     user-select: none;
     position: relative;
     overflow: hidden;
@@ -659,8 +659,8 @@
     align-items: center;
     justify-content: space-between;
     padding: 6px 10px;
-    background: #111113;
-    border-bottom: 1px solid #27272a;
+    background: var(--canvas);
+    border-bottom: 1px solid var(--hairline);
     min-height: 28px;
   }
 
@@ -670,12 +670,12 @@
     gap: 6px;
     font-size: 11px;
     font-weight: 600;
-    letter-spacing: -0.01em;
-    color: #f4f4f5;
+    letter-spacing: -0.2px;
+    color: var(--ink);
   }
 
   .header-icon {
-    color: #f59e0b;
+    color: var(--body);
   }
 
   .action-strip {
@@ -683,8 +683,8 @@
     align-items: center;
     gap: 3px;
     padding: 4px 8px;
-    background: #111113;
-    border-bottom: 1px solid #27272a;
+    background: var(--canvas);
+    border-bottom: 1px solid var(--hairline);
   }
 
   .tool-btn {
@@ -694,74 +694,78 @@
     width: 22px;
     height: 22px;
     background: transparent;
-    border: none;
-    border-radius: 4px;
-    color: #a1a1aa;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm, 4px);
+    color: var(--mute);
     cursor: pointer;
     transition: all 0.12s ease;
   }
 
   .tool-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.08);
-    color: #ffffff;
+    background: var(--canvas-hover);
+    color: var(--ink);
   }
 
   .tool-btn.active {
-    background: rgba(245, 158, 11, 0.15);
-    color: #f59e0b;
+    background: var(--canvas-elevated);
+    border-color: var(--hairline-hover);
+    color: var(--ink);
   }
 
   .tool-btn.active:hover:not(:disabled) {
-    background: rgba(245, 158, 11, 0.25);
-    color: #fbbf24;
+    background: var(--canvas-hover);
+    border-color: var(--hairline-focus);
+    color: var(--ink);
   }
 
   .tool-btn:disabled {
-    opacity: 0.35;
+    opacity: 0.3;
     cursor: not-allowed;
   }
 
   .strip-divider {
     width: 1px;
     height: 14px;
-    background: #27272a;
+    background: var(--hairline);
     margin: 0 4px;
   }
 
   .path-bar {
     padding: 4px 8px;
-    background: #0c0c0e;
-    border-bottom: 1px solid #1f1f23;
+    background: var(--canvas);
+    border-bottom: 1px solid var(--hairline);
   }
 
   .path-display {
-    padding: 3px 6px;
-    background: #141417;
-    border: 1px solid #27272a;
-    border-radius: 4px;
+    padding: 3px 8px;
+    background: var(--canvas-subtle);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm, 4px);
     font-family: var(--font-mono, monospace);
     font-size: 11px;
-    color: #d4d4d8;
+    color: var(--body);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     cursor: text;
-    transition: border-color 0.12s ease;
+    transition: all 0.12s ease;
   }
 
   .path-display:hover {
-    border-color: #3f3f46;
+    border-color: var(--hairline-hover);
+    color: var(--ink);
+    background: var(--canvas-elevated);
   }
 
   .path-input {
     width: 100%;
-    padding: 3px 6px;
-    background: #18181b;
-    border: 1px solid #3b82f6;
-    border-radius: 4px;
+    padding: 3px 8px;
+    background: var(--canvas-elevated);
+    border: 1px solid var(--hairline-focus, #ffffff);
+    border-radius: var(--radius-sm, 4px);
     font-family: var(--font-mono, monospace);
     font-size: 11px;
-    color: #ffffff;
+    color: var(--ink);
     outline: none;
     box-sizing: border-box;
   }
@@ -771,12 +775,13 @@
     align-items: center;
     gap: 6px;
     padding: 4px 8px;
-    border-bottom: 1px solid #1f1f23;
+    background: var(--canvas-subtle);
+    border-bottom: 1px solid var(--hairline);
     position: relative;
   }
 
-  .search-icon {
-    color: #71717a;
+  .sftp-search-icon {
+    color: var(--mute);
     flex-shrink: 0;
   }
 
@@ -786,17 +791,18 @@
     border: none;
     outline: none;
     font-size: 11px;
-    color: #e4e4e7;
+    color: var(--ink);
+    font-family: var(--font-sans);
   }
 
   .search-input::placeholder {
-    color: #52525b;
+    color: var(--mute);
   }
 
   .search-clear {
     background: transparent;
     border: none;
-    color: #71717a;
+    color: var(--mute);
     cursor: pointer;
     padding: 2px;
   }
@@ -820,22 +826,22 @@
     justify-content: space-between;
     padding: 4px 8px;
     font-size: 11.5px;
-    color: #d4d4d8;
+    color: var(--ink-secondary);
     cursor: default;
-    border-radius: 3px;
+    border-radius: var(--radius-sm, 4px);
     margin: 1px 4px;
     position: relative;
     transition: background 0.1s ease;
   }
 
   .file-row:hover {
-    background: rgba(255, 255, 255, 0.05);
-    color: #ffffff;
+    background: var(--canvas-hover);
+    color: var(--ink);
   }
 
   .file-row.selected {
-    background: rgba(59, 130, 246, 0.2);
-    color: #ffffff;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--ink);
   }
 
   .col-main {
@@ -851,11 +857,11 @@
   }
 
   .dir-icon {
-    color: #f59e0b;
+    color: var(--ink-secondary);
   }
 
   .file-icon {
-    color: #71717a;
+    color: var(--mute);
   }
 
   .file-name {
@@ -977,19 +983,19 @@
     align-items: center;
     gap: 8px;
     padding: 6px 10px;
-    background: #18181b;
-    border-top: 1px solid #27272a;
+    background: var(--canvas-elevated);
+    border-top: 1px solid var(--hairline);
     font-size: 11px;
-    color: #e4e4e7;
+    color: var(--ink-secondary);
     flex-shrink: 0;
   }
 
   .toast-card.success {
-    color: #10b981;
+    color: var(--ink-secondary);
   }
 
   .toast-card.error {
-    color: #ef4444;
+    color: #ff4d4d;
   }
 
   .toast-content {
@@ -1009,7 +1015,7 @@
   .toast-link {
     background: transparent;
     border: none;
-    color: #3b82f6;
+    color: var(--body);
     font-size: 10px;
     text-align: left;
     padding: 0;
@@ -1020,7 +1026,7 @@
   .toast-close {
     background: transparent;
     border: none;
-    color: #71717a;
+    color: var(--mute);
     cursor: pointer;
   }
 
@@ -1040,11 +1046,11 @@
   .modal-card {
     width: 100%;
     max-width: 280px;
-    background: #18181b;
-    border: 1px solid #27272a;
-    border-radius: 8px;
-    padding: 12px;
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+    background: var(--canvas-elevated);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-md, 12px);
+    padding: 14px;
+    box-shadow: var(--shadow-floating);
   }
 
   .modal-header {
@@ -1057,7 +1063,7 @@
   .modal-title {
     font-size: 12px;
     font-weight: 600;
-    color: #f4f4f5;
+    color: var(--ink);
   }
 
   .modal-body {
@@ -1067,22 +1073,22 @@
   .modal-input {
     width: 100%;
     padding: 6px 8px;
-    background: #09090b;
-    border: 1px solid #27272a;
-    border-radius: 4px;
-    color: #ffffff;
+    background: var(--canvas-subtle);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm, 6px);
+    color: var(--ink);
     font-size: 11px;
     outline: none;
     box-sizing: border-box;
   }
 
   .modal-input:focus {
-    border-color: #3b82f6;
+    border-color: var(--hairline-focus);
   }
 
   .modal-warning {
     font-size: 11px;
-    color: #a1a1aa;
+    color: var(--body);
     line-height: 1.4;
     margin: 0;
   }
@@ -1095,8 +1101,8 @@
   }
 
   .btn {
-    padding: 4px 10px;
-    border-radius: 4px;
+    padding: 5px 12px;
+    border-radius: var(--radius-sm, 6px);
     font-size: 11px;
     font-weight: 500;
     cursor: pointer;
@@ -1105,30 +1111,32 @@
   }
 
   .btn.secondary {
-    background: #27272a;
-    color: #d4d4d8;
+    background: var(--canvas-hover);
+    color: var(--ink-secondary);
+    border: 1px solid var(--hairline);
   }
 
   .btn.secondary:hover {
-    background: #3f3f46;
-    color: #ffffff;
+    background: var(--canvas-active);
+    color: var(--ink);
+    border-color: var(--hairline-hover);
   }
 
   .btn.primary {
-    background: #2563eb;
-    color: #ffffff;
+    background: var(--ink);
+    color: var(--canvas);
   }
 
   .btn.primary:hover {
-    background: #1d4ed8;
+    opacity: 0.9;
   }
 
   .btn.danger {
-    background: #dc2626;
+    background: #ee0000;
     color: #ffffff;
   }
 
   .btn.danger:hover {
-    background: #b91c1c;
+    background: #c50000;
   }
 </style>
