@@ -55,6 +55,7 @@
           <div class="hero-mesh"></div>
 
           <div class="hero-content">
+            <img src="/rustius_logo.svg" alt="rustius" class="hero-logo" width="84" height="84" />
             <span class="mono-eyebrow">PORTABLE DESKTOP CLIENT</span>
             <h1 class="hero-heading">Engineered for speed.<br />Built with Rust.</h1>
             <p class="hero-body">
@@ -268,6 +269,14 @@
     text-align: center;
     z-index: 1;
     gap: 16px;
+  }
+
+  .hero-logo {
+    width: 84px;
+    height: 84px;
+    object-fit: contain;
+    margin-bottom: 4px;
+    filter: drop-shadow(0 6px 20px rgba(240, 67, 36, 0.2));
   }
 
   .hero-heading {

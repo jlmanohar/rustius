@@ -72,10 +72,8 @@
   <!-- Brand Header -->
   <div class="brand">
     <div class="brand-left">
-      <!-- Minimalist geometric logo -->
-      <svg class="brand-triangle" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2L2 22h20L12 2z" />
-      </svg>
+      <!-- Rustius crab icon -->
+      <img src="/rustius_icon.svg" alt="Rustius" class="brand-icon" width="18" height="18" />
       <span class="brand-title">RUSTIUS</span>
       <span class="brand-version">0.1.0</span>
     </div>
@@ -331,8 +329,10 @@
     gap: 8px;
   }
 
-  .brand-triangle {
-    color: var(--ink);
+  .brand-icon {
+    width: 18px;
+    height: 18px;
+    object-fit: contain;
   }
 
   .brand-title {
