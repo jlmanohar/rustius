@@ -2,9 +2,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// The type of remote connection.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ConnectionType {
+    #[default]
     Ssh,
     Sftp,
     Rdp,
@@ -140,7 +141,7 @@ pub struct Connection {
     )]
     pub id: Uuid,
     pub name: String,
-    #[serde(alias = "conn_type")]
+    #[serde(default, alias = "conn_type")]
     pub connection_type: ConnectionType,
     pub host: String,
     pub port: u16,
@@ -435,5 +436,40 @@ mod tests {
         assert_eq!(config.app_settings.font_size, 14);
         assert!(config.app_settings.sftp_follow_terminal_folder);
         assert!(config.tree.is_empty());
+    }
+
+    #[test]
+    fn test_connection_type_flexible_and_default() {
+        // Test with neither connection_type nor conn_type present (defaults to Ssh)
+        let json_no_type = r#"{
+            "name": "Fallback Test",
+            "host": "192.168.1.1",
+            "port": 22,
+            "auth": { "type": "password", "username": "root" }
+        }"#;
+        let conn: Connection = serde_json::from_str(json_no_type).expect("Should default to Ssh");
+        assert_eq!(conn.connection_type, ConnectionType::Ssh);
+
+        // Test with conn_type present
+        let json_conn_type = r#"{
+            "name": "RDP Test",
+            "conn_type": "rdp",
+            "host": "192.168.1.2",
+            "port": 3389,
+            "auth": { "type": "password", "username": "admin" }
+        }"#;
+        let conn_rdp: Connection = serde_json::from_str(json_conn_type).expect("Should parse conn_type");
+        assert_eq!(conn_rdp.connection_type, ConnectionType::Rdp);
+
+        // Test with connection_type present
+        let json_connection_type = r#"{
+            "name": "SFTP Test",
+            "connection_type": "sftp",
+            "host": "192.168.1.3",
+            "port": 22,
+            "auth": { "type": "password", "username": "ftpuser" }
+        }"#;
+        let conn_sftp: Connection = serde_json::from_str(json_connection_type).expect("Should parse connection_type");
+        assert_eq!(conn_sftp.connection_type, ConnectionType::Sftp);
     }
 }

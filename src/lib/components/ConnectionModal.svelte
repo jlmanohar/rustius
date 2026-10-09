@@ -30,7 +30,7 @@
   $effect(() => {
     if (appState.editingConnection) {
       const c = appState.editingConnection;
-      connType = c.conn_type;
+      connType = c.connection_type || c.conn_type || 'ssh';
       name = c.name;
       host = c.host;
       port = c.port;
@@ -127,6 +127,7 @@
       id,
       name: name.trim(),
       conn_type: connType,
+      connection_type: connType,
       host: host.trim(),
       port: Number(port),
       environment: environment.trim() || undefined,
