@@ -35,6 +35,10 @@ pub async fn ssh_connect(
         .get_connection(uuid)
         .await
         .map_err(|e| format!("Connection not found (ID: {connection_id}): {e}"))?;
+    let connection = state
+        .config_manager
+        .resolve_connection(&connection)
+        .map_err(|e| format!("Failed to resolve credentials: {e}"))?;
 
     let (output_tx, mut output_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let (exit_tx, mut exit_rx) = mpsc::channel::<u32>(1);

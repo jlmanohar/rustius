@@ -70,7 +70,7 @@ impl SshSession {
 
             // Authenticate
             match &connection.auth {
-                AuthMethod::Password { username, password } => {
+                AuthMethod::Password { username, password, .. } => {
                     let pass = password.as_deref().unwrap_or("");
                     let res = handle.authenticate_password(username, pass).await?;
                     if !matches!(res, russh::client::AuthResult::Success) {
@@ -81,6 +81,7 @@ impl SshSession {
                     username,
                     key_path,
                     passphrase,
+                    ..
                 } => {
                     let key = russh::keys::load_secret_key(key_path, passphrase.as_deref())
                         .context(format!("Failed to load key from {}", key_path))?;

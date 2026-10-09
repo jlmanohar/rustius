@@ -1,16 +1,24 @@
 export type ConnectionType = 'ssh' | 'sftp' | 'rdp';
 
+export type SecretRef =
+  | { type: 'keyring'; key: string }
+  | { type: 'plaintext'; value: string }
+  | { type: 'ask_on_connect' }
+  | { type: 'external'; provider: string; vault_id?: string; item_id: string };
+
 export type AuthMethod =
   | {
       type: 'password';
       username: string;
       password?: string;
+      secret_ref?: SecretRef;
     }
   | {
       type: 'keyfile';
       username: string;
       key_path: string;
       passphrase?: string;
+      secret_ref?: SecretRef;
     }
   | {
       type: 'agent';

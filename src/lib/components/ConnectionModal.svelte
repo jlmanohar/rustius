@@ -1,13 +1,14 @@
 <script lang="ts">
   import { appState } from '../stores/appState.svelte';
-  import type { Connection, ConnectionType, TreeNode } from '../types';
+  import type { Connection, ConnectionType, TreeNode, SecretRef } from '../types';
   import {
     Terminal,
     ArrowLeftRight,
     Monitor,
     X,
     Lock,
-    Key
+    Key,
+    Shield
   } from '@lucide/svelte';
 
   let connType = $state<ConnectionType>('ssh');
@@ -24,6 +25,43 @@
   let password = $state('');
   let keyPath = $state('');
   let passphrase = $state('');
+  let existingSecretRef = $state<SecretRef | undefined>(undefined);
+
+  $effect(() => {
+    if (appState.editingConnection) {
+      const c = appState.editingConnection;
+      connType = c.conn_type;
+      name = c.name;
+      host = c.host;
+      port = c.port;
+      environment = c.environment || 'Production';
+      tagsStr = c.tags ? c.tags.join(', ') : '';
+      if (c.auth.type === 'keyfile') {
+        authType = 'keyfile';
+        username = c.auth.username;
+        keyPath = c.auth.key_path;
+        passphrase = c.auth.passphrase || '';
+        existingSecretRef = c.auth.secret_ref;
+      } else if (c.auth.type === 'password') {
+        authType = 'password';
+        username = c.auth.username;
+        password = c.auth.password || '';
+        existingSecretRef = c.auth.secret_ref;
+      }
+      if (c.ssh_config) {
+        keepalive = c.ssh_config.keepalive_interval_secs;
+        legacyCiphers = c.ssh_config.legacy_ciphers;
+        legacyKex = c.ssh_config.legacy_kex;
+      }
+      if (c.rdp_config) {
+        rdpWidth = c.rdp_config.width;
+        rdpHeight = c.rdp_config.height;
+        clipboardSharing = c.rdp_config.clipboard_sharing;
+      }
+    } else {
+      existingSecretRef = undefined;
+    }
+  });
 
   // SSH advanced
   let legacyCiphers = $state(false);
@@ -65,7 +103,26 @@
       .map((t) => t.trim())
       .filter((t) => t.length > 0);
 
-    const id = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'conn-' + Date.now();
+    const editing = appState.editingConnection;
+    const id = editing ? editing.id : (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'conn-' + Date.now());
+    const createdAt = editing ? editing.created_at : new Date().toISOString();
+
+    const auth =
+      authType === 'password'
+        ? {
+            type: 'password' as const,
+            username: username.trim(),
+            password: password ? password : (existingSecretRef ? undefined : undefined),
+            secret_ref: password ? undefined : existingSecretRef,
+          }
+        : {
+            type: 'keyfile' as const,
+            username: username.trim(),
+            key_path: keyPath.trim(),
+            passphrase: passphrase ? passphrase : (existingSecretRef ? undefined : undefined),
+            secret_ref: passphrase ? undefined : existingSecretRef,
+          };
+
     const newConnection: Connection = {
       id,
       name: name.trim(),
@@ -74,21 +131,9 @@
       port: Number(port),
       environment: environment.trim() || undefined,
       tags,
-      created_at: new Date().toISOString(),
+      created_at: createdAt,
       updated_at: new Date().toISOString(),
-      auth:
-        authType === 'password'
-          ? {
-              type: 'password',
-              username: username.trim(),
-              password: password || undefined,
-            }
-          : {
-              type: 'keyfile',
-              username: username.trim(),
-              key_path: keyPath.trim(),
-              passphrase: passphrase || undefined,
-            },
+      auth,
       ssh_config:
         connType === 'ssh' || connType === 'sftp'
           ? {
@@ -124,6 +169,7 @@
         });
       }
 
+      appState.editingConnection = null;
       appState.isConnectionModalOpen = false;
     } catch (err: any) {
       console.error('Failed to save connection:', err);
@@ -148,8 +194,8 @@
     <!-- Modal Header -->
     <div class="modal-top">
       <div class="modal-titles">
-        <span class="mono-eyebrow">CONFIGURATION</span>
-        <h2 class="dialog-heading">New Connection</h2>
+        <span class="mono-eyebrow">{appState.editingConnection ? 'EDIT CONNECTION' : 'CONFIGURATION'}</span>
+        <h2 class="dialog-heading">{appState.editingConnection ? 'Edit Connection' : 'New Connection'}</h2>
       </div>
       <button
         class="btn-icon"
@@ -252,6 +298,10 @@
       <!-- Authentication -->
       <div class="section-divider">
         <span class="mono-eyebrow">AUTHENTICATION</span>
+        <span class="vault-badge" title="Credentials secured in native OS Keyring (Windows Credential Manager / macOS Keychain)">
+          <Shield size={11} />
+          <span>OS Keyring Secured</span>
+        </span>
       </div>
 
       <div class="auth-tabs">
@@ -289,7 +339,7 @@
             <input
               id="conn-pass"
               type="password"
-              placeholder="••••••••"
+              placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave empty to keep)' : '••••••••'}
               bind:value={password}
               class="input-field"
             />
@@ -314,7 +364,7 @@
           <input
             id="conn-passphrase"
             type="password"
-            placeholder="Key passphrase"
+            placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave empty to keep)' : 'Key passphrase'}
             bind:value={passphrase}
             class="input-field"
           />
@@ -500,6 +550,23 @@
     margin-bottom: 2px;
     border-bottom: 1px solid var(--hairline-soft);
     padding-bottom: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .vault-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-family: var(--font-mono, monospace);
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    padding: 2px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.02em;
   }
 
   .auth-tabs {

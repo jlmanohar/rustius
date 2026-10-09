@@ -32,12 +32,16 @@ pub async fn rdp_connect(
         .get_connection(uuid)
         .await
         .map_err(|e| format!("Connection not found (ID: {connection_id}): {e}"))?;
+    let conn = state
+        .config_manager
+        .resolve_connection(&conn)
+        .map_err(|e| format!("Failed to resolve credentials: {e}"))?;
 
     let host = conn.host;
     let port = conn.port;
 
     let (username, password) = match &conn.auth {
-        AuthMethod::Password { username, password } => {
+        AuthMethod::Password { username, password, .. } => {
             (username.clone(), password.clone().unwrap_or_default())
         }
         AuthMethod::KeyFile { username, .. } => (username.clone(), String::new()),

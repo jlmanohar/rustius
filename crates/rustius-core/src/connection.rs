@@ -10,27 +10,94 @@ pub enum ConnectionType {
     Rdp,
 }
 
+use crate::secret::{SecretManager, SecretRef};
+
 /// SSH authentication method.
 ///
 /// Uses serde's tagged enum representation so that serialized output
 /// includes a `"type"` field discriminator (e.g., `type = "password"`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum AuthMethod {
     Password {
         username: String,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         password: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        secret_ref: Option<SecretRef>,
     },
     KeyFile {
         username: String,
         key_path: String,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         passphrase: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        secret_ref: Option<SecretRef>,
     },
     Agent {
         username: String,
     },
+}
+
+impl AuthMethod {
+    /// Construct a Password authentication method without secret reference.
+    pub fn password(username: impl Into<String>, password: Option<String>) -> Self {
+        Self::Password {
+            username: username.into(),
+            password,
+            secret_ref: None,
+        }
+    }
+
+    /// Construct a KeyFile authentication method without secret reference.
+    pub fn key_file(
+        username: impl Into<String>,
+        key_path: impl Into<String>,
+        passphrase: Option<String>,
+    ) -> Self {
+        Self::KeyFile {
+            username: username.into(),
+            key_path: key_path.into(),
+            passphrase,
+            secret_ref: None,
+        }
+    }
+
+    /// Resolve password from either `secret_ref` (e.g. OS Keyring) or legacy inline `password`.
+    pub fn resolve_password(&self, secret_manager: &SecretManager) -> anyhow::Result<Option<String>> {
+        match self {
+            AuthMethod::Password {
+                password,
+                secret_ref,
+                ..
+            } => {
+                if let Some(sref) = secret_ref {
+                    secret_manager.resolve(sref)
+                } else {
+                    Ok(password.clone())
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Resolve private key passphrase from either `secret_ref` (e.g. OS Keyring) or legacy inline `passphrase`.
+    pub fn resolve_passphrase(&self, secret_manager: &SecretManager) -> anyhow::Result<Option<String>> {
+        match self {
+            AuthMethod::KeyFile {
+                passphrase,
+                secret_ref,
+                ..
+            } => {
+                if let Some(sref) = secret_ref {
+                    secret_manager.resolve(sref)
+                } else {
+                    Ok(passphrase.clone())
+                }
+            }
+            _ => Ok(None),
+        }
+    }
 }
 
 pub fn parse_uuid_or_fallback(s: &str) -> Uuid {
@@ -180,6 +247,7 @@ pub struct Folder {
 /// A node in the connection tree — either a folder or a connection reference.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "node_type", rename_all = "lowercase")]
+#[allow(clippy::large_enum_variant)]
 pub enum TreeNode {
     Folder(Folder),
     Connection(Connection),
@@ -277,10 +345,7 @@ mod tests {
             ConnectionType::Ssh,
             "192.168.1.100".into(),
             22,
-            AuthMethod::Password {
-                username: "admin".into(),
-                password: Some("secret".into()),
-            },
+            AuthMethod::password("admin", Some("secret".into())),
         );
 
         let node = TreeNode::Connection(conn);

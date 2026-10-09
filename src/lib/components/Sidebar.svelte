@@ -15,7 +15,8 @@
     Trash2,
     Play,
     Server,
-    Settings
+    Settings,
+    Pencil
   } from '@lucide/svelte';
 
   let environments = $derived.by(() => {
@@ -247,6 +248,17 @@
                   }}
                 >
                   <Play size={11} />
+                </button>
+                <button
+                  class="action-btn"
+                  title="Edit"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    appState.editingConnection = node;
+                    appState.isConnectionModalOpen = true;
+                  }}
+                >
+                  <Pencil size={11} />
                 </button>
                 <button
                   class="action-btn"
