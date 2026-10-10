@@ -1,0 +1,37 @@
+MIT License
+
+Copyright (c) 2026 Lakshmi Manohar Janaswamy
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+==============================================================================
+Brand, Trademark & Asset Policy:
+==============================================================================
+The "Rustius" name, logos, mascots, icons, and branding materials are proprietary
+trademarks and copyrighted property of Lakshmi Manohar Janaswamy. All rights reserved.
+
+Permitted Uses:
+You are welcome and encouraged to use the Rustius name, logos, and icons to:
+- Truthfully refer to, review, link to, promote, and recommend the official Rustius application.
+- Distribute unmodified official releases (e.g., in package managers, software directories, or reviews).
+
+Restrictions:
+The MIT License granted above applies strictly to the source code. You may NOT:
+- Use the Rustius name, logos, or mascots to brand or distribute forks, modified copies, or derivative software.
+- Use the branding in any manner that implies official endorsement, sponsorship, or affiliation with the Rustius project without prior written permission.
