@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: 'Create as a draft release'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest, macos-latest, ubuntu-22.04]
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            workers/rustius-rdp-worker
+
+      - name: Install Linux dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build RDP worker binary
+        run: cargo build --release --manifest-path workers/rustius-rdp-worker/Cargo.toml
+
+      # Ensure resource path exists for Tauri bundle on Unix platforms
+      - name: Normalize RDP worker binary name (Unix only)
+        if: matrix.platform != 'windows-latest'
+        run: |
+          cp workers/rustius-rdp-worker/target/release/rustius-rdp-worker workers/rustius-rdp-worker/target/release/rustius-rdp-worker.exe
+
+      - name: Build Tauri app & create GitHub Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Rustius ${{ github.ref_name }}'
+          releaseBody: |
+            ## Rustius Desktop Release ${{ github.ref_name }}
+
+            See the release assets below to download the installer for your operating system:
+            - **Windows**: `.msi` / `.exe` (NSIS)
+            - **macOS**: `.dmg` / `.app`
+            - **Linux**: `.deb` / `.AppImage`
+          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft || true }}
+          prerelease: false
