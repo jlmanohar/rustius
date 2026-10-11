@@ -1,4 +1,6 @@
-use crate::connection::{AuthMethod, Connection, Folder, RustiusConfig, TreeNode};
+use crate::connection::{
+    AuthMethod, Connection, CredentialProfile, Folder, RustiusConfig, TreeNode,
+};
 use crate::error::RustiusError;
 use crate::secret::{SecretManager, SecretRef};
 use crate::storage::ConfigStorage;
@@ -47,14 +49,86 @@ impl ConfigManager {
         })
     }
 
+    /// Override the SecretManager instance (useful for test isolation).
+    pub fn with_secret_manager(mut self, secret_manager: Arc<SecretManager>) -> Self {
+        self.secret_manager = secret_manager;
+        self
+    }
+
     /// Access the underlying OS keyring secret manager.
     pub fn secret_manager(&self) -> &Arc<SecretManager> {
         &self.secret_manager
     }
 
     /// Resolve all credentials in a connection into an in-memory copy with secrets hydrated.
-    pub fn resolve_connection(&self, conn: &Connection) -> Result<Connection> {
+    /// If the connection is linked to a reusable `CredentialProfile`, authentication and
+    /// domain are inherited and hydrated from the profile.
+    pub async fn resolve_connection(&self, conn: &Connection) -> Result<Connection> {
         let mut resolved = conn.clone();
+
+        // If linked to a CredentialProfile, inherit the profile's authentication & domain
+        if let Some(cred_id) = conn.credential_id {
+            let config = self.config.read().await;
+            if let Some(profile) = config.credentials.iter().find(|c| c.id == cred_id) {
+                let mut profile_auth = profile.auth.clone();
+                match &profile.auth {
+                    AuthMethod::Password { username, .. } => {
+                        let pass = profile.auth.resolve_password(&self.secret_manager)?;
+                        profile_auth = AuthMethod::Password {
+                            username: username.clone(),
+                            password: pass,
+                            secret_ref: None,
+                        };
+                    }
+                    AuthMethod::KeyFile {
+                        username, key_path, ..
+                    } => {
+                        let passphrase = profile.auth.resolve_passphrase(&self.secret_manager)?;
+                        profile_auth = AuthMethod::KeyFile {
+                            username: username.clone(),
+                            key_path: key_path.clone(),
+                            passphrase,
+                            secret_ref: None,
+                        };
+                    }
+                    _ => {}
+                }
+                resolved.auth = profile_auth;
+
+                // For RDP, if the profile defines a domain and connection does not explicitly override it, inherit domain
+                if resolved.connection_type == crate::connection::ConnectionType::Rdp {
+                    if let Some(ref prof_dom) = profile.domain {
+                        if !prof_dom.trim().is_empty() {
+                            if let Some(ref mut rdp_conf) = resolved.rdp_config {
+                                if rdp_conf.domain.is_none()
+                                    || rdp_conf.domain.as_deref().unwrap_or("").trim().is_empty()
+                                {
+                                    rdp_conf.domain = Some(prof_dom.clone());
+                                }
+                            } else {
+                                resolved.rdp_config = Some(crate::connection::RdpConfig {
+                                    width: 1280,
+                                    height: 800,
+                                    color_depth: 24,
+                                    fullscreen: false,
+                                    clipboard_sharing: true,
+                                    domain: Some(prof_dom.clone()),
+                                });
+                            }
+                        }
+                    }
+                }
+
+                return Ok(resolved);
+            } else {
+                warn!(
+                    "Connection {} references non-existent credential profile {}",
+                    conn.id, cred_id
+                );
+            }
+        }
+
+        // Fallback to connection's inline credentials
         match &conn.auth {
             AuthMethod::Password { username, .. } => {
                 let pass = conn.auth.resolve_password(&self.secret_manager)?;
@@ -64,7 +138,9 @@ impl ConfigManager {
                     secret_ref: None,
                 };
             }
-            AuthMethod::KeyFile { username, key_path, .. } => {
+            AuthMethod::KeyFile {
+                username, key_path, ..
+            } => {
                 let passphrase = conn.auth.resolve_passphrase(&self.secret_manager)?;
                 resolved.auth = AuthMethod::KeyFile {
                     username: username.clone(),
@@ -85,24 +161,163 @@ impl ConfigManager {
     pub fn secure_connection(&self, conn: &mut Connection) {
         let key = format!("connection:{}", conn.id);
         match &mut conn.auth {
-            AuthMethod::Password { username: _, password, secret_ref } => {
+            AuthMethod::Password {
+                username: _,
+                password,
+                secret_ref,
+            } => {
                 if let Some(p) = password.take() {
                     if !p.is_empty() {
-                        let _ = self.secret_manager.set_secret(&key, &p);
-                        *secret_ref = Some(SecretRef::Keyring { key });
+                        if let Err(e) = self.secret_manager.set_secret(&key, &p) {
+                            warn!(
+                                "Failed to store connection password in OS keyring for {}: {}",
+                                key, e
+                            );
+                        } else {
+                            *secret_ref = Some(SecretRef::Keyring { key });
+                        }
                     }
                 }
             }
-            AuthMethod::KeyFile { username: _, key_path: _, passphrase, secret_ref } => {
+            AuthMethod::KeyFile {
+                username: _,
+                key_path: _,
+                passphrase,
+                secret_ref,
+            } => {
                 if let Some(p) = passphrase.take() {
                     if !p.is_empty() {
-                        let _ = self.secret_manager.set_secret(&key, &p);
-                        *secret_ref = Some(SecretRef::Keyring { key });
+                        if let Err(e) = self.secret_manager.set_secret(&key, &p) {
+                            warn!(
+                                "Failed to store connection passphrase in OS keyring for {}: {}",
+                                key, e
+                            );
+                        } else {
+                            *secret_ref = Some(SecretRef::Keyring { key });
+                        }
                     }
                 }
             }
             _ => {}
         }
+    }
+
+    /// Secure a credential profile before writing to disk:
+    /// Moves plaintext passwords and passphrases into the native OS keyring under "credential:<id>".
+    pub fn secure_credential(&self, cred: &mut CredentialProfile) {
+        let key = format!("credential:{}", cred.id);
+        match &mut cred.auth {
+            AuthMethod::Password {
+                username: _,
+                password,
+                secret_ref,
+            } => {
+                if let Some(p) = password.take() {
+                    if !p.is_empty() {
+                        if let Err(e) = self.secret_manager.set_secret(&key, &p) {
+                            warn!(
+                                "Failed to store profile password in OS keyring for {}: {}",
+                                key, e
+                            );
+                        } else {
+                            *secret_ref = Some(SecretRef::Keyring { key });
+                        }
+                    }
+                }
+            }
+            AuthMethod::KeyFile {
+                username: _,
+                key_path: _,
+                passphrase,
+                secret_ref,
+            } => {
+                if let Some(p) = passphrase.take() {
+                    if !p.is_empty() {
+                        if let Err(e) = self.secret_manager.set_secret(&key, &p) {
+                            warn!(
+                                "Failed to store profile passphrase in OS keyring for {}: {}",
+                                key, e
+                            );
+                        } else {
+                            *secret_ref = Some(SecretRef::Keyring { key });
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Add a credential profile to configuration and secure its secrets.
+    pub async fn add_credential(&self, mut cred: CredentialProfile) -> Result<Uuid> {
+        self.secure_credential(&mut cred);
+        let id = cred.id;
+        self.update_config(|config| {
+            if let Some(pos) = config.credentials.iter().position(|c| c.id == id) {
+                config.credentials[pos] = cred;
+            } else {
+                config.credentials.push(cred);
+            }
+        })
+        .await?;
+        info!("Saved credential profile: {}", id);
+        Ok(id)
+    }
+
+    /// Update an existing credential profile and secure its secrets.
+    pub async fn update_credential(&self, mut cred: CredentialProfile) -> Result<()> {
+        self.secure_credential(&mut cred);
+        let id = cred.id;
+        self.update_config(|config| {
+            if let Some(pos) = config.credentials.iter().position(|c| c.id == id) {
+                config.credentials[pos] = cred;
+            } else {
+                config.credentials.push(cred);
+            }
+        })
+        .await?;
+        info!("Updated credential profile: {}", id);
+        Ok(())
+    }
+
+    /// Delete a credential profile and clean up associated OS keyring secrets.
+    pub async fn delete_credential(&self, id: Uuid) -> Result<()> {
+        let key = format!("credential:{}", id);
+        let _ = self.secret_manager.delete_secret(&key);
+
+        self.update_config(|config| {
+            config.credentials.retain(|c| c.id != id);
+            // Detach any connections that referenced this profile
+            fn detach_in_nodes(nodes: &mut [TreeNode], target_id: Uuid) {
+                for node in nodes {
+                    match node {
+                        TreeNode::Connection(c) => {
+                            if c.credential_id == Some(target_id) {
+                                c.credential_id = None;
+                            }
+                        }
+                        TreeNode::Folder(f) => {
+                            detach_in_nodes(&mut f.children, target_id);
+                        }
+                    }
+                }
+            }
+            detach_in_nodes(&mut config.tree, id);
+        })
+        .await?;
+        info!("Deleted credential profile: {}", id);
+        Ok(())
+    }
+
+    /// Get a credential profile by its ID (read-only snapshot).
+    pub async fn get_credential(&self, id: Uuid) -> Result<CredentialProfile> {
+        let config = self.config.read().await;
+        config
+            .credentials
+            .iter()
+            .find(|c| c.id == id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Credential profile not found: {}", id))
     }
 
     /// Get a clone of the current configuration (read-only snapshot).
@@ -461,8 +676,10 @@ mod tests {
     #[tokio::test]
     async fn test_keyring_secret_resolution() {
         let dir = test_config_dir();
+        let test_service = format!("rustius-test-{}", Uuid::new_v4());
         let manager = ConfigManager::new(dir.clone(), Box::new(PlaintextStorage))
-            .expect("Failed to create ConfigManager");
+            .expect("Failed to create ConfigManager")
+            .with_secret_manager(Arc::new(SecretManager::new(test_service)));
 
         let plain_pass = "top-secret-password-xyz";
         let conn = Connection::new(
@@ -478,7 +695,12 @@ mod tests {
         manager.add_connection(conn, None).await.unwrap();
 
         let stored = manager.get_connection(conn_id).await.unwrap();
-        if let AuthMethod::Password { password, secret_ref, .. } = &stored.auth {
+        if let AuthMethod::Password {
+            password,
+            secret_ref,
+            ..
+        } = &stored.auth
+        {
             assert_eq!(password, &None, "Password must not be stored in plaintext!");
             assert!(secret_ref.is_some(), "Secret reference must be populated!");
         } else {
@@ -486,7 +708,7 @@ mod tests {
         }
 
         // Resolving connection should rehydrate plaintext password from keyring
-        let resolved = manager.resolve_connection(&stored).unwrap();
+        let resolved = manager.resolve_connection(&stored).await.unwrap();
         if let AuthMethod::Password { password, .. } = &resolved.auth {
             assert_eq!(password.as_deref(), Some(plain_pass));
         } else {
@@ -495,6 +717,110 @@ mod tests {
 
         // Cleanup
         manager.remove_node(conn_id).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_credential_profile_crud_and_inheritance() {
+        let dir = test_config_dir();
+        let test_service = format!("rustius-test-{}", Uuid::new_v4());
+        let manager = ConfigManager::new(dir.clone(), Box::new(PlaintextStorage))
+            .expect("Failed to create ConfigManager")
+            .with_secret_manager(Arc::new(SecretManager::new(test_service)));
+
+        // 1. Create a reusable credential profile with domain + password
+        let profile = CredentialProfile::new(
+            "Enterprise Domain Admin",
+            AuthMethod::password("ad_admin", Some("CorpSecret2026!".into())),
+        )
+        .with_domain("CORP");
+        let profile_id = profile.id;
+
+        manager
+            .add_credential(profile)
+            .await
+            .expect("Failed to add credential profile");
+
+        // Verify profile exists in config and secrets are secured
+        let cfg = manager.get_config().await;
+        assert_eq!(cfg.credentials.len(), 1);
+        let stored_profile = &cfg.credentials[0];
+        assert_eq!(stored_profile.name, "Enterprise Domain Admin");
+        assert_eq!(stored_profile.domain.as_deref(), Some("CORP"));
+        if let AuthMethod::Password {
+            password,
+            secret_ref,
+            ..
+        } = &stored_profile.auth
+        {
+            assert_eq!(
+                password, &None,
+                "Plaintext password must be secured in keyring"
+            );
+            assert!(
+                secret_ref.is_some(),
+                "SecretRef must be set for credential profile"
+            );
+        } else {
+            panic!("Expected password auth");
+        }
+
+        // 2. Create an RDP connection that references this profile
+        let mut rdp_conn = Connection::new(
+            "Primary DC".into(),
+            ConnectionType::Rdp,
+            "dc01.corp.local".into(),
+            3389,
+            AuthMethod::password("", None),
+        );
+        rdp_conn.credential_id = Some(profile_id);
+
+        manager
+            .add_connection(rdp_conn.clone(), None)
+            .await
+            .unwrap();
+
+        // 3. Resolve connection: should inherit domain, username, and hydrated password
+        let resolved = manager.resolve_connection(&rdp_conn).await.unwrap();
+        if let AuthMethod::Password {
+            username, password, ..
+        } = &resolved.auth
+        {
+            assert_eq!(username, "ad_admin");
+            assert_eq!(password.as_deref(), Some("CorpSecret2026!"));
+        } else {
+            panic!("Expected password auth");
+        }
+        let rdp_config = resolved
+            .rdp_config
+            .expect("RDP config should be generated or present");
+        assert_eq!(rdp_config.domain.as_deref(), Some("CORP"));
+
+        // 4. Update the profile password (simulating credential rotation)
+        let mut updated_profile = manager.get_credential(profile_id).await.unwrap();
+        updated_profile.auth =
+            AuthMethod::password("ad_admin", Some("NewRotatedPassword999!".into()));
+        manager.update_credential(updated_profile).await.unwrap();
+
+        // Resolving the same connection should immediately pick up the rotated password!
+        let resolved_again = manager.resolve_connection(&rdp_conn).await.unwrap();
+        if let AuthMethod::Password { password, .. } = &resolved_again.auth {
+            assert_eq!(password.as_deref(), Some("NewRotatedPassword999!"));
+        } else {
+            panic!("Expected password auth");
+        }
+
+        // 5. Delete profile: connection should have credential_id detached
+        manager.delete_credential(profile_id).await.unwrap();
+        let cfg_after_delete = manager.get_config().await;
+        assert_eq!(cfg_after_delete.credentials.len(), 0);
+        let conn_after_delete = manager.get_connection(rdp_conn.id).await.unwrap();
+        assert_eq!(
+            conn_after_delete.credential_id, None,
+            "Connection must be detached when profile is deleted"
+        );
+
+        // Cleanup
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

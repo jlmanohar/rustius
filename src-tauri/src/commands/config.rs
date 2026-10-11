@@ -71,6 +71,41 @@ pub async fn remove_node(node_id: String, state: State<'_, AppState>) -> Result<
 }
 
 #[tauri::command]
+pub async fn add_credential(
+    credential: rustius_core::connection::CredentialProfile,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let id = state
+        .config_manager
+        .add_credential(credential)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(id.to_string())
+}
+
+#[tauri::command]
+pub async fn update_credential(
+    credential: rustius_core::connection::CredentialProfile,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .config_manager
+        .update_credential(credential)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_credential(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let uuid = rustius_core::connection::parse_uuid_or_fallback(&id);
+    state
+        .config_manager
+        .delete_credential(uuid)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn import_sessions(
     file_path: String,
     source: Option<String>,

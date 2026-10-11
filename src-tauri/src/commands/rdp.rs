@@ -35,6 +35,7 @@ pub async fn freerdp_connect(
     let conn = state
         .config_manager
         .resolve_connection(&conn)
+        .await
         .map_err(|e| format!("Failed to resolve credentials: {e}"))?;
 
     let host = conn.host;

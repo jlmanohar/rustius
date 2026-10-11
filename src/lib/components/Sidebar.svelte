@@ -17,7 +17,8 @@
     Server,
     Settings,
     Pencil,
-    FolderDown
+    FolderDown,
+    KeyRound
   } from '@lucide/svelte';
 
   let environments = $derived.by(() => {
@@ -97,6 +98,13 @@
         onclick={() => (appState.isImportModalOpen = true)}
       >
         <FolderDown size={14} />
+      </button>
+      <button
+        class="btn-icon"
+        title="Saved Credentials"
+        onclick={() => (appState.isCredentialsModalOpen = true)}
+      >
+        <KeyRound size={14} />
       </button>
       <button
         class="btn-icon"

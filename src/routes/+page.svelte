@@ -3,6 +3,7 @@
   import Sidebar from '$lib/components/Sidebar.svelte';
   import TabBar from '$lib/components/TabBar.svelte';
   import ConnectionModal from '$lib/components/ConnectionModal.svelte';
+  import CredentialsModal from '$lib/components/CredentialsModal.svelte';
   import SettingsModal from '$lib/components/SettingsModal.svelte';
   import ImportModal from '$lib/components/ImportModal.svelte';
   import TerminalView from '$lib/components/TerminalView.svelte';
@@ -194,6 +195,11 @@
   <!-- Application Settings Modal -->
   {#if appState.isSettingsModalOpen}
     <SettingsModal />
+  {/if}
+
+  <!-- Credential Profiles Modal -->
+  {#if appState.isCredentialsModalOpen}
+    <CredentialsModal />
   {/if}
 
   <!-- Session Migration / Import Modal -->

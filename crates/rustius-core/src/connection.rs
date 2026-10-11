@@ -170,6 +170,8 @@ struct ConnectionRaw {
     ssh_config: Option<SshConfig>,
     #[serde(default)]
     rdp_config: Option<RdpConfig>,
+    #[serde(default, deserialize_with = "deserialize_opt_uuid_or_fallback")]
+    credential_id: Option<Uuid>,
 }
 
 impl From<ConnectionRaw> for Connection {
@@ -192,6 +194,7 @@ impl From<ConnectionRaw> for Connection {
             updated_at: raw.updated_at,
             ssh_config: raw.ssh_config,
             rdp_config: raw.rdp_config,
+            credential_id: raw.credential_id,
         }
     }
 }
@@ -220,6 +223,9 @@ pub struct Connection {
     pub ssh_config: Option<SshConfig>,
     /// Optional RDP-specific settings.
     pub rdp_config: Option<RdpConfig>,
+    /// Optional reference to a reusable CredentialProfile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_id: Option<Uuid>,
 }
 
 /// SSH-specific configuration for a connection.
@@ -317,12 +323,57 @@ pub enum TreeNode {
     Connection(Connection),
 }
 
+/// A reusable credential profile for authenticating across multiple connections.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CredentialProfile {
+    #[serde(
+        default = "Uuid::new_v4",
+        deserialize_with = "deserialize_uuid_or_fallback"
+    )]
+    pub id: Uuid,
+    /// Friendly display name (e.g., "CORP Domain Admin", "AWS Ubuntu Key")
+    pub name: String,
+    /// Optional Windows domain (for RDP logons)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    /// Authentication method (Password, KeyFile, or Agent)
+    pub auth: AuthMethod,
+    #[serde(default = "default_timestamp")]
+    pub created_at: String,
+    #[serde(default = "default_timestamp")]
+    pub updated_at: String,
+}
+
+impl CredentialProfile {
+    /// Create a new credential profile with default timestamps.
+    pub fn new(name: impl Into<String>, auth: AuthMethod) -> Self {
+        let now = default_timestamp();
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            domain: None,
+            auth,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    /// Builder helper to set a Windows domain.
+    pub fn with_domain(mut self, domain: impl Into<String>) -> Self {
+        self.domain = Some(domain.into());
+        self
+    }
+}
+
 /// The root configuration file structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RustiusConfig {
     /// Config schema version for future migrations.
     pub version: String,
     pub app_settings: AppSettings,
+    /// Reusable credential profiles.
+    #[serde(default)]
+    pub credentials: Vec<CredentialProfile>,
     /// Root-level tree nodes (folders and connections).
     #[serde(default)]
     pub tree: Vec<TreeNode>,
@@ -365,6 +416,7 @@ impl Default for RustiusConfig {
         Self {
             version: "1.0.0".into(),
             app_settings: AppSettings::default(),
+            credentials: Vec::new(),
             tree: Vec::new(),
         }
     }
@@ -394,6 +446,7 @@ impl Connection {
             updated_at: now,
             ssh_config: None,
             rdp_config: None,
+            credential_id: None,
         }
     }
 }
@@ -416,6 +469,7 @@ mod tests {
         let config = RustiusConfig {
             version: "1.0.0".into(),
             app_settings: AppSettings::default(),
+            credentials: Vec::new(),
             tree: vec![node],
         };
 
@@ -483,6 +537,7 @@ mod tests {
         let config = RustiusConfig {
             version: "1.0.0".into(),
             app_settings: AppSettings::default(),
+            credentials: Vec::new(),
             tree: vec![TreeNode::Connection(conn)],
         };
 
@@ -589,5 +644,50 @@ mod tests {
             roundtrip.rdp_config.unwrap().domain.as_deref(),
             Some("CORP")
         );
+    }
+
+    #[test]
+    fn test_credential_profile_roundtrip() {
+        let cred = CredentialProfile::new(
+            "CORP Domain Admin",
+            AuthMethod::password("administrator", Some("P@ssw0rd123".into())),
+        )
+        .with_domain("CORP");
+
+        let mut config = RustiusConfig::default();
+        config.credentials.push(cred.clone());
+
+        // Serialize to TOML and JSON
+        let toml_str = toml::to_string_pretty(&config).expect("Should serialize to TOML");
+        assert!(toml_str.contains("CORP Domain Admin"));
+        assert!(toml_str.contains("CORP"));
+
+        let parsed: RustiusConfig = toml::from_str(&toml_str).expect("Should deserialize from TOML");
+        assert_eq!(parsed.credentials.len(), 1);
+        let loaded = &parsed.credentials[0];
+        assert_eq!(loaded.name, "CORP Domain Admin");
+        assert_eq!(loaded.domain.as_deref(), Some("CORP"));
+        if let AuthMethod::Password { username, password, .. } = &loaded.auth {
+            assert_eq!(username, "administrator");
+            assert_eq!(password.as_deref(), Some("P@ssw0rd123"));
+        } else {
+            panic!("Expected password auth");
+        }
+
+        // Test connection with credential_id
+        let mut conn = Connection::new(
+            "DC-01".into(),
+            ConnectionType::Rdp,
+            "10.0.0.1".into(),
+            3389,
+            AuthMethod::password("", None),
+        );
+        conn.credential_id = Some(cred.id);
+
+        let conn_json = serde_json::to_string(&conn).expect("Should serialize connection");
+        assert!(conn_json.contains(&cred.id.to_string()));
+        let conn_parsed: Connection =
+            serde_json::from_str(&conn_json).expect("Should deserialize connection");
+        assert_eq!(conn_parsed.credential_id, Some(cred.id));
     }
 }

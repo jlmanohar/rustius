@@ -335,6 +335,7 @@ fn parse_session_entry(
         updated_at: now,
         ssh_config,
         rdp_config,
+        credential_id: None,
     })
 }
 

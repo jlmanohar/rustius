@@ -405,6 +405,7 @@ fn build_connection(
         updated_at: now,
         ssh_config,
         rdp_config,
+        credential_id: None,
     }
 }
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { appState } from '../stores/appState.svelte';
-  import type { Connection, ConnectionType, TreeNode, SecretRef } from '../types';
+  import type { Connection, ConnectionType, TreeNode, SecretRef, CredentialProfile } from '../types';
   import {
     Terminal,
     ArrowLeftRight,
@@ -8,7 +8,12 @@
     X,
     Lock,
     Key,
-    Shield
+    KeyRound,
+    Shield,
+    Layers,
+    BookmarkPlus,
+    Link2,
+    Unlink,
   } from '@lucide/svelte';
 
   let connType = $state<ConnectionType>('ssh');
@@ -27,6 +32,12 @@
   let passphrase = $state('');
   let existingSecretRef = $state<SecretRef | undefined>(undefined);
   let domain = $state('');
+  let selectedCredentialId = $state('');
+
+  let selectedProfile = $derived.by(() => {
+    if (!selectedCredentialId) return null;
+    return appState.config.credentials?.find((p) => p.id === selectedCredentialId) || null;
+  });
 
   $effect(() => {
     if (appState.editingConnection) {
@@ -37,6 +48,7 @@
       port = c.port;
       environment = c.environment || 'Production';
       tagsStr = c.tags ? c.tags.join(', ') : '';
+      selectedCredentialId = c.credential_id || '';
       if (c.auth.type === 'keyfile') {
         authType = 'keyfile';
         username = c.auth.username;
@@ -72,6 +84,7 @@
     } else {
       existingSecretRef = undefined;
       domain = '';
+      selectedCredentialId = '';
     }
   });
 
@@ -104,6 +117,65 @@
     port = type === 'rdp' ? 3389 : 22;
     if (type === 'rdp') {
       authType = 'password';
+    }
+  }
+
+  function handleProfileChange(id: string) {
+    selectedCredentialId = id;
+    if (id) {
+      const p = appState.config.credentials?.find((x) => x.id === id);
+      if (p) {
+        if ('username' in p.auth) {
+          username = p.auth.username;
+        }
+        if (p.domain) domain = p.domain;
+        if (p.auth.type === 'keyfile') {
+          authType = 'keyfile';
+          if ('key_path' in p.auth) keyPath = p.auth.key_path;
+        } else {
+          authType = 'password';
+        }
+      }
+    }
+  }
+
+  async function handleSaveAsProfile() {
+    if (!username.trim()) {
+      alert('Username is required to save credentials.');
+      return;
+    }
+    const profileName = prompt('Enter a name for this Saved Credential:', `${name || 'Server'} Credentials`);
+    if (!profileName || !profileName.trim()) return;
+
+    try {
+      const now = new Date().toISOString();
+      const auth =
+        authType === 'password'
+          ? {
+              type: 'password' as const,
+              username: username.trim(),
+              password: password ? password : undefined,
+            }
+          : {
+              type: 'keyfile' as const,
+              username: username.trim(),
+              key_path: keyPath.trim(),
+              passphrase: passphrase ? passphrase : undefined,
+            };
+
+      const newProf: CredentialProfile = {
+        id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'cred-' + Date.now(),
+        name: profileName.trim(),
+        domain: domain.trim() || undefined,
+        auth,
+        created_at: now,
+        updated_at: now,
+      };
+      await appState.addCredential(newProf);
+      selectedCredentialId = newProf.id;
+    } catch (err: any) {
+      console.error('Failed to save credential:', err);
+      alert(`Failed to save credential: ${err?.message || err}`);
     }
   }
 
@@ -161,6 +233,7 @@
       name: name.trim(),
       conn_type: connType,
       connection_type: connType,
+      credential_id: selectedCredentialId ? selectedCredentialId : undefined,
       host: host.trim(),
       port: Number(port),
       environment: environment.trim() || undefined,
@@ -339,11 +412,69 @@
         </span>
       </div>
 
+      <!-- Saved Credentials Selector -->
+      <div class="profile-select-container">
+        <div class="profile-select-header">
+          <label for="cred-profile-select" class="profile-label">
+            <KeyRound size={12} />
+            <span>Saved Credentials</span>
+          </label>
+          {#if !selectedCredentialId && username.trim()}
+            <button
+              type="button"
+              class="profile-action-btn"
+              onclick={handleSaveAsProfile}
+              title="Save current credentials for reuse"
+            >
+              <BookmarkPlus size={12} />
+              <span>Save as Credential</span>
+            </button>
+          {:else if selectedCredentialId}
+            <button
+              type="button"
+              class="profile-action-btn detach"
+              onclick={() => (selectedCredentialId = '')}
+              title="Detach credential to use custom values"
+            >
+              <Unlink size={12} />
+              <span>Detach</span>
+            </button>
+          {/if}
+        </div>
+        <select
+          id="cred-profile-select"
+          class="input-field"
+          value={selectedCredentialId}
+          onchange={(e) => handleProfileChange((e.target as HTMLSelectElement).value)}
+        >
+          <option value="">Direct / Custom Credentials (No Saved Credential)</option>
+          {#if appState.config.credentials && appState.config.credentials.length > 0}
+            <optgroup label="Saved Credentials">
+              {#each appState.config.credentials as profile (profile.id)}
+                <option value={profile.id}>
+                  {profile.name} ({profile.auth.username}{profile.domain ? ` @ ${profile.domain}` : ''} · {profile.auth.type})
+                </option>
+              {/each}
+            </optgroup>
+          {/if}
+        </select>
+
+        {#if selectedProfile}
+          <div class="profile-linked-callout">
+            <Link2 size={13} />
+            <span>
+              Inheriting from <strong>{selectedProfile.name}</strong>. Secret is secured in OS Keyring. Changes in Saved Credentials propagate automatically.
+            </span>
+          </div>
+        {/if}
+      </div>
+
       {#if connType !== 'rdp'}
         <div class="auth-tabs">
           <button
             class="auth-tab {authType === 'password' ? 'auth-tab-active' : ''}"
             onclick={() => (authType = 'password')}
+            disabled={!!selectedProfile}
           >
             <Lock size={12} />
             <span>Password</span>
@@ -351,6 +482,7 @@
           <button
             class="auth-tab {authType === 'keyfile' ? 'auth-tab-active' : ''}"
             onclick={() => (authType = 'keyfile')}
+            disabled={!!selectedProfile}
           >
             <Key size={12} />
             <span>Private Key</span>
@@ -365,8 +497,9 @@
             <input
               id="conn-domain"
               type="text"
-              placeholder="e.g. CORP or WORKGROUP"
+              placeholder={selectedProfile?.domain ? `Inherited: ${selectedProfile.domain}` : 'e.g. CORP or WORKGROUP'}
               bind:value={domain}
+              disabled={!!selectedProfile}
               class="input-field"
             />
           </div>
@@ -376,8 +509,9 @@
           <input
             id="conn-user"
             type="text"
-            placeholder={connType === 'rdp' ? 'e.g. Administrator' : 'e.g. root'}
+            placeholder={selectedProfile ? `Inherited: ${selectedProfile.auth.username}` : (connType === 'rdp' ? 'e.g. Administrator' : 'e.g. root')}
             bind:value={username}
+            disabled={!!selectedProfile}
             class="input-field"
           />
         </div>
@@ -388,8 +522,9 @@
             <input
               id="conn-pass"
               type="password"
-              placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave empty to keep)' : '••••••••'}
+              placeholder={selectedProfile ? 'Inherited from Profile (OS Keyring)' : (existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave empty to keep)' : '••••••••')}
               bind:value={password}
+              disabled={!!selectedProfile}
               class="input-field"
             />
           </div>
@@ -399,8 +534,9 @@
             <input
               id="conn-key"
               type="text"
-              placeholder="~/.ssh/id_ed25519"
+              placeholder={selectedProfile?.auth.type === 'keyfile' ? `Inherited: ${selectedProfile.auth.key_path}` : '~/.ssh/id_ed25519'}
               bind:value={keyPath}
+              disabled={!!selectedProfile}
               class="input-field"
             />
           </div>
@@ -413,8 +549,9 @@
           <input
             id="conn-passphrase"
             type="password"
-            placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave empty to keep)' : 'Key passphrase'}
+            placeholder={selectedProfile ? 'Inherited from Profile (OS Keyring)' : (existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave empty to keep)' : 'Key passphrase')}
             bind:value={passphrase}
+            disabled={!!selectedProfile}
             class="input-field"
           />
         </div>
@@ -702,6 +839,93 @@
   .check-desc {
     font-size: 11px;
     color: var(--mute);
+  }
+
+  .profile-select-container {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: var(--canvas-subtle);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    padding: 10px;
+  }
+
+  .profile-select-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .profile-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ink-secondary);
+  }
+
+  .profile-label :global(svg) {
+    color: var(--mute);
+  }
+
+  .profile-action-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    border: 1px solid var(--hairline);
+    color: var(--body);
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+
+  .profile-action-btn:hover {
+    border-color: var(--hairline-hover);
+    color: var(--ink);
+    background: var(--canvas-hover);
+  }
+
+  .profile-action-btn.detach {
+    color: var(--mute);
+  }
+
+  .profile-action-btn.detach:hover {
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.3);
+  }
+
+  .profile-linked-callout {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: var(--radius-xs);
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    font-size: 11px;
+    color: var(--ink-secondary);
+    line-height: 1.4;
+  }
+
+  .profile-linked-callout strong {
+    color: var(--ink);
+  }
+
+  .profile-linked-callout :global(svg) {
+    color: #3b82f6;
+    flex-shrink: 0;
+  }
+
+  input:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+    background: var(--canvas-subtle);
+    border-color: var(--hairline-soft);
   }
 
   .modal-bottom {

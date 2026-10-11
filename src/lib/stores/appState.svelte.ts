@@ -1,4 +1,13 @@
-import type { RustiusConfig, TabSession, Connection, TreeNode, Folder, AppSettings, ImportSummary } from '../types';
+import type {
+  RustiusConfig,
+  TabSession,
+  Connection,
+  TreeNode,
+  Folder,
+  AppSettings,
+  ImportSummary,
+  CredentialProfile,
+} from '../types';
 import { invoke } from '@tauri-apps/api/core';
 
 export class AppStore {
@@ -12,6 +21,7 @@ export class AppStore {
       show_sidebar: true,
       sidebar_width: 280,
     },
+    credentials: [],
     tree: [],
   });
 
@@ -25,7 +35,9 @@ export class AppStore {
   isFolderModalOpen = $state<boolean>(false);
   isSettingsModalOpen = $state<boolean>(false);
   isImportModalOpen = $state<boolean>(false);
+  isCredentialsModalOpen = $state<boolean>(false);
   editingConnection = $state<Connection | null>(null);
+  editingCredential = $state<CredentialProfile | null>(null);
   targetFolderId = $state<string | null>(null);
 
   constructor() {
@@ -152,6 +164,48 @@ export class AppStore {
     } catch (err) {
       console.error('Failed to remove node:', err);
       this.removeNodeLocally(this.config.tree, id);
+    }
+  }
+
+  async addCredential(cred: CredentialProfile): Promise<string> {
+    try {
+      const id = await invoke<string>('add_credential', { credential: cred });
+      await this.loadConfig();
+      return id;
+    } catch (err) {
+      console.error('Failed to add credential:', err);
+      if (!this.config.credentials) {
+        this.config.credentials = [];
+      }
+      this.config.credentials.push(cred);
+      return cred.id;
+    }
+  }
+
+  async updateCredential(cred: CredentialProfile): Promise<void> {
+    try {
+      await invoke('update_credential', { credential: cred });
+      await this.loadConfig();
+    } catch (err) {
+      console.error('Failed to update credential:', err);
+      if (this.config.credentials) {
+        const idx = this.config.credentials.findIndex((c) => c.id === cred.id);
+        if (idx !== -1) {
+          this.config.credentials[idx] = cred;
+        }
+      }
+    }
+  }
+
+  async deleteCredential(id: string): Promise<void> {
+    try {
+      await invoke('delete_credential', { id });
+      await this.loadConfig();
+    } catch (err) {
+      console.error('Failed to delete credential:', err);
+      if (this.config.credentials) {
+        this.config.credentials = this.config.credentials.filter((c) => c.id !== id);
+      }
     }
   }
 

@@ -35,6 +35,7 @@ pub async fn sftp_connect(
     let connection = state
         .config_manager
         .resolve_connection(&connection)
+        .await
         .map_err(|e| format!("Failed to resolve credentials: {e}"))?;
 
     let client = SftpClient::connect(&connection)
