@@ -330,6 +330,7 @@ fn parse_session_entry(
         },
         tags: vec!["MobaXterm".into()],
         environment: None,
+        description: None,
         notes: None,
         created_at: now.clone(),
         updated_at: now,

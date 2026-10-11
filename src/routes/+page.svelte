@@ -10,6 +10,7 @@
   import SftpView from '$lib/components/SftpView.svelte';
   import RdpView from '$lib/components/RdpView.svelte';
   import TitleBar from '$lib/components/TitleBar.svelte';
+  import SessionNotesDrawer from '$lib/components/SessionNotesDrawer.svelte';
   import {
     Terminal,
     ArrowLeftRight,
@@ -25,8 +26,17 @@
   let activeSession = $derived(
     appState.tabs.find((t) => t.id === appState.activeTabId) || null
   );
+
+  function handleKeyDown(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key === 'n' || e.key === 'N')) {
+      e.preventDefault();
+      appState.toggleNotesDrawer();
+    } else if (e.key === 'Escape' && appState.isNotesDrawerOpen) {
+      appState.isNotesDrawerOpen = false;
+    }
+  }
 </script>
-<svelte:window onbeforeunload={() => appState.closeAllTabs()} />
+<svelte:window onbeforeunload={() => appState.closeAllTabs()} onkeydown={handleKeyDown} />
 
 <div class="window-shell">
   <!-- Native App Title Bar & Window Controls -->
@@ -55,6 +65,11 @@
             {/if}
           </div>
         {/each}
+
+        <!-- In-Session Runbook & Markdown Notes Drawer -->
+        {#if appState.isNotesDrawerOpen}
+          <SessionNotesDrawer />
+        {/if}
       {:else}
         <!-- Geist Hero & Dashboard -->
         <div class="hero-container">

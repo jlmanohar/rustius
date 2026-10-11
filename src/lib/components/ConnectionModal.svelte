@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { marked } from 'marked';
   import { appState } from '../stores/appState.svelte';
   import type { Connection, ConnectionType, TreeNode, SecretRef, CredentialProfile } from '../types';
   import {
@@ -14,6 +15,10 @@
     BookmarkPlus,
     Link2,
     Unlink,
+    FileText,
+    Code,
+    CheckSquare,
+    Link as LinkIcon,
   } from '@lucide/svelte';
 
   let connType = $state<ConnectionType>('ssh');
@@ -21,8 +26,13 @@
   let host = $state('');
   let port = $state(22);
   let environment = $state('Production');
+  let description = $state('');
   let tagsStr = $state('');
   let parentFolderId = $state<string>('');
+
+  // Documentation / Notes
+  let notes = $state('');
+  let notesTab = $state<'write' | 'preview'>('write');
 
   // Auth
   let authType = $state<'password' | 'keyfile'>('password');
@@ -47,7 +57,10 @@
       host = c.host;
       port = c.port;
       environment = c.environment || 'Production';
+      description = c.description || '';
       tagsStr = c.tags ? c.tags.join(', ') : '';
+      notes = c.notes || '';
+      notesTab = 'write';
       selectedCredentialId = c.credential_id || '';
       if (c.auth.type === 'keyfile') {
         authType = 'keyfile';
@@ -85,6 +98,9 @@
       existingSecretRef = undefined;
       domain = '';
       selectedCredentialId = '';
+      description = '';
+      notes = '';
+      notesTab = 'write';
     }
   });
 
@@ -179,6 +195,32 @@
     }
   }
 
+  function renderMarkdown(md: string): string {
+    if (!md || !md.trim()) return '';
+    try {
+      return marked.parse(md, { gfm: true, breaks: true }) as string;
+    } catch {
+      return md;
+    }
+  }
+
+  function insertMarkdown(prefix: string, suffix: string) {
+    const el = document.getElementById('conn-notes-input') as HTMLTextAreaElement | null;
+    if (!el) {
+      notes += `${prefix}${suffix}`;
+      return;
+    }
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const selected = notes.substring(start, end);
+    const replacement = `${prefix}${selected || 'text'}${suffix}`;
+    notes = notes.substring(0, start) + replacement + notes.substring(end);
+    setTimeout(() => {
+      el.focus();
+      el.setSelectionRange(start + prefix.length, start + prefix.length + (selected ? selected.length : 4));
+    }, 0);
+  }
+
   async function handleSave(connectNow: boolean = false) {
     if (!name.trim() || !host.trim()) {
       alert('Session Name and Host address are required.');
@@ -237,7 +279,9 @@
       host: host.trim(),
       port: Number(port),
       environment: environment.trim() || undefined,
+      description: description.trim() || undefined,
       tags,
+      notes: notes.trim() || undefined,
       created_at: createdAt,
       updated_at: new Date().toISOString(),
       auth,
@@ -401,6 +445,17 @@
             class="input-field"
           />
         </div>
+      </div>
+
+      <div class="form-cell">
+        <label for="conn-desc">Short Description (optional)</label>
+        <input
+          id="conn-desc"
+          type="text"
+          placeholder="e.g. Primary DB replica, US-East customer cluster"
+          bind:value={description}
+          class="input-field"
+        />
       </div>
 
       <!-- Authentication -->
@@ -597,6 +652,91 @@
           </div>
         </div>
       {/if}
+
+      <!-- Documentation & Notes -->
+      <div class="section-divider">
+        <span class="mono-eyebrow">NOTES & RUNBOOK</span>
+        <span class="vault-badge" title="Markdown formatting supported">
+          <FileText size={11} />
+          <span>Markdown Supported</span>
+        </span>
+      </div>
+
+      <div class="notes-container">
+        <div class="notes-header">
+          <div class="notes-tabs">
+            <button
+              type="button"
+              class="notes-tab {notesTab === 'write' ? 'active' : ''}"
+              onclick={() => (notesTab = 'write')}
+            >
+              Write
+            </button>
+            <button
+              type="button"
+              class="notes-tab {notesTab === 'preview' ? 'active' : ''}"
+              onclick={() => (notesTab = 'preview')}
+            >
+              Preview
+            </button>
+          </div>
+
+          {#if notesTab === 'write'}
+            <div class="notes-toolbar">
+              <button
+                type="button"
+                class="tb-btn"
+                title="Bold (**text**)"
+                onclick={() => insertMarkdown('**', '**')}
+              >
+                <strong>B</strong>
+              </button>
+              <button
+                type="button"
+                class="tb-btn"
+                title="Code block (```bash ... ```)"
+                onclick={() => insertMarkdown('```bash\n', '\n```')}
+              >
+                <Code size={12} />
+              </button>
+              <button
+                type="button"
+                class="tb-btn"
+                title="Checklist item (- [ ])"
+                onclick={() => insertMarkdown('- [ ] ', '')}
+              >
+                <CheckSquare size={12} />
+              </button>
+              <button
+                type="button"
+                class="tb-btn"
+                title="Link ([title](url))"
+                onclick={() => insertMarkdown('[', '](https://)')}
+              >
+                <LinkIcon size={12} />
+              </button>
+            </div>
+          {/if}
+        </div>
+
+        {#if notesTab === 'write'}
+          <textarea
+            id="conn-notes-input"
+            class="notes-textarea input-field"
+            placeholder="# Server Notes & Runbook&#10;&#10;- Service restart: `sudo systemctl restart service`&#10;- On-call escalation: #devops-alert&#10;- [ ] Checklist tasks..."
+            bind:value={notes}
+            rows="6"
+          ></textarea>
+        {:else}
+          <div class="notes-preview markdown-body">
+            {#if notes.trim()}
+              {@html renderMarkdown(notes)}
+            {:else}
+              <p class="preview-empty">No notes entered yet. Switch to "Write" to document runbooks, checklists, or commands.</p>
+            {/if}
+          </div>
+        {/if}
+      </div>
     </div>
 
     <!-- Actions -->
@@ -926,6 +1066,158 @@
     cursor: not-allowed;
     background: var(--canvas-subtle);
     border-color: var(--hairline-soft);
+  }
+
+  /* Notes & Markdown Styles */
+  .notes-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--canvas-subtle);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    padding: 10px;
+  }
+
+  .notes-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .notes-tabs {
+    display: flex;
+    gap: 4px;
+    background: var(--canvas);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-xs);
+    padding: 2px;
+  }
+
+  .notes-tab {
+    background: transparent;
+    border: none;
+    font-size: 11px;
+    color: var(--mute);
+    padding: 3px 10px;
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+
+  .notes-tab.active {
+    background: var(--canvas-elevated);
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  .notes-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .tb-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: var(--radius-xs);
+    background: transparent;
+    border: 1px solid var(--hairline);
+    color: var(--body);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+
+  .tb-btn:hover {
+    color: var(--ink);
+    border-color: var(--hairline-hover);
+    background: var(--canvas-hover);
+  }
+
+  .notes-textarea {
+    resize: vertical;
+    min-height: 110px;
+    font-family: var(--font-mono, monospace);
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 8px 10px;
+  }
+
+  .notes-preview {
+    min-height: 110px;
+    max-height: 260px;
+    overflow-y: auto;
+    background: var(--canvas);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-xs);
+    padding: 10px 14px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--ink-secondary);
+  }
+
+  .preview-empty {
+    color: var(--mute);
+    font-style: italic;
+    font-size: 11px;
+    margin: 8px 0;
+  }
+
+  .notes-preview :global(h1),
+  .notes-preview :global(h2),
+  .notes-preview :global(h3) {
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 600;
+    margin-top: 10px;
+    margin-bottom: 6px;
+  }
+
+  .notes-preview :global(p) {
+    margin-bottom: 6px;
+  }
+
+  .notes-preview :global(ul),
+  .notes-preview :global(ol) {
+    margin: 4px 0 8px 18px;
+  }
+
+  .notes-preview :global(li) {
+    margin-bottom: 2px;
+  }
+
+  .notes-preview :global(code) {
+    font-family: var(--font-mono, monospace);
+    background: var(--canvas-subtle);
+    border: 1px solid var(--hairline);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 11px;
+    color: var(--ink);
+  }
+
+  .notes-preview :global(pre) {
+    background: var(--canvas-subtle);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-xs);
+    padding: 8px 10px;
+    overflow-x: auto;
+    margin: 6px 0;
+  }
+
+  .notes-preview :global(pre code) {
+    border: none;
+    padding: 0;
+    background: transparent;
+  }
+
+  .notes-preview :global(a) {
+    color: #3b82f6;
+    text-decoration: underline;
   }
 
   .modal-bottom {

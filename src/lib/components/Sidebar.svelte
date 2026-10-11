@@ -18,7 +18,8 @@
     Settings,
     Pencil,
     FolderDown,
-    KeyRound
+    KeyRound,
+    FileText
   } from '@lucide/svelte';
 
   let environments = $derived.by(() => {
@@ -46,6 +47,8 @@
         !q ||
         node.name.toLowerCase().includes(q) ||
         node.host.toLowerCase().includes(q) ||
+        (node.description && node.description.toLowerCase().includes(q)) ||
+        (node.notes && node.notes.toLowerCase().includes(q)) ||
         node.tags.some((t) => t.toLowerCase().includes(q));
       return matchesEnv && matchesQuery;
     } else {
@@ -248,8 +251,18 @@
                   {#if node.environment}
                     <span class="env-pill">{node.environment}</span>
                   {/if}
+                  {#if node.notes}
+                    <span class="notes-indicator" title="Has documentation/notes">
+                      <FileText size={10} />
+                    </span>
+                  {/if}
                 </div>
-                <div class="node-sub">{node.host}:{node.port}</div>
+                <div class="node-sub">
+                  <span class="node-endpoint">{node.host}:{node.port}</span>
+                  {#if node.description}
+                    <span class="node-desc" title={node.description}>· {node.description}</span>
+                  {/if}
+                </div>
               </div>
 
               <div class="node-actions">
@@ -599,6 +612,13 @@
     color: var(--mute);
   }
 
+  .notes-indicator {
+    display: inline-flex;
+    align-items: center;
+    color: var(--mute);
+    margin-left: 2px;
+  }
+
   .node-sub {
     font-family: var(--font-mono);
     font-size: 10px;
@@ -606,6 +626,23 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .node-endpoint {
+    flex-shrink: 0;
+  }
+
+  .node-desc {
+    color: var(--body);
+    font-family: var(--font-sans);
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 130px;
   }
 
   .node-actions {

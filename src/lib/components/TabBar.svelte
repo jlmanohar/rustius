@@ -6,10 +6,13 @@
     Monitor,
     X,
     Plus,
-    XCircle
+    XCircle,
+    FileText
   } from '@lucide/svelte';
 
   let contextMenu = $state<{ x: number; y: number; tabId: string } | null>(null);
+  let activeConn = $derived(appState.getActiveConnection());
+  let hasNotes = $derived(Boolean(activeConn?.notes && activeConn.notes.trim()));
 
   function handleClose(e: MouseEvent, id: string) {
     e.stopPropagation();
@@ -100,6 +103,22 @@
         </button>
       {/if}
     </div>
+  </div>
+
+  <div class="strip-right-actions">
+    {#if activeConn}
+      <button
+        class="notes-toggle-btn {appState.isNotesDrawerOpen ? 'active' : ''}"
+        title={hasNotes ? 'Runbook & Notes (Ctrl+Alt+N)' : 'Add Runbook / Notes (Ctrl+Alt+N)'}
+        onclick={() => appState.toggleNotesDrawer()}
+      >
+        <FileText size={12} />
+        <span class="notes-btn-text">Runbook</span>
+        {#if hasNotes}
+          <span class="has-notes-badge" title="Has notes"></span>
+        {/if}
+      </button>
+    {/if}
   </div>
 </div>
 
@@ -345,5 +364,56 @@
     height: 1px;
     background: var(--hairline);
     margin: 3px 0;
+  }
+
+  .strip-right-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    padding-left: 8px;
+    flex-shrink: 0;
+  }
+
+  .notes-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 10px;
+    border-radius: var(--radius-sm);
+    background: var(--canvas-subtle);
+    border: 1px solid var(--hairline);
+    color: var(--mute);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+  }
+
+  .notes-toggle-btn:hover {
+    color: var(--ink);
+    background: var(--canvas-hover);
+    border-color: var(--hairline-hover);
+  }
+
+  .notes-toggle-btn.active {
+    background: var(--canvas-elevated);
+    color: var(--ink);
+    border-color: var(--ink-secondary);
+  }
+
+  .notes-btn-text {
+    font-size: 11px;
+    letter-spacing: -0.2px;
+  }
+
+  .has-notes-badge {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 6px rgba(0, 112, 243, 0.6);
   }
 </style>

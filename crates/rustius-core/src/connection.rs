@@ -161,6 +161,8 @@ struct ConnectionRaw {
     #[serde(default)]
     environment: Option<String>,
     #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
     notes: Option<String>,
     #[serde(default = "default_timestamp")]
     created_at: String,
@@ -189,6 +191,7 @@ impl From<ConnectionRaw> for Connection {
             auth: raw.auth,
             tags: raw.tags,
             environment: raw.environment,
+            description: raw.description,
             notes: raw.notes,
             created_at: raw.created_at,
             updated_at: raw.updated_at,
@@ -213,6 +216,8 @@ pub struct Connection {
     pub tags: Vec<String>,
     #[serde(default)]
     pub environment: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
     #[serde(default = "default_timestamp")]
@@ -441,6 +446,7 @@ impl Connection {
             auth,
             tags: Vec::new(),
             environment: None,
+            description: None,
             notes: None,
             created_at: now.clone(),
             updated_at: now,
@@ -448,6 +454,18 @@ impl Connection {
             rdp_config: None,
             credential_id: None,
         }
+    }
+
+    /// Set short description on connection.
+    pub fn with_description(mut self, desc: impl Into<String>) -> Self {
+        self.description = Some(desc.into());
+        self
+    }
+
+    /// Set markdown notes on connection.
+    pub fn with_notes(mut self, notes: impl Into<String>) -> Self {
+        self.notes = Some(notes.into());
+        self
     }
 }
 
@@ -481,6 +499,37 @@ mod tests {
         let parsed: RustiusConfig = toml::from_str(&toml_str).expect("Failed to deserialize");
         assert_eq!(parsed.version, "1.0.0");
         assert_eq!(parsed.tree.len(), 1);
+    }
+
+    #[test]
+    fn test_connection_description_and_notes_roundtrip() {
+        let conn = Connection::new(
+            "Database Primary".into(),
+            ConnectionType::Ssh,
+            "db01.internal".into(),
+            22,
+            AuthMethod::password("postgres", Some("secret123".into())),
+        )
+        .with_description("Primary PostgreSQL billing cluster replica (us-east-1)")
+        .with_notes("# Billing DB Runbook\n\n- [ ] Check VIP on 10.0.1.20\n- [ ] `systemctl status postgresql`");
+
+        assert_eq!(
+            conn.description.as_deref(),
+            Some("Primary PostgreSQL billing cluster replica (us-east-1)")
+        );
+        assert!(conn.notes.as_ref().unwrap().contains("Billing DB Runbook"));
+
+        // Roundtrip via JSON (Frontend IPC simulation)
+        let json_str = serde_json::to_string(&conn).unwrap();
+        let from_json: Connection = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(from_json.description, conn.description);
+        assert_eq!(from_json.notes, conn.notes);
+
+        // Roundtrip via TOML (File persistence simulation)
+        let toml_str = toml::to_string(&conn).unwrap();
+        let from_toml: Connection = toml::from_str(&toml_str).unwrap();
+        assert_eq!(from_toml.description, conn.description);
+        assert_eq!(from_toml.notes, conn.notes);
     }
 
     #[test]

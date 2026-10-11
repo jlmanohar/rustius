@@ -400,6 +400,7 @@ fn build_connection(
         auth,
         tags,
         environment: None,
+        description: description.clone(),
         notes: description,
         created_at: now.clone(),
         updated_at: now,

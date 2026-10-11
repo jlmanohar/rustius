@@ -36,6 +36,7 @@ export class AppStore {
   isSettingsModalOpen = $state<boolean>(false);
   isImportModalOpen = $state<boolean>(false);
   isCredentialsModalOpen = $state<boolean>(false);
+  isNotesDrawerOpen = $state<boolean>(false);
   editingConnection = $state<Connection | null>(null);
   editingCredential = $state<CredentialProfile | null>(null);
   targetFolderId = $state<string | null>(null);
@@ -232,6 +233,34 @@ export class AppStore {
       }
     }
     return null;
+  }
+
+  findConnection(id?: string | null): Connection | null {
+    if (!id) return null;
+    const search = (nodes: TreeNode[]): Connection | null => {
+      for (const node of nodes) {
+        if (node.node_type === 'connection' && node.id === id) {
+          return node;
+        }
+        if (node.node_type === 'folder' && Array.isArray(node.children)) {
+          const found = search(node.children);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    return search(this.config.tree);
+  }
+
+  getActiveConnection(): Connection | null {
+    if (!this.activeTabId) return null;
+    const tab = this.tabs.find((t) => t.id === this.activeTabId);
+    if (!tab || !tab.connectionId) return null;
+    return this.findConnection(tab.connectionId);
+  }
+
+  toggleNotesDrawer() {
+    this.isNotesDrawerOpen = !this.isNotesDrawerOpen;
   }
 
   openTab(session: Omit<TabSession, 'id'>) {
