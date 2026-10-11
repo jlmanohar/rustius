@@ -70,7 +70,9 @@ pub fn decrypt_mobaxterm_password(
         .ok_or_else(|| anyhow!("Failed to decode MobaXterm password string"))?;
 
     if raw_bytes.len() <= 16 {
-        return Err(anyhow!("Payload too short for MobaXterm encrypted password"));
+        return Err(anyhow!(
+            "Payload too short for MobaXterm encrypted password"
+        ));
     }
 
     let iv = &raw_bytes[0..16];
@@ -84,8 +86,7 @@ pub fn decrypt_mobaxterm_password(
     let mut plaintext = ciphertext.to_vec();
     dec.decrypt(&mut plaintext);
 
-    String::from_utf8(plaintext)
-        .map_err(|e| anyhow!("Decrypted payload is not valid UTF-8: {e}"))
+    String::from_utf8(plaintext).map_err(|e| anyhow!("Decrypted payload is not valid UTF-8: {e}"))
 }
 
 /// Parse `.mxtsessions` or `MobaXterm.ini` file into Rustius TreeNode hierarchy.
@@ -288,6 +289,17 @@ fn parse_session_entry(
         None
     };
 
+    let (domain, final_username) = if conn_type == ConnectionType::Rdp && username.contains('\\') {
+        let parts: Vec<&str> = username.splitn(2, '\\').collect();
+        if parts.len() == 2 && !parts[0].trim().is_empty() {
+            (Some(parts[0].trim().to_string()), parts[1].trim().to_string())
+        } else {
+            (None, username)
+        }
+    } else {
+        (None, username)
+    };
+
     let rdp_config = if conn_type == ConnectionType::Rdp {
         Some(RdpConfig {
             width: 1280,
@@ -295,6 +307,7 @@ fn parse_session_entry(
             color_depth: 24,
             fullscreen: false,
             clipboard_sharing: true,
+            domain,
         })
     } else {
         None
@@ -307,10 +320,10 @@ fn parse_session_entry(
         host: host.to_string(),
         port,
         auth: AuthMethod::Password {
-            username: if username.is_empty() {
+            username: if final_username.is_empty() {
                 "root".into()
             } else {
-                username
+                final_username
             },
             password: decrypted_password,
             secret_ref: None,
@@ -371,6 +384,33 @@ WindowsRDP= #109#1%10.0.0.2%3389%Administrator%%-1%-1%%%3389%%0%0%0%%%-1%0%0%0%%
 
         if let TreeNode::Folder(f) = folder {
             assert_eq!(f.children.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_parse_mobaxterm_rdp_domain() {
+        let ini = r#"
+[Bookmarks]
+SubRep=
+ImgNum=42
+DomainRDP= #109#1%10.0.0.5%3389%CORP\john.doe%%-1%-1%%%3389%%0%0%0%%%-1%0%0%0%%1080%%0%0%1#MobaFont%
+"#;
+
+        let nodes = parse_mobaxterm_ini(ini, None).unwrap();
+        assert_eq!(nodes.len(), 1);
+
+        if let TreeNode::Connection(c) = &nodes[0] {
+            assert_eq!(c.name, "DomainRDP");
+            assert_eq!(c.connection_type, ConnectionType::Rdp);
+            if let AuthMethod::Password { username, .. } = &c.auth {
+                assert_eq!(username, "john.doe");
+            } else {
+                panic!("Expected password auth");
+            }
+            let rdp = c.rdp_config.as_ref().expect("RDP config should be present");
+            assert_eq!(rdp.domain.as_deref(), Some("CORP"));
+        } else {
+            panic!("Expected connection node");
         }
     }
 }

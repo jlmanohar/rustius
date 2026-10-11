@@ -65,7 +65,10 @@ impl AuthMethod {
     }
 
     /// Resolve password from either `secret_ref` (e.g. OS Keyring) or legacy inline `password`.
-    pub fn resolve_password(&self, secret_manager: &SecretManager) -> anyhow::Result<Option<String>> {
+    pub fn resolve_password(
+        &self,
+        secret_manager: &SecretManager,
+    ) -> anyhow::Result<Option<String>> {
         match self {
             AuthMethod::Password {
                 password,
@@ -83,7 +86,10 @@ impl AuthMethod {
     }
 
     /// Resolve private key passphrase from either `secret_ref` (e.g. OS Keyring) or legacy inline `passphrase`.
-    pub fn resolve_passphrase(&self, secret_manager: &SecretManager) -> anyhow::Result<Option<String>> {
+    pub fn resolve_passphrase(
+        &self,
+        secret_manager: &SecretManager,
+    ) -> anyhow::Result<Option<String>> {
         match self {
             AuthMethod::KeyFile {
                 passphrase,
@@ -276,6 +282,9 @@ pub struct RdpConfig {
     pub fullscreen: bool,
     #[serde(default = "default_true")]
     pub clipboard_sharing: bool,
+    /// Optional Windows domain for authentication.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -512,7 +521,8 @@ mod tests {
             "port": 3389,
             "auth": { "type": "password", "username": "admin" }
         }"#;
-        let conn_rdp: Connection = serde_json::from_str(json_conn_type).expect("Should parse conn_type");
+        let conn_rdp: Connection =
+            serde_json::from_str(json_conn_type).expect("Should parse conn_type");
         assert_eq!(conn_rdp.connection_type, ConnectionType::Rdp);
 
         // Test with connection_type present
@@ -523,7 +533,8 @@ mod tests {
             "port": 22,
             "auth": { "type": "password", "username": "ftpuser" }
         }"#;
-        let conn_sftp: Connection = serde_json::from_str(json_connection_type).expect("Should parse connection_type");
+        let conn_sftp: Connection =
+            serde_json::from_str(json_connection_type).expect("Should parse connection_type");
         assert_eq!(conn_sftp.connection_type, ConnectionType::Sftp);
 
         // Test with BOTH conn_type and connection_type present simultaneously
@@ -535,7 +546,48 @@ mod tests {
             "port": 3389,
             "auth": { "type": "password", "username": "admin" }
         }"#;
-        let conn_both: Connection = serde_json::from_str(json_both).expect("Should parse both fields without duplicate error");
+        let conn_both: Connection = serde_json::from_str(json_both)
+            .expect("Should parse both fields without duplicate error");
         assert_eq!(conn_both.connection_type, ConnectionType::Rdp);
+    }
+
+    #[test]
+    fn test_rdp_connection_with_domain() {
+        let json = r#"{
+            "name": "Domain Controller",
+            "conn_type": "rdp",
+            "host": "dc01.corp.local",
+            "port": 3389,
+            "auth": {
+                "type": "password",
+                "username": "administrator"
+            },
+            "rdp_config": {
+                "width": 1920,
+                "height": 1080,
+                "domain": "CORP"
+            }
+        }"#;
+
+        let conn: Connection =
+            serde_json::from_str(json).expect("Should parse RDP connection with domain");
+        assert_eq!(conn.connection_type, ConnectionType::Rdp);
+        let rdp_config = conn
+            .rdp_config
+            .as_ref()
+            .expect("RDP config should be present");
+        assert_eq!(rdp_config.domain.as_deref(), Some("CORP"));
+        assert_eq!(rdp_config.width, 1920);
+        assert_eq!(rdp_config.height, 1080);
+
+        // Serialize and verify roundtrip
+        let serialized = serde_json::to_string(&conn).expect("Should serialize");
+        assert!(serialized.contains(r#""domain":"CORP""#));
+        let roundtrip: Connection =
+            serde_json::from_str(&serialized).expect("Should deserialize roundtrip");
+        assert_eq!(
+            roundtrip.rdp_config.unwrap().domain.as_deref(),
+            Some("CORP")
+        );
     }
 }

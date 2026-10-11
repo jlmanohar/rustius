@@ -45,6 +45,7 @@ export interface RdpConfig {
   color_depth: number;
   fullscreen: boolean;
   clipboard_sharing: boolean;
+  domain?: string;
 }
 
 export interface Connection {

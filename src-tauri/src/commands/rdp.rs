@@ -21,7 +21,10 @@ pub async fn freerdp_connect(
     height: i32,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    info!("Starting FreeRDP native session for tab: {} with conn: {}", tab_id, connection_id);
+    info!(
+        "Starting FreeRDP native session for tab: {} with conn: {}",
+        tab_id, connection_id
+    );
 
     let uuid = rustius_core::connection::parse_uuid_or_fallback(&connection_id);
     let conn = state
@@ -37,15 +40,36 @@ pub async fn freerdp_connect(
     let host = conn.host;
     let port = conn.port;
 
-    let (username, password) = match &conn.auth {
-        AuthMethod::Password { username, password, .. } => {
-            (username.clone(), password.clone())
-        }
+    let (mut username, password) = match &conn.auth {
+        AuthMethod::Password {
+            username, password, ..
+        } => (username.clone(), password.clone()),
         AuthMethod::KeyFile { username, .. } => (username.clone(), None),
         AuthMethod::Agent { username } => (username.clone(), None),
     };
 
-    let domain: Option<String> = None;
+    let mut domain = conn
+        .rdp_config
+        .as_ref()
+        .and_then(|r| r.domain.as_ref())
+        .map(|d| d.trim().to_string())
+        .filter(|d| !d.is_empty());
+
+    // Support standard Windows down-level logon format "DOMAIN\username"
+    if username.contains('\\') {
+        let parts: Vec<&str> = username.splitn(2, '\\').collect();
+        if parts.len() == 2 {
+            if domain.is_none() && !parts[0].trim().is_empty() {
+                domain = Some(parts[0].trim().to_string());
+            }
+            username = parts[1].trim().to_string();
+        }
+    }
+
+    info!(
+        "FreeRDP credentials prepared - host: {}:{}, user: {}, domain: {:?}",
+        host, port, username, domain
+    );
 
     #[cfg(windows)]
     let parent_window = {
@@ -95,7 +119,10 @@ pub async fn freerdp_connect(
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             match session_clone.try_wait_child() {
                 Ok(Some(status)) => {
-                    info!("FreeRDP session exited with status {:?} for tab: {}", status, tab_id_clone);
+                    info!(
+                        "FreeRDP session exited with status {:?} for tab: {}",
+                        status, tab_id_clone
+                    );
                     let code = status.code().unwrap_or(0);
                     let _ = app_clone.emit(&exit_event, code);
                     break;
@@ -145,18 +172,14 @@ pub async fn freerdp_set_visibility(
         map.get(&tab_id).cloned()
     };
     if let Some(s) = sess {
-        s.set_visibility(visible)
-            .map_err(|e| e.to_string())?;
+        s.set_visibility(visible).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
 /// Terminate the active FreeRDP session for the specified tab.
 #[tauri::command]
-pub async fn freerdp_disconnect(
-    tab_id: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn freerdp_disconnect(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let sess = {
         let mut map = state.freerdp_sessions.write().await;
         map.remove(&tab_id)
@@ -180,18 +203,13 @@ pub async fn freerdp_set_docked(
         map.get(&tab_id).cloned()
     };
     if let Some(s) = sess {
-        s.set_docked(docked)
-            .map_err(|e| e.to_string())?;
+        s.set_docked(docked).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
 /// Alias for terminating an RDP session for a given tab.
 #[tauri::command]
-pub async fn rdp_disconnect(
-    tab_id: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn rdp_disconnect(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
     freerdp_disconnect(tab_id, state).await
 }
-

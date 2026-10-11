@@ -26,6 +26,7 @@
   let keyPath = $state('');
   let passphrase = $state('');
   let existingSecretRef = $state<SecretRef | undefined>(undefined);
+  let domain = $state('');
 
   $effect(() => {
     if (appState.editingConnection) {
@@ -57,9 +58,20 @@
         rdpWidth = c.rdp_config.width;
         rdpHeight = c.rdp_config.height;
         clipboardSharing = c.rdp_config.clipboard_sharing;
+        domain = c.rdp_config.domain || '';
+      } else {
+        domain = '';
+      }
+      if (connType === 'rdp' && !domain && username.includes('\\')) {
+        const parts = username.split('\\');
+        if (parts.length === 2 && parts[0]) {
+          domain = parts[0];
+          username = parts[1];
+        }
       }
     } else {
       existingSecretRef = undefined;
+      domain = '';
     }
   });
 
@@ -90,6 +102,9 @@
   function handleTypeChange(type: ConnectionType) {
     connType = type;
     port = type === 'rdp' ? 3389 : 22;
+    if (type === 'rdp') {
+      authType = 'password';
+    }
   }
 
   async function handleSave(connectNow: boolean = false) {
@@ -107,17 +122,35 @@
     const id = editing ? editing.id : (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'conn-' + Date.now());
     const createdAt = editing ? editing.created_at : new Date().toISOString();
 
+    let finalUsername = username.trim();
+    let finalDomain = domain.trim();
+
+    if (connType === 'rdp') {
+      if (!finalDomain && finalUsername.includes('\\')) {
+        const parts = finalUsername.split('\\');
+        if (parts.length === 2 && parts[0]) {
+          finalDomain = parts[0].trim();
+          finalUsername = parts[1].trim();
+        }
+      } else if (finalDomain && finalUsername.includes('\\')) {
+        const parts = finalUsername.split('\\');
+        if (parts.length === 2) {
+          finalUsername = parts[1].trim();
+        }
+      }
+    }
+
     const auth =
       authType === 'password'
         ? {
             type: 'password' as const,
-            username: username.trim(),
+            username: finalUsername,
             password: password ? password : (existingSecretRef ? undefined : undefined),
             secret_ref: password ? undefined : existingSecretRef,
           }
         : {
             type: 'keyfile' as const,
-            username: username.trim(),
+            username: finalUsername,
             key_path: keyPath.trim(),
             passphrase: passphrase ? passphrase : (existingSecretRef ? undefined : undefined),
             secret_ref: passphrase ? undefined : existingSecretRef,
@@ -153,6 +186,7 @@
               color_depth: 24,
               fullscreen: false,
               clipboard_sharing: clipboardSharing,
+              domain: finalDomain || undefined,
             }
           : undefined,
     };
@@ -305,37 +339,51 @@
         </span>
       </div>
 
-      <div class="auth-tabs">
-        <button
-          class="auth-tab {authType === 'password' ? 'auth-tab-active' : ''}"
-          onclick={() => (authType = 'password')}
-        >
-          <Lock size={12} />
-          <span>Password</span>
-        </button>
-        <button
-          class="auth-tab {authType === 'keyfile' ? 'auth-tab-active' : ''}"
-          onclick={() => (authType = 'keyfile')}
-        >
-          <Key size={12} />
-          <span>Private Key</span>
-        </button>
-      </div>
+      {#if connType !== 'rdp'}
+        <div class="auth-tabs">
+          <button
+            class="auth-tab {authType === 'password' ? 'auth-tab-active' : ''}"
+            onclick={() => (authType = 'password')}
+          >
+            <Lock size={12} />
+            <span>Password</span>
+          </button>
+          <button
+            class="auth-tab {authType === 'keyfile' ? 'auth-tab-active' : ''}"
+            onclick={() => (authType = 'keyfile')}
+          >
+            <Key size={12} />
+            <span>Private Key</span>
+          </button>
+        </div>
+      {/if}
 
       <div class="form-grid">
+        {#if connType === 'rdp'}
+          <div class="form-cell col-1">
+            <label for="conn-domain">Domain (optional)</label>
+            <input
+              id="conn-domain"
+              type="text"
+              placeholder="e.g. CORP or WORKGROUP"
+              bind:value={domain}
+              class="input-field"
+            />
+          </div>
+        {/if}
         <div class="form-cell col-1">
           <label for="conn-user">Username</label>
           <input
             id="conn-user"
             type="text"
-            placeholder="e.g. root"
+            placeholder={connType === 'rdp' ? 'e.g. Administrator' : 'e.g. root'}
             bind:value={username}
             class="input-field"
           />
         </div>
 
         {#if authType === 'password'}
-          <div class="form-cell col-2">
+          <div class="form-cell {connType === 'rdp' ? 'col-1' : 'col-2'}">
             <label for="conn-pass">Password</label>
             <input
               id="conn-pass"

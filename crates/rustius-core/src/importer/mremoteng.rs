@@ -193,11 +193,8 @@ pub fn parse_mremoteng_xml(
                         });
                     } else {
                         // Leaf connection started as container (unlikely, but handle gracefully)
-                        let conn = build_connection(
-                            &attrs,
-                            master_password,
-                            block_cipher_mode.as_deref(),
-                        );
+                        let conn =
+                            build_connection(&attrs, master_password, block_cipher_mode.as_deref());
                         if let Some(top) = folder_stack.last_mut() {
                             top.children.push(TreeNode::Connection(conn));
                         } else {
@@ -239,11 +236,8 @@ pub fn parse_mremoteng_xml(
                             root_nodes.push(TreeNode::Folder(folder));
                         }
                     } else {
-                        let conn = build_connection(
-                            &attrs,
-                            master_password,
-                            block_cipher_mode.as_deref(),
-                        );
+                        let conn =
+                            build_connection(&attrs, master_password, block_cipher_mode.as_deref());
                         if let Some(top) = folder_stack.last_mut() {
                             top.children.push(TreeNode::Connection(conn));
                         } else {
@@ -265,7 +259,12 @@ pub fn parse_mremoteng_xml(
                 }
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(anyhow!("Error parsing XML at position {}: {e}", reader.buffer_position())),
+            Err(e) => {
+                return Err(anyhow!(
+                    "Error parsing XML at position {}: {e}",
+                    reader.buffer_position()
+                ))
+            }
             _ => {}
         }
         buf.clear();
@@ -326,7 +325,17 @@ fn build_connection(
         None
     };
 
-    let domain = attrs.get("Domain").cloned();
+    let domain = attrs
+        .get("Domain")
+        .cloned()
+        .filter(|d| !d.trim().is_empty())
+        .or_else(|| {
+            if conn_type == ConnectionType::Rdp && username.contains('\\') {
+                username.split_once('\\').map(|(d, _)| d.trim().to_string())
+            } else {
+                None
+            }
+        });
     let description = attrs
         .get("Descr")
         .or_else(|| attrs.get("Description"))
@@ -374,6 +383,7 @@ fn build_connection(
             color_depth: 24,
             fullscreen: false,
             clipboard_sharing: true,
+            domain: domain.clone(),
         })
     } else {
         None
@@ -499,6 +509,8 @@ mod tests {
                         } else {
                             panic!("Expected password auth");
                         }
+                        let rdp = c.rdp_config.as_ref().expect("RDP config should be present");
+                        assert_eq!(rdp.domain.as_deref(), Some("CORP"));
                     }
                     _ => panic!("Expected connection"),
                 }
