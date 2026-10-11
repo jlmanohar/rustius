@@ -138,7 +138,7 @@
                   <span class="card-type">RDP</span>
                 </div>
                 <h3 class="card-title">Remote Desktop</h3>
-                <p class="card-desc">In-tab canvas rendering powered by pure-Rust IronRDP.</p>
+                <p class="card-desc">Hardware-accelerated Remote Desktop powered by FreeRDP.</p>
               </div>
 
               <div

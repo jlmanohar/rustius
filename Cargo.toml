@@ -6,9 +6,6 @@ members = [
     "crates/rustius-rdp",
     "crates/rustius-terminal",
 ]
-exclude = [
-    "workers/rustius-rdp-worker",
-]
 resolver = "2"
 
 [workspace.package]
@@ -38,9 +35,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # SSH
 russh = { version = "0.63", default-features = false, features = ["ring", "flate2", "rsa"] }
 russh-sftp = "3.0"
-
-# RDP
-ironrdp = { version = "0.17", default-features = false, features = ["core", "pdu", "session", "graphics", "input"] }
 
 # Terminal
 portable-pty = "0.9"

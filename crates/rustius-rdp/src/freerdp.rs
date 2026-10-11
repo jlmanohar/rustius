@@ -85,7 +85,7 @@ unsafe extern "system" fn enum_child_proc(hwnd: HWND, lparam: isize) -> i32 {
 }
 
 #[cfg(windows)]
-pub fn find_freerdp_hwnd(parent: HWND, pid: u32) -> HWND {
+pub(crate) fn find_freerdp_hwnd(parent: HWND, pid: u32) -> HWND {
     let mut result: (u32, HWND) = (pid, std::ptr::null_mut());
     unsafe {
         if !parent.is_null() {

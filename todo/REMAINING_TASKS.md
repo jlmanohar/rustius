@@ -2,7 +2,7 @@
 
 > **Target Architecture:** Tauri v2 + Rust Workspace + Svelte 5 (Runes)  
 > **Storage Mode:** Portable (`./rustius-data/config.toml` alongside executable)  
-> **Current Status:** Phases 1–6 and Phase 7.1 (Scaffolding, Models, SSH, SFTP, IronRDP, Geist UI, and Local PTY) are **100% Complete & Built**.
+> **Current Status:** Phases 1–6 and Phase 7.1 (Scaffolding, Models, SSH, SFTP, FreeRDP, Geist UI, and Local PTY) are **100% Complete & Built**.
 
 ---
 

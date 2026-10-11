@@ -87,10 +87,10 @@ rustius/
     │       ├── client.rs       # SshSession: connect, write, resize, disconnect
     │       ├── sftp.rs         # SftpClient: list_dir, upload, download, mkdir, etc.
     │       └── auth.rs         # Auth helpers
-    ├── rustius-rdp/            # RDP client (IronRDP + raw X.224/FastPath)
+    ├── rustius-rdp/            # RDP client (FreeRDP child window embedding)
     │   └── src/
     │       ├── lib.rs
-    │       └── client.rs       # RdpSession: X.224 negotiation, frame streaming
+    │       └── freerdp.rs      # FreeRDP: child HWND docking, bounds sync, lifecycle
     └── rustius-terminal/       # Local PTY (portable-pty)
         └── src/
             ├── lib.rs
@@ -107,7 +107,7 @@ rustius/
 | Async Runtime | Tokio | 1.x (full features) |
 | SSH | russh | 0.63 |
 | SFTP | russh-sftp | 3.0 |
-| RDP | IronRDP | 0.17 |
+| RDP | FreeRDP | 3.x (Hardware accelerated) |
 | Local Terminal | portable-pty | 0.9 |
 | Frontend Framework | Svelte | 5.x (runes) |
 | Meta-framework | SvelteKit | 2.x (adapter-static, SPA) |
@@ -611,6 +611,6 @@ const result = await invoke<MyResponse>('my_command', { tabId });
 - **Server key verification** — SSH `check_server_key` accepts all keys (no known_hosts). Needs TOFU implementation.
 - **SSH agent auth** — `AuthMethod::Agent` returns a "not yet implemented" error.
 - **Credential storage** — currently `PlaintextStorage`. Plan for OS keychain (e.g., `keyring` crate).
-- **RDP** — X.224 negotiation is implemented; full MCS/RDPDR/graphics pipeline is in progress using IronRDP.
+- **RDP** — Hardware-accelerated Direct3D / GDI rendering via embedded FreeRDP child window.
 - **CSP** — `tauri.conf.json` has `"csp": null`. Tighten before production release.
 - **Cross-platform testing** — local PTY uses `powershell.exe` on Windows, `$SHELL` on Unix. Ensure both paths are tested.

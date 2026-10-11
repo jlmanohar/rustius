@@ -38,10 +38,6 @@ jobs:
 
       - name: Rust Cache
         uses: swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            .
-            workers/rustius-rdp-worker
 
       - name: Install Linux dependencies (Ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
@@ -60,15 +56,6 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
-
-      - name: Build RDP worker binary
-        run: cargo build --release --manifest-path workers/rustius-rdp-worker/Cargo.toml
-
-      # Ensure resource path exists for Tauri bundle on Unix platforms
-      - name: Normalize RDP worker binary name (Unix only)
-        if: matrix.platform != 'windows-latest'
-        run: |
-          cp workers/rustius-rdp-worker/target/release/rustius-rdp-worker workers/rustius-rdp-worker/target/release/rustius-rdp-worker.exe
 
       - name: Build Tauri app & create GitHub Release
         uses: tauri-apps/tauri-action@v0

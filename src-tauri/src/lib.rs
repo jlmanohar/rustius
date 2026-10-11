@@ -7,7 +7,7 @@ use commands::config::{
 };
 use commands::rdp::{
     freerdp_connect, freerdp_disconnect, freerdp_set_visibility, freerdp_update_bounds,
-    rdp_connect, rdp_disconnect, rdp_key_event, rdp_mouse_event,
+    rdp_disconnect,
 };
 use commands::sftp::{
     local_get_home_dir, local_list_dir, local_mkdir, local_remove, local_rename, sftp_connect,
@@ -89,10 +89,7 @@ pub fn run() {
             local_mkdir,
             local_remove,
             local_rename,
-            rdp_connect,
             rdp_disconnect,
-            rdp_key_event,
-            rdp_mouse_event,
             freerdp_connect,
             freerdp_disconnect,
             freerdp_update_bounds,

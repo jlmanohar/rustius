@@ -39,8 +39,8 @@ Powered by a native **Rust** backend and an **OS Webview** frontend with **Svelt
 - **File Operations**: Upload, download, create folders, rename, delete, and download directly to your system Downloads folder.
 
 ### 🪟 Remote Desktop (RDP)
-- **Native Canvas Viewer**: Connect to Windows machines and RDP servers powered by `IronRDP`.
-- **Low Overhead**: Direct frame rendering to HTML5 Canvas with keyboard and mouse input forwarding.
+- **Hardware-Accelerated Remote Desktop**: Connect to Windows machines and RDP servers powered by `FreeRDP`.
+- **Direct3D & 60+ FPS**: Native window embedding with high-performance graphics and full keyboard/mouse passthrough.
 
 ### 🔐 Secure Credential Management
 - **OS Keyring Integration**: Stores passwords, private key passphrases, and secrets in your platform's native secure store (Windows Credential Manager, macOS Keychain, Linux Secret Service).
@@ -68,7 +68,7 @@ rustius/
 ├── crates/
 │   ├── rustius-core       # Config storage, connection models, and vault management
 │   ├── rustius-ssh        # SSH sessions (russh) & SFTP operations (russh-sftp)
-│   ├── rustius-rdp        # RDP negotiation and frame streaming (IronRDP)
+│   ├── rustius-rdp        # RDP session orchestration and FreeRDP embedding
 │   └── rustius-terminal   # Cross-platform local PTY management (portable-pty)
 ├── src-tauri/             # Tauri v2 application shell, commands, and window orchestration
 └── src/                   # Svelte 5 frontend (SvelteKit SPA, xterm.js, UI components)
@@ -110,9 +110,6 @@ To build Rustius from source, make sure you have:
 
 4. **Build the production release:**
    ```bash
-   # Build the background RDP worker (bundled as a Tauri resource)
-   cargo build --release --manifest-path workers/rustius-rdp-worker/Cargo.toml
-
    # Package the desktop client and installers
    cargo tauri build
    ```

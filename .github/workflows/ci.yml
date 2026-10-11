@@ -38,13 +38,6 @@ jobs:
 
       - name: Rust Cache
         uses: swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            .
-            workers/rustius-rdp-worker
-
-      - name: Build RDP worker binary
-        run: cargo build --release --manifest-path workers/rustius-rdp-worker/Cargo.toml
 
       - name: Run Tests
         run: cargo test --workspace

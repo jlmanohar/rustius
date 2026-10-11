@@ -37,8 +37,7 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "../resources/binaries/freerdp/wfreerdp.exe",
-      "../workers/rustius-rdp-worker/target/release/rustius-rdp-worker.exe"
+      "../resources/binaries/freerdp/wfreerdp.exe"
     ]
   }
 }

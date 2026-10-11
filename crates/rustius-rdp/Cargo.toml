@@ -7,7 +7,6 @@ description = "RDP client implementation for Rustius"
 
 [dependencies]
 rustius-core = { path = "../rustius-core" }
-ironrdp.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true

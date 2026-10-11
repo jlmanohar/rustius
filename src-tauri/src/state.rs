@@ -1,6 +1,6 @@
 use rustius_core::config::ConfigManager;
 use rustius_core::storage::PlaintextStorage;
-use rustius_rdp::client::RdpSession;
+use rustius_rdp::FreeRdpSession;
 use rustius_ssh::client::SshSession;
 use rustius_ssh::sftp::SftpClient;
 use rustius_terminal::pty::LocalTerminal;
@@ -15,8 +15,7 @@ pub struct AppState {
     pub local_terminals: Arc<RwLock<HashMap<String, Arc<LocalTerminal>>>>,
     pub ssh_sessions: Arc<RwLock<HashMap<String, Arc<SshSession>>>>,
     pub sftp_sessions: Arc<RwLock<HashMap<String, Arc<SftpClient>>>>,
-    pub rdp_sessions: Arc<RwLock<HashMap<String, Arc<RdpSession>>>>,
-    pub freerdp_sessions: Arc<RwLock<HashMap<String, Arc<rustius_rdp::freerdp::FreeRdpSession>>>>,
+    pub freerdp_sessions: Arc<RwLock<HashMap<String, Arc<FreeRdpSession>>>>,
     pub data_dir: PathBuf,
     pub is_portable: bool,
 }
@@ -115,7 +114,6 @@ impl AppState {
         let local_terminals = Arc::new(RwLock::new(HashMap::new()));
         let ssh_sessions = Arc::new(RwLock::new(HashMap::new()));
         let sftp_sessions = Arc::new(RwLock::new(HashMap::new()));
-        let rdp_sessions = Arc::new(RwLock::new(HashMap::new()));
         let freerdp_sessions = Arc::new(RwLock::new(HashMap::new()));
 
         Ok(Self {
@@ -123,7 +121,6 @@ impl AppState {
             local_terminals,
             ssh_sessions,
             sftp_sessions,
-            rdp_sessions,
             freerdp_sessions,
             data_dir: base_dir,
             is_portable,
