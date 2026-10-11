@@ -1,7 +1,10 @@
 pub mod commands;
 pub mod state;
 
-use commands::config::{add_connection, add_folder, get_config, remove_node, save_app_settings};
+use commands::config::{
+    add_connection, add_folder, get_config, import_sessions, import_sessions_content, remove_node,
+    save_app_settings,
+};
 use commands::rdp::{rdp_connect, rdp_disconnect, rdp_key_event, rdp_mouse_event};
 use commands::sftp::{
     local_get_home_dir, local_list_dir, local_mkdir, local_remove, local_rename, sftp_connect,
@@ -40,6 +43,8 @@ pub fn run() {
             add_connection,
             add_folder,
             remove_node,
+            import_sessions,
+            import_sessions_content,
             pty_spawn,
             pty_write,
             pty_resize,

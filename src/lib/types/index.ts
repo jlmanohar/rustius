@@ -122,3 +122,10 @@ export interface TransferItem {
   status: 'pending' | 'transferring' | 'completed' | 'failed';
   error?: string;
 }
+
+export interface ImportSummary {
+  connections_imported: number;
+  folders_imported: number;
+}
+
+export type ImportFormat = 'auto' | 'mremoteng' | 'mobaxterm';

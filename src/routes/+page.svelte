@@ -4,6 +4,7 @@
   import TabBar from '$lib/components/TabBar.svelte';
   import ConnectionModal from '$lib/components/ConnectionModal.svelte';
   import SettingsModal from '$lib/components/SettingsModal.svelte';
+  import ImportModal from '$lib/components/ImportModal.svelte';
   import TerminalView from '$lib/components/TerminalView.svelte';
   import SftpView from '$lib/components/SftpView.svelte';
   import RdpView from '$lib/components/RdpView.svelte';
@@ -193,6 +194,11 @@
   <!-- Application Settings Modal -->
   {#if appState.isSettingsModalOpen}
     <SettingsModal />
+  {/if}
+
+  <!-- Session Migration / Import Modal -->
+  {#if appState.isImportModalOpen}
+    <ImportModal />
   {/if}
 </div>
 

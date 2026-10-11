@@ -16,7 +16,8 @@
     Play,
     Server,
     Settings,
-    Pencil
+    Pencil,
+    FolderDown
   } from '@lucide/svelte';
 
   let environments = $derived.by(() => {
@@ -89,6 +90,13 @@
         }}
       >
         <FolderPlus size={14} />
+      </button>
+      <button
+        class="btn-icon"
+        title="Import Sessions (mRemoteNG / MobaXterm)"
+        onclick={() => (appState.isImportModalOpen = true)}
+      >
+        <FolderDown size={14} />
       </button>
       <button
         class="btn-icon"

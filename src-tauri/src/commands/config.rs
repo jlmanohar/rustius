@@ -69,3 +69,59 @@ pub async fn remove_node(node_id: String, state: State<'_, AppState>) -> Result<
         .await
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn import_sessions(
+    file_path: String,
+    source: Option<String>,
+    master_password: Option<String>,
+    parent_folder_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<rustius_core::importer::ImportSummary, String> {
+    let fmt = match source.as_deref().unwrap_or("auto").to_lowercase().as_str() {
+        "mremoteng" => rustius_core::importer::ImportFormat::MRemoteNG,
+        "mobaxterm" => rustius_core::importer::ImportFormat::MobaXterm,
+        _ => rustius_core::importer::ImportFormat::Auto,
+    };
+
+    let parent_uuid = parent_folder_id
+        .filter(|s| !s.trim().is_empty())
+        .map(|id| rustius_core::connection::parse_uuid_or_fallback(&id));
+
+    let nodes = rustius_core::importer::import_from_file(&file_path, fmt, master_password.as_deref())
+        .map_err(|e| format!("Import failed: {e}"))?;
+
+    state
+        .config_manager
+        .import_tree(nodes, parent_uuid)
+        .await
+        .map_err(|e| format!("Failed to save imported sessions: {e}"))
+}
+
+#[tauri::command]
+pub async fn import_sessions_content(
+    content: String,
+    source: Option<String>,
+    master_password: Option<String>,
+    parent_folder_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<rustius_core::importer::ImportSummary, String> {
+    let fmt = match source.as_deref().unwrap_or("auto").to_lowercase().as_str() {
+        "mremoteng" => rustius_core::importer::ImportFormat::MRemoteNG,
+        "mobaxterm" => rustius_core::importer::ImportFormat::MobaXterm,
+        _ => rustius_core::importer::ImportFormat::Auto,
+    };
+
+    let parent_uuid = parent_folder_id
+        .filter(|s| !s.trim().is_empty())
+        .map(|id| rustius_core::connection::parse_uuid_or_fallback(&id));
+
+    let nodes = rustius_core::importer::import_content(&content, fmt, master_password.as_deref())
+        .map_err(|e| format!("Import failed: {e}"))?;
+
+    state
+        .config_manager
+        .import_tree(nodes, parent_uuid)
+        .await
+        .map_err(|e| format!("Failed to save imported sessions: {e}"))
+}

@@ -206,6 +206,46 @@ impl ConfigManager {
             .ok_or_else(|| RustiusError::ConnectionNotFound(id.to_string()).into())
     }
 
+    /// Recursively secures all connections in a slice of tree nodes.
+    pub fn secure_tree_nodes(&self, nodes: &mut [TreeNode]) {
+        for node in nodes {
+            match node {
+                TreeNode::Connection(conn) => {
+                    self.secure_connection(conn);
+                }
+                TreeNode::Folder(folder) => {
+                    self.secure_tree_nodes(&mut folder.children);
+                }
+            }
+        }
+    }
+
+    /// Import a list of tree nodes (folders and connections), securing all credentials
+    /// in the OS keyring and appending them into the config tree.
+    pub async fn import_tree(
+        &self,
+        mut nodes: Vec<TreeNode>,
+        parent_folder_id: Option<Uuid>,
+    ) -> Result<crate::importer::ImportSummary> {
+        self.secure_tree_nodes(&mut nodes);
+        let summary = crate::importer::count_imported(&nodes);
+
+        self.update_config(|config| {
+            if let Some(parent_id) = parent_folder_id {
+                for node in nodes {
+                    if !Self::insert_into_folder(&mut config.tree, parent_id, node.clone()) {
+                        config.tree.push(node);
+                    }
+                }
+            } else {
+                config.tree.extend(nodes);
+            }
+        })
+        .await?;
+
+        Ok(summary)
+    }
+
     // --- Private helper methods for tree traversal ---
 
     /// Recursively update an existing connection in the tree if present.
