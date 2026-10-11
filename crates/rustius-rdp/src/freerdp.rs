@@ -20,11 +20,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, DestroyWindow, EnumChildWindows, EnumWindows, GetClientRect, GetParent,
     GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsWindowVisible, SetParent,
     SetWindowLongPtrW, SetWindowLongW, SetWindowPos, ShowWindow, GWL_EXSTYLE, GWL_STYLE,
-    GWLP_HWNDPARENT, SW_HIDE, SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_SHOWWINDOW,
-    WS_CAPTION, WS_CHILD, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
-    WS_POPUP, WS_SYSMENU, WS_THICKFRAME, WS_VISIBLE,
+    GWLP_HWNDPARENT, SW_HIDE, SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_SHOWWINDOW, WS_CAPTION, WS_CHILD, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
+    WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME, WS_VISIBLE,
 };
-
 
 /// File-based diagnostics helper for FreeRDP embedding
 pub fn log_freerdp(msg: &str) {
@@ -60,6 +59,7 @@ pub struct FreeRdpSession {
     child_hwnd: Arc<parking_lot::Mutex<isize>>,
     last_bounds: Arc<parking_lot::Mutex<(i32, i32, i32, i32)>>,
     is_connected: Arc<AtomicBool>,
+    is_docked: Arc<AtomicBool>,
     child_process: parking_lot::Mutex<Option<Child>>,
 }
 
@@ -74,11 +74,10 @@ unsafe extern "system" fn enum_child_proc(hwnd: HWND, lparam: isize) -> i32 {
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
         let visible = IsWindowVisible(hwnd) != 0;
-        // Only accept windows that are visible or have non-trivial dimensions (> 100x100).
-        // This explicitly skips 0x0 hidden clipboard/OLE message windows.
+        // Accept windows with valid size
         if visible || (width > 100 && height > 100) {
             target.1 = hwnd;
-            return 0; // stop enumeration: real display window found!
+            return 0; // stop enumeration: display window found
         }
     }
     1 // continue
@@ -170,24 +169,59 @@ unsafe fn apply_window_docking(
     y: i32,
     width: i32,
     height: i32,
+    docked: bool,
 ) {
     if hwnd.is_null() || parent_hwnd.is_null() {
         return;
     }
 
-    // 1. Get client rect of Tauri main window to clip strictly within app boundary
+    if !docked {
+        // Detached / Popout Mode: Restore standard native window with titlebar, minimize, maximize, close 'X'
+        let cur_parent = GetParent(hwnd);
+        if cur_parent != 0 as HWND {
+            SetParent(hwnd, 0 as HWND);
+        }
+        SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, 0);
+
+        let cur_style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+        let new_style = (cur_style & !WS_CHILD)
+            | WS_POPUP
+            | WS_CAPTION
+            | WS_THICKFRAME
+            | WS_MINIMIZEBOX
+            | WS_MAXIMIZEBOX
+            | WS_SYSMENU
+            | WS_VISIBLE;
+        SetWindowLongW(hwnd, GWL_STYLE, new_style as i32);
+
+        let cur_ex = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+        let new_ex = (cur_ex & !WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW;
+        SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex as i32);
+
+        SetWindowPos(
+            hwnd,
+            0 as HWND,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+        );
+        ShowWindow(hwnd, SW_SHOW);
+        return;
+    }
+
+    // Embedded Docked Mode: Constrain strictly within tab viewport boundaries
     let mut client_rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
     GetClientRect(parent_hwnd, &mut client_rect);
     let parent_w = client_rect.right - client_rect.left;
     let parent_h = client_rect.bottom - client_rect.top;
 
-    // If canvas coordinates are completely off-screen or parent has no size, hide
     if parent_w <= 0 || parent_h <= 0 || x >= parent_w || y >= parent_h {
         ShowWindow(hwnd, SW_HIDE);
         return;
     }
 
-    // 2. Clamp width and height strictly within app boundary so it never spills out
     let clamped_w = width.min(parent_w - x).max(0);
     let clamped_h = height.min(parent_h - y).max(0);
 
@@ -196,29 +230,26 @@ unsafe fn apply_window_docking(
         return;
     }
 
-    // 3. Reset parent to root desktop if it was previously reparented as a child
     let cur_parent = GetParent(hwnd);
     if cur_parent != 0 as HWND {
         SetParent(hwnd, 0 as HWND);
     }
 
-    // 4. Remove borders, caption, and resize grips so it's a clean borderless popup
+    // Style as borderless popup, but KEEP WS_SYSMENU so OS shortcut handling remains intact
     let cur_style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
-    let new_style = (cur_style & !(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_CHILD))
+    let new_style = (cur_style & !(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CHILD))
         | WS_POPUP
-        | WS_VISIBLE;
+        | WS_VISIBLE
+        | WS_SYSMENU;
     SetWindowLongW(hwnd, GWL_STYLE, new_style as i32);
 
-    // 5. Tool window style (no separate taskbar item)
     let cur_ex = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
     let new_ex = (cur_ex & !WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW;
     SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex as i32);
 
-    // 6. Set owner window to parent_hwnd so it stays Z-ordered above parent,
-    // minimizes/restores with parent, and does NOT get occluded by WebView2 DirectComposition.
+    // Set owner window to parent_hwnd so it moves and minimizes with parent
     SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, parent_hwnd as isize);
 
-    // 7. Convert client (x, y) coordinates to screen coordinates
     let mut pt = POINT { x, y };
     ClientToScreen(parent_hwnd, &mut pt);
 
@@ -227,11 +258,10 @@ unsafe fn apply_window_docking(
         hwnd as usize, parent_hwnd as usize, x, y, width, height, pt.x, pt.y, clamped_w, clamped_h
     ));
 
-    // 8. Position precisely over the canvas boundary
     BringWindowToTop(hwnd);
     SetWindowPos(
         hwnd,
-        0 as HWND, // HWND_TOP
+        0 as HWND,
         pt.x,
         pt.y,
         clamped_w,
@@ -272,22 +302,23 @@ impl FreeRdpSession {
             }
         }
 
-        // Size & Smart-Sizing
+        // Size & Smart-Sizing: scale remote desktop dynamically to window size
         if config.width > 0 && config.height > 0 {
             cmd.arg(format!("/size:{}x{}", config.width.max(100), config.height.max(100)));
         }
 
-        // Performance & Hardware Acceleration Flags
-        cmd.arg("/cert:ignore")
-            .arg("+dynamic-resolution")
+        // Performance, Scaling, and Hardware Acceleration Flags
+        cmd.arg("/smart-sizing")
+            .arg("-toggle-fullscreen")
+            .arg("/cert:ignore")
             .arg("+clipboard")
             .arg("/sound")
             .arg("/gfx")
             .arg("/network:auto")
             .arg("/bpp:32")
-            .arg("/log-level:DEBUG");
+            .arg("/log-level:INFO");
 
-        // Pipe FreeRDP process output to temporary debug log for complete transparency
+        // Pipe FreeRDP process output to temporary debug log
         let freerdp_log_path = std::env::temp_dir().join("freerdp_process.log");
         if let Ok(file) = std::fs::File::create(&freerdp_log_path) {
             if let Ok(file_err) = file.try_clone() {
@@ -314,45 +345,72 @@ impl FreeRdpSession {
         let child_hwnd = Arc::new(parking_lot::Mutex::new(0));
         let last_bounds = Arc::new(parking_lot::Mutex::new((config.x, config.y, config.width, config.height)));
         let is_connected = Arc::new(AtomicBool::new(true));
+        let is_docked = Arc::new(AtomicBool::new(true));
 
         #[cfg(windows)]
         {
             let hwnd_clone = child_hwnd.clone();
             let bounds_clone = last_bounds.clone();
             let is_conn_clone = is_connected.clone();
+            let is_docked_clone = is_docked.clone();
             let parent_hwnd = config.parent_window;
 
+            // Continuous monitor loop: discovers FreeRDP HWND and enforces boundary containment
             tokio::spawn(async move {
-                log_freerdp(&format!("Starting async discovery for PID {} under owner HWND 0x{:X}", child_pid, parent_hwnd));
-                // FreeRDP creates its window only after completing RDP handshake (~1s).
-                // Poll every 100ms for up to 10 seconds to discover and dock it.
-                for attempt in 1..=100 {
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    if !is_conn_clone.load(Ordering::SeqCst) {
-                        log_freerdp("Session terminated, stopping window discovery");
-                        break;
-                    }
-                    if *hwnd_clone.lock() != 0 {
-                        break;
-                    }
-                    let discovered = find_freerdp_hwnd(parent_hwnd as HWND, child_pid);
-                    if !discovered.is_null() {
-                        let h = discovered as isize;
-                        *hwnd_clone.lock() = h;
-                        let (x, y, w, height) = *bounds_clone.lock();
-                        log_freerdp(&format!("Discovered FreeRDP HWND: 0x{:X} on attempt {}", h, attempt));
-                        unsafe {
-                            apply_window_docking(
-                                parent_hwnd as HWND,
-                                discovered,
-                                x,
-                                y,
-                                w,
-                                height,
-                            );
+                log_freerdp(&format!("Starting async monitor for PID {} under owner HWND 0x{:X}", child_pid, parent_hwnd));
+                let mut last_applied_rect = (0i32, 0i32, 0i32, 0i32);
+
+                while is_conn_clone.load(Ordering::SeqCst) {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+                    let mut current_hwnd = *hwnd_clone.lock();
+                    if current_hwnd == 0 {
+                        let discovered = find_freerdp_hwnd(parent_hwnd as HWND, child_pid);
+                        if !discovered.is_null() {
+                            current_hwnd = discovered as isize;
+                            *hwnd_clone.lock() = current_hwnd;
+                            log_freerdp(&format!("Discovered FreeRDP HWND: 0x{:X}", current_hwnd));
                         }
-                        log_freerdp(&format!("Successfully docked and showed FreeRDP HWND 0x{:X}", h));
-                        break;
+                    }
+
+                    if current_hwnd != 0 && parent_hwnd != 0 {
+                        let docked = is_docked_clone.load(Ordering::SeqCst);
+                        if docked {
+                            let (x, y, w, h) = *bounds_clone.lock();
+                            let mut cur_rect: RECT = unsafe { std::mem::zeroed() };
+                            unsafe { GetWindowRect(current_hwnd as HWND, &mut cur_rect) };
+
+                            let mut target_pt = POINT { x, y };
+                            unsafe { ClientToScreen(parent_hwnd as HWND, &mut target_pt) };
+
+                            let mut client_rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                            unsafe { GetClientRect(parent_hwnd as HWND, &mut client_rect) };
+                            let parent_w = client_rect.right - client_rect.left;
+                            let parent_h = client_rect.bottom - client_rect.top;
+                            let expected_w = w.min(parent_w - x).max(0);
+                            let expected_h = h.min(parent_h - y).max(0);
+
+                            // Detect if FreeRDP moved to (0,0) or changed size internally upon connection
+                            let pos_mismatch = (cur_rect.left - target_pt.x).abs() > 4
+                                || (cur_rect.top - target_pt.y).abs() > 4
+                                || ((cur_rect.right - cur_rect.left) - expected_w).abs() > 4
+                                || ((cur_rect.bottom - cur_rect.top) - expected_h).abs() > 4;
+
+                            if pos_mismatch || (x, y, w, h) != last_applied_rect {
+                                last_applied_rect = (x, y, w, h);
+                                unsafe {
+                                    apply_window_docking(
+                                        parent_hwnd as HWND,
+                                        current_hwnd as HWND,
+                                        x,
+                                        y,
+                                        w,
+                                        h,
+                                        true,
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
             });
@@ -366,8 +424,33 @@ impl FreeRdpSession {
             child_hwnd,
             last_bounds,
             is_connected,
+            is_docked,
             child_process: parking_lot::Mutex::new(Some(child)),
         })
+    }
+
+    /// Toggle between embedded docked mode and detached native window mode.
+    pub fn set_docked(&self, docked: bool) -> Result<()> {
+        self.is_docked.store(docked, Ordering::SeqCst);
+        #[cfg(windows)]
+        {
+            let hwnd = *self.child_hwnd.lock();
+            if hwnd != 0 && self.parent_hwnd != 0 {
+                let (x, y, w, h) = *self.last_bounds.lock();
+                unsafe {
+                    apply_window_docking(
+                        self.parent_hwnd as HWND,
+                        hwnd as HWND,
+                        x,
+                        y,
+                        w,
+                        h,
+                        docked,
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Synchronize the FreeRDP window position on the monitor using saved bounds.
@@ -390,7 +473,7 @@ impl FreeRdpSession {
                     log_freerdp(&format!("update_bounds discovered FreeRDP HWND: 0x{:X}", hwnd));
                 }
             }
-            if hwnd != 0 && self.parent_hwnd != 0 {
+            if hwnd != 0 && self.parent_hwnd != 0 && self.is_docked.load(Ordering::SeqCst) {
                 unsafe {
                     apply_window_docking(
                         self.parent_hwnd as HWND,
@@ -399,6 +482,7 @@ impl FreeRdpSession {
                         y,
                         width,
                         height,
+                        true,
                     );
                 }
             }

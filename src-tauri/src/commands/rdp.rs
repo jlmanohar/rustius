@@ -168,6 +168,24 @@ pub async fn freerdp_disconnect(
     Ok(())
 }
 
+/// Toggle between embedded docked mode and detached native window mode.
+#[tauri::command]
+pub async fn freerdp_set_docked(
+    tab_id: String,
+    docked: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let sess = {
+        let map = state.freerdp_sessions.read().await;
+        map.get(&tab_id).cloned()
+    };
+    if let Some(s) = sess {
+        s.set_docked(docked)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Alias for terminating an RDP session for a given tab.
 #[tauri::command]
 pub async fn rdp_disconnect(
@@ -176,3 +194,4 @@ pub async fn rdp_disconnect(
 ) -> Result<(), String> {
     freerdp_disconnect(tab_id, state).await
 }
+

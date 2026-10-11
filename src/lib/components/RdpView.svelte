@@ -12,6 +12,8 @@
     RotateCcw,
     X,
     Zap,
+    Power,
+    ExternalLink,
   } from '@lucide/svelte';
 
   let { session = $bindable() }: { session: TabSession } = $props();
@@ -24,6 +26,7 @@
   let isDisconnected = $state(false);
   let disconnectReason = $state('');
   let isFullscreen = $state(false);
+  let isDocked = $state(true);
 
   const componentDisposables = new DisposableStore();
   const sessionDisposables = new DisposableStore();
@@ -110,7 +113,7 @@
 
       // 4. Setup viewport bounds sync on container resize or window resize
       const syncBounds = () => {
-        if (!viewportRef || isDisconnected) return;
+        if (!viewportRef || isDisconnected || !isDocked) return;
         const rect = viewportRef.getBoundingClientRect();
         const scale = window.devicePixelRatio || 1;
         invoke('freerdp_update_bounds', {
@@ -144,6 +147,20 @@
     }
   }
 
+  async function toggleDocked() {
+    isDocked = !isDocked;
+    await invoke('freerdp_set_docked', { tabId: session.id, docked: isDocked }).catch(() => {});
+  }
+
+  async function handleDisconnect() {
+    isConnecting = false;
+    isConnected = false;
+    isDisconnected = true;
+    session.status = 'disconnected';
+    disconnectReason = 'Session disconnected by user';
+    await invoke('freerdp_disconnect', { tabId: session.id }).catch(() => {});
+  }
+
   function toggleFullscreen() {
     if (!containerRef) return;
     if (!document.fullscreenElement) {
@@ -168,6 +185,7 @@
   }
 
   function handleCloseTab() {
+    handleDisconnect();
     appState.closeTab(session.id);
   }
 
@@ -175,7 +193,7 @@
     const isTabActive = appState.activeTabId === session.id;
     if (isConnected) {
       invoke('freerdp_set_visibility', { tabId: session.id, visible: isTabActive }).catch(() => {});
-      if (isTabActive) {
+      if (isTabActive && isDocked) {
         requestAnimationFrame(() => {
           if (!viewportRef) return;
           const rect = viewportRef.getBoundingClientRect();
@@ -228,11 +246,40 @@
 
       <span class="acceleration-pill native" title="Direct3D Hardware-Accelerated FreeRDP Engine">
         <Zap size={11} />
-        <span>FreeRDP · Direct3D Accelerated</span>
+        <span>FreeRDP · Direct3D</span>
       </span>
+
+      {#if !isDocked}
+        <span class="detached-badge">Detached Window</span>
+      {/if}
     </div>
 
     <div class="header-right">
+      {#if isConnected || isConnecting}
+        <button
+          class="ctrl-btn"
+          onclick={toggleDocked}
+          title={isDocked ? 'Detach to standalone native window' : 'Dock back to tab viewport'}
+        >
+          {#if isDocked}
+            <ExternalLink size={12} />
+            <span>Pop Out</span>
+          {:else}
+            <Minimize2 size={12} />
+            <span>Dock</span>
+          {/if}
+        </button>
+
+        <button
+          class="ctrl-btn danger"
+          onclick={handleDisconnect}
+          title="Disconnect FreeRDP Session"
+        >
+          <Power size={12} />
+          <span>Disconnect</span>
+        </button>
+      {/if}
+
       <button
         class="ctrl-btn"
         onclick={toggleFullscreen}
@@ -271,7 +318,17 @@
   <!-- RDP Viewport Surface for child window docking -->
   <div class="rdp-viewport" bind:this={viewportRef}>
     <div class="freerdp-native-backdrop">
-      {#if isConnecting}
+      {#if !isDocked && isConnected}
+        <div class="native-detached-msg">
+          <ExternalLink size={28} class="placeholder-icon" />
+          <p class="placeholder-title">Session Running in Standalone Window</p>
+          <p class="placeholder-desc">FreeRDP is running in its own native window with full OS titlebar and controls.</p>
+          <button class="action-btn" onclick={toggleDocked}>
+            <Minimize2 size={12} />
+            <span>Dock Back to Tab</span>
+          </button>
+        </div>
+      {:else if isConnecting}
         <div class="native-connecting-msg">
           <span class="status-indicator connecting"></span>
           <span>Initializing hardware-accelerated FreeRDP session...</span>
@@ -382,6 +439,17 @@
     border-color: var(--border);
   }
 
+  .ctrl-btn.danger {
+    color: #ff4d4d;
+    border-color: rgba(238, 0, 0, 0.25);
+  }
+
+  .ctrl-btn.danger:hover:not(:disabled) {
+    background: rgba(238, 0, 0, 0.15);
+    border-color: #ee0000;
+    color: #ff4d4d;
+  }
+
   /* Disconnect banner */
   .disconnect-bar {
     display: flex;
@@ -437,6 +505,12 @@
     color: #ededed;
   }
 
+  .action-btn:hover {
+    background: #222222;
+    border-color: #555555;
+    color: #ffffff;
+  }
+
   .reconnect-btn:hover {
     background: #222222;
     border-color: #555555;
@@ -478,6 +552,15 @@
     color: #00dfd8;
   }
 
+  .detached-badge {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--body);
+  }
+
   .freerdp-native-backdrop {
     width: 100%;
     height: 100%;
@@ -495,6 +578,15 @@
     gap: 8px;
     font-size: 12px;
     color: var(--body);
+  }
+
+  .native-detached-msg {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 24px;
+    text-align: center;
   }
 
   .native-disconnected-msg {

@@ -6,8 +6,8 @@ use commands::config::{
     save_app_settings,
 };
 use commands::rdp::{
-    freerdp_connect, freerdp_disconnect, freerdp_set_visibility, freerdp_update_bounds,
-    rdp_disconnect,
+    freerdp_connect, freerdp_disconnect, freerdp_set_docked, freerdp_set_visibility,
+    freerdp_update_bounds, rdp_disconnect,
 };
 use commands::sftp::{
     local_get_home_dir, local_list_dir, local_mkdir, local_remove, local_rename, sftp_connect,
@@ -41,7 +41,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Moved(_) = event {
+            if matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
                 let _ = window.emit("window-moved", ());
                 let state = window.state::<AppState>();
                 let sessions: Vec<_> = {
@@ -92,6 +92,7 @@ pub fn run() {
             rdp_disconnect,
             freerdp_connect,
             freerdp_disconnect,
+            freerdp_set_docked,
             freerdp_update_bounds,
             freerdp_set_visibility,
             window_minimize,
