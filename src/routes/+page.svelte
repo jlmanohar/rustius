@@ -4,9 +4,11 @@
   import TabBar from '$lib/components/TabBar.svelte';
   import ConnectionModal from '$lib/components/ConnectionModal.svelte';
   import SettingsModal from '$lib/components/SettingsModal.svelte';
+  import ImportModal from '$lib/components/ImportModal.svelte';
   import TerminalView from '$lib/components/TerminalView.svelte';
   import SftpView from '$lib/components/SftpView.svelte';
   import RdpView from '$lib/components/RdpView.svelte';
+  import TitleBar from '$lib/components/TitleBar.svelte';
   import {
     Terminal,
     ArrowLeftRight,
@@ -25,7 +27,11 @@
 </script>
 <svelte:window onbeforeunload={() => appState.closeAllTabs()} />
 
-<div class="app-viewport">
+<div class="window-shell">
+  <!-- Native App Title Bar & Window Controls -->
+  <TitleBar />
+
+  <div class="app-viewport">
   <!-- Sidebar Navigation -->
   <Sidebar />
 
@@ -55,6 +61,7 @@
           <div class="hero-mesh"></div>
 
           <div class="hero-content">
+            <img src="/rustius_logo.svg" alt="rustius" class="hero-logo" width="84" height="84" />
             <span class="mono-eyebrow">PORTABLE DESKTOP CLIENT</span>
             <h1 class="hero-heading">Engineered for speed.<br />Built with Rust.</h1>
             <p class="hero-body">
@@ -177,6 +184,7 @@
       {/if}
     </div>
   </main>
+  </div>
 
   <!-- Connection Configuration Modal -->
   {#if appState.isConnectionModalOpen}
@@ -187,13 +195,28 @@
   {#if appState.isSettingsModalOpen}
     <SettingsModal />
   {/if}
+
+  <!-- Session Migration / Import Modal -->
+  {#if appState.isImportModalOpen}
+    <ImportModal />
+  {/if}
 </div>
 
 <style>
-  .app-viewport {
+  .window-shell {
     display: flex;
+    flex-direction: column;
     width: 100vw;
     height: 100vh;
+    background: var(--canvas);
+    overflow: hidden;
+  }
+
+  .app-viewport {
+    flex: 1;
+    display: flex;
+    width: 100%;
+    min-height: 0;
     background: var(--canvas);
     overflow: hidden;
   }
@@ -202,7 +225,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: 100%;
     min-width: 0;
     overflow: hidden;
   }
@@ -215,16 +238,23 @@
   }
 
   .tab-pane {
-    display: none;
-    width: 100%;
-    height: 100%;
+    visibility: hidden;
+    pointer-events: none;
     position: absolute;
     inset: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    z-index: 0;
+    opacity: 0;
   }
 
   .tab-pane.active-pane {
-    display: flex;
-    flex-direction: column;
+    visibility: visible;
+    pointer-events: auto;
+    z-index: 1;
+    opacity: 1;
   }
 
   .hero-container {
@@ -261,6 +291,14 @@
     text-align: center;
     z-index: 1;
     gap: 16px;
+  }
+
+  .hero-logo {
+    width: 84px;
+    height: 84px;
+    object-fit: contain;
+    margin-bottom: 4px;
+    filter: drop-shadow(0 6px 20px rgba(240, 67, 36, 0.2));
   }
 
   .hero-heading {

@@ -15,7 +15,9 @@
     Trash2,
     Play,
     Server,
-    Settings
+    Settings,
+    Pencil,
+    FolderDown
   } from '@lucide/svelte';
 
   let environments = $derived.by(() => {
@@ -57,7 +59,7 @@
       title: conn.name,
       type: cType,
       connectionId: conn.id,
-      status: 'connected',
+      status: 'connecting',
       badge: `${cType.toUpperCase()} · ${conn.host}`,
     });
   }
@@ -71,10 +73,8 @@
   <!-- Brand Header -->
   <div class="brand">
     <div class="brand-left">
-      <!-- Minimalist geometric logo -->
-      <svg class="brand-triangle" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2L2 22h20L12 2z" />
-      </svg>
+      <!-- Rustius crab icon -->
+      <img src="/rustius_icon.svg" alt="Rustius" class="brand-icon" width="18" height="18" />
       <span class="brand-title">RUSTIUS</span>
       <span class="brand-version">0.1.0</span>
     </div>
@@ -90,6 +90,13 @@
         }}
       >
         <FolderPlus size={14} />
+      </button>
+      <button
+        class="btn-icon"
+        title="Import Sessions (mRemoteNG / MobaXterm)"
+        onclick={() => (appState.isImportModalOpen = true)}
+      >
+        <FolderDown size={14} />
       </button>
       <button
         class="btn-icon"
@@ -218,11 +225,11 @@
               onkeydown={(e) => e.key === 'Enter' && handleConnect(node)}
             >
               <div class="node-icon">
-                {#if node.conn_type === 'ssh'}
+                {#if (node.conn_type || (node as any).connection_type) === 'ssh'}
                   <Terminal size={13} />
-                {:else if node.conn_type === 'sftp'}
+                {:else if (node.conn_type || (node as any).connection_type) === 'sftp'}
                   <ArrowLeftRight size={13} />
-                {:else if node.conn_type === 'rdp'}
+                {:else if (node.conn_type || (node as any).connection_type) === 'rdp'}
                   <Monitor size={13} />
                 {/if}
               </div>
@@ -247,6 +254,17 @@
                   }}
                 >
                   <Play size={11} />
+                </button>
+                <button
+                  class="action-btn"
+                  title="Edit"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    appState.editingConnection = node;
+                    appState.isConnectionModalOpen = true;
+                  }}
+                >
+                  <Pencil size={11} />
                 </button>
                 <button
                   class="action-btn"
@@ -295,7 +313,7 @@
 <style>
   .sidebar {
     width: 270px;
-    height: 100vh;
+    height: 100%;
     background: var(--canvas);
     border-right: 1px solid var(--hairline);
     display: flex;
@@ -319,8 +337,10 @@
     gap: 8px;
   }
 
-  .brand-triangle {
-    color: var(--ink);
+  .brand-icon {
+    width: 18px;
+    height: 18px;
+    object-fit: contain;
   }
 
   .brand-title {
@@ -366,7 +386,7 @@
     align-items: center;
   }
 
-  :global(.search-icon) {
+  .search-box :global(.search-icon) {
     position: absolute;
     left: 8px;
     color: var(--mute);

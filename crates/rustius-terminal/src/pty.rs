@@ -37,12 +37,14 @@ impl LocalTerminal {
             // Check if powershell is available, else cmd.exe
             "powershell.exe"
         } else {
-            std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into()).leak()
+            std::env::var("SHELL")
+                .unwrap_or_else(|_| "/bin/bash".into())
+                .leak()
         };
 
         info!("Spawning local shell: {}", shell);
         let mut cmd = CommandBuilder::new(shell);
-        
+
         // Inherit current working directory
         if let Ok(cwd) = std::env::current_dir() {
             cmd.cwd(cwd);
@@ -113,14 +115,28 @@ impl LocalTerminal {
     }
 
     pub fn write(&self, data: &[u8]) -> Result<()> {
-        let mut writer = self.writer.lock().map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
         writer.write_all(data)?;
         writer.flush()?;
         Ok(())
     }
 
+    /// Resize the pseudo-terminal window dimensions.
+    ///
+    /// Ignores dimension requests smaller than 10 columns or 2 rows (such as those caused
+    /// by collapsed/hidden UI panes) to avoid crushing ConPTY's screen buffer and truncating
+    /// terminal scrollback history on Windows.
     pub fn resize(&self, cols: u16, rows: u16) -> Result<()> {
-        let master = self.master.lock().map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
+        if cols < 10 || rows < 2 {
+            return Ok(());
+        }
+        let master = self
+            .master
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
         master.resize(PtySize {
             rows,
             cols,
@@ -140,10 +156,13 @@ mod tests {
     async fn test_spawn_and_write() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let (exit_tx, mut _exit_rx) = mpsc::channel(1);
-        let terminal = LocalTerminal::spawn(80, 24, tx, exit_tx).expect("Failed to spawn local terminal");
+        let terminal =
+            LocalTerminal::spawn(80, 24, tx, exit_tx).expect("Failed to spawn local terminal");
 
         // Write a simple echo command
-        terminal.write(b"echo 'rustius-test'\r\n").expect("Failed to write to terminal");
+        terminal
+            .write(b"echo 'rustius-test'\r\n")
+            .expect("Failed to write to terminal");
 
         // Read output within timeout
         let mut collected = Vec::new();
@@ -169,4 +188,3 @@ mod tests {
         }
     }
 }
-

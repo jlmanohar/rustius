@@ -1,8 +1,9 @@
 <script lang="ts">
   import { appState } from '../stores/appState.svelte';
-  import { X, Sliders, Check } from '@lucide/svelte';
+  import { X, Sliders, Check, Shield } from '@lucide/svelte';
 
   let autoClose = $state(appState.config.app_settings?.close_tab_on_exit ?? false);
+  let sftpFollowTerminal = $state(appState.config.app_settings?.sftp_follow_terminal_folder ?? true);
   let termType = $state(appState.config.app_settings?.default_terminal_type ?? 'xterm-256color');
   let fontSize = $state(appState.config.app_settings?.font_size ?? 13);
   let fontFamily = $state(appState.config.app_settings?.font_family ?? "'Geist Mono', monospace");
@@ -11,6 +12,7 @@
     const updated = {
       ...appState.config.app_settings,
       close_tab_on_exit: autoClose,
+      sftp_follow_terminal_folder: sftpFollowTerminal,
       default_terminal_type: termType.trim() || 'xterm-256color',
       font_size: Number(fontSize) || 13,
       font_family: fontFamily.trim() || "'Geist Mono', monospace",
@@ -71,6 +73,26 @@
         </div>
       </div>
 
+      <!-- Setting: Follow terminal directory in SFTP -->
+      <div class="setting-row">
+        <div class="setting-meta">
+          <label for="sftp-follow-toggle" class="setting-title">Follow terminal directory in SFTP</label>
+          <p class="setting-desc">
+            Automatically synchronize the SFTP file navigator whenever you change directories (cd) in the SSH terminal.
+          </p>
+        </div>
+        <div class="setting-control">
+          <label class="switch">
+            <input
+              id="sftp-follow-toggle"
+              type="checkbox"
+              bind:checked={sftpFollowTerminal}
+            />
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
       <!-- Setting: Terminal Type -->
       <div class="setting-field">
         <label for="term-type-input" class="field-label">DEFAULT TERMINAL TYPE</label>
@@ -94,6 +116,23 @@
           max="24"
           bind:value={fontSize}
         />
+      </div>
+
+      <!-- Credential Security -->
+      <div class="setting-field">
+        <span class="field-label">CREDENTIAL SECURITY</span>
+        <div class="security-card">
+          <div class="security-card-header">
+            <div class="security-card-title">
+              <Shield size={14} class="sec-icon" />
+              <span>Native OS Keyring Vault</span>
+            </div>
+            <span class="sec-status-pill">Active</span>
+          </div>
+          <p class="sec-desc">
+            Passkeys, SSH passphrases, and passwords are automatically secured via the host operating system's Credential Manager. Zero plaintext passwords are saved to disk.
+          </p>
+        </div>
       </div>
     </div>
 
@@ -349,5 +388,53 @@
 
   .btn-primary:hover {
     background: #ffffff;
+  }
+
+  .security-card {
+    background: #0a0a0a;
+    border: 1px solid #262626;
+    border-radius: 6px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .security-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .security-card-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #ededed;
+  }
+
+  :global(.sec-icon) {
+    color: #10b981;
+  }
+
+  .sec-status-pill {
+    font-size: 10px;
+    font-family: var(--font-mono, monospace);
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    padding: 1px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .sec-desc {
+    margin: 0;
+    font-size: 11px;
+    color: #777777;
+    line-height: 1.45;
   }
 </style>

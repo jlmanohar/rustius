@@ -2,40 +2,109 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// The type of remote connection.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ConnectionType {
+    #[default]
     Ssh,
     Sftp,
     Rdp,
 }
 
+use crate::secret::{SecretManager, SecretRef};
+
 /// SSH authentication method.
 ///
 /// Uses serde's tagged enum representation so that serialized output
 /// includes a `"type"` field discriminator (e.g., `type = "password"`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum AuthMethod {
     Password {
         username: String,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         password: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        secret_ref: Option<SecretRef>,
     },
     KeyFile {
         username: String,
         key_path: String,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         passphrase: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        secret_ref: Option<SecretRef>,
     },
     Agent {
         username: String,
     },
 }
 
+impl AuthMethod {
+    /// Construct a Password authentication method without secret reference.
+    pub fn password(username: impl Into<String>, password: Option<String>) -> Self {
+        Self::Password {
+            username: username.into(),
+            password,
+            secret_ref: None,
+        }
+    }
+
+    /// Construct a KeyFile authentication method without secret reference.
+    pub fn key_file(
+        username: impl Into<String>,
+        key_path: impl Into<String>,
+        passphrase: Option<String>,
+    ) -> Self {
+        Self::KeyFile {
+            username: username.into(),
+            key_path: key_path.into(),
+            passphrase,
+            secret_ref: None,
+        }
+    }
+
+    /// Resolve password from either `secret_ref` (e.g. OS Keyring) or legacy inline `password`.
+    pub fn resolve_password(&self, secret_manager: &SecretManager) -> anyhow::Result<Option<String>> {
+        match self {
+            AuthMethod::Password {
+                password,
+                secret_ref,
+                ..
+            } => {
+                if let Some(sref) = secret_ref {
+                    secret_manager.resolve(sref)
+                } else {
+                    Ok(password.clone())
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Resolve private key passphrase from either `secret_ref` (e.g. OS Keyring) or legacy inline `passphrase`.
+    pub fn resolve_passphrase(&self, secret_manager: &SecretManager) -> anyhow::Result<Option<String>> {
+        match self {
+            AuthMethod::KeyFile {
+                passphrase,
+                secret_ref,
+                ..
+            } => {
+                if let Some(sref) = secret_ref {
+                    secret_manager.resolve(sref)
+                } else {
+                    Ok(passphrase.clone())
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+}
+
 pub fn parse_uuid_or_fallback(s: &str) -> Uuid {
     let trimmed = s.trim();
-    Uuid::parse_str(trimmed).unwrap_or_else(|_| Uuid::new_v5(&Uuid::NAMESPACE_OID, trimmed.as_bytes()))
+    Uuid::parse_str(trimmed)
+        .unwrap_or_else(|_| Uuid::new_v5(&Uuid::NAMESPACE_OID, trimmed.as_bytes()))
 }
 
 fn deserialize_uuid_or_fallback<'de, D>(deserializer: D) -> std::result::Result<Uuid, D::Error>
@@ -46,7 +115,9 @@ where
     Ok(parse_uuid_or_fallback(&s))
 }
 
-fn deserialize_opt_uuid_or_fallback<'de, D>(deserializer: D) -> std::result::Result<Option<Uuid>, D::Error>
+fn deserialize_opt_uuid_or_fallback<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<Uuid>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -61,13 +132,70 @@ fn default_timestamp() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
+/// Helper struct for flexible, fault-tolerant deserialization of `Connection`.
+/// Gracefully handles `connection_type`, `conn_type`, both simultaneously, or neither (defaults to `Ssh`),
+/// preventing duplicate-field or missing-field deserialization errors.
+#[derive(Deserialize)]
+struct ConnectionRaw {
+    #[serde(
+        default = "Uuid::new_v4",
+        deserialize_with = "deserialize_uuid_or_fallback"
+    )]
+    id: Uuid,
+    name: String,
+    #[serde(default)]
+    connection_type: Option<ConnectionType>,
+    #[serde(default)]
+    conn_type: Option<ConnectionType>,
+    host: String,
+    port: u16,
+    auth: AuthMethod,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    environment: Option<String>,
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default = "default_timestamp")]
+    created_at: String,
+    #[serde(default = "default_timestamp")]
+    updated_at: String,
+    #[serde(default)]
+    ssh_config: Option<SshConfig>,
+    #[serde(default)]
+    rdp_config: Option<RdpConfig>,
+}
+
+impl From<ConnectionRaw> for Connection {
+    fn from(raw: ConnectionRaw) -> Self {
+        let connection_type = raw
+            .connection_type
+            .or(raw.conn_type)
+            .unwrap_or(ConnectionType::Ssh);
+        Connection {
+            id: raw.id,
+            name: raw.name,
+            connection_type,
+            host: raw.host,
+            port: raw.port,
+            auth: raw.auth,
+            tags: raw.tags,
+            environment: raw.environment,
+            notes: raw.notes,
+            created_at: raw.created_at,
+            updated_at: raw.updated_at,
+            ssh_config: raw.ssh_config,
+            rdp_config: raw.rdp_config,
+        }
+    }
+}
+
 /// A single connection definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "ConnectionRaw")]
 pub struct Connection {
-    #[serde(default = "Uuid::new_v4", deserialize_with = "deserialize_uuid_or_fallback")]
     pub id: Uuid,
     pub name: String,
-    #[serde(alias = "conn_type")]
     pub connection_type: ConnectionType,
     pub host: String,
     pub port: u16,
@@ -157,7 +285,10 @@ fn default_true() -> bool {
 /// A folder that can contain connections and sub-folders.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Folder {
-    #[serde(default = "Uuid::new_v4", deserialize_with = "deserialize_uuid_or_fallback")]
+    #[serde(
+        default = "Uuid::new_v4",
+        deserialize_with = "deserialize_uuid_or_fallback"
+    )]
     pub id: Uuid,
     pub name: String,
     #[serde(default, deserialize_with = "deserialize_opt_uuid_or_fallback")]
@@ -171,6 +302,7 @@ pub struct Folder {
 /// A node in the connection tree — either a folder or a connection reference.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "node_type", rename_all = "lowercase")]
+#[allow(clippy::large_enum_variant)]
 pub enum TreeNode {
     Folder(Folder),
     Connection(Connection),
@@ -198,6 +330,10 @@ pub struct AppSettings {
     pub sidebar_width: u32,
     #[serde(default)]
     pub close_tab_on_exit: bool,
+    /// Automatically synchronize SFTP file navigator with terminal working directory (e.g. on `cd`).
+    /// Mimics MobaXterm's "Follow terminal folder" feature using OSC 7 sequences and terminal title updates.
+    #[serde(default = "default_true")]
+    pub sftp_follow_terminal_folder: bool,
 }
 
 impl Default for AppSettings {
@@ -210,6 +346,7 @@ impl Default for AppSettings {
             show_sidebar: true,
             sidebar_width: 280,
             close_tab_on_exit: false,
+            sftp_follow_terminal_folder: true,
         }
     }
 }
@@ -263,10 +400,7 @@ mod tests {
             ConnectionType::Ssh,
             "192.168.1.100".into(),
             22,
-            AuthMethod::Password {
-                username: "admin".into(),
-                password: Some("secret".into()),
-            },
+            AuthMethod::password("admin", Some("secret".into())),
         );
 
         let node = TreeNode::Connection(conn);
@@ -301,7 +435,8 @@ mod tests {
             }
         }"#;
 
-        let conn: Connection = serde_json::from_str(json_input).expect("Should deserialize leniently");
+        let conn: Connection =
+            serde_json::from_str(json_input).expect("Should deserialize leniently");
         assert_eq!(conn.name, "Frontend Test");
         assert_eq!(conn.connection_type, ConnectionType::Ssh);
         assert_eq!(conn.environment.as_deref(), Some("Production"));
@@ -334,7 +469,8 @@ mod tests {
             }
         }"#;
 
-        let conn: Connection = serde_json::from_str(json_input).expect("Should deserialize frontend JSON");
+        let conn: Connection =
+            serde_json::from_str(json_input).expect("Should deserialize frontend JSON");
         let config = RustiusConfig {
             version: "1.0.0".into(),
             app_settings: AppSettings::default(),
@@ -352,6 +488,54 @@ mod tests {
         assert_eq!(config.version, "1.0.0");
         assert_eq!(config.app_settings.theme, "dark");
         assert_eq!(config.app_settings.font_size, 14);
+        assert!(config.app_settings.sftp_follow_terminal_folder);
         assert!(config.tree.is_empty());
+    }
+
+    #[test]
+    fn test_connection_type_flexible_and_default() {
+        // Test with neither connection_type nor conn_type present (defaults to Ssh)
+        let json_no_type = r#"{
+            "name": "Fallback Test",
+            "host": "192.168.1.1",
+            "port": 22,
+            "auth": { "type": "password", "username": "root" }
+        }"#;
+        let conn: Connection = serde_json::from_str(json_no_type).expect("Should default to Ssh");
+        assert_eq!(conn.connection_type, ConnectionType::Ssh);
+
+        // Test with conn_type present
+        let json_conn_type = r#"{
+            "name": "RDP Test",
+            "conn_type": "rdp",
+            "host": "192.168.1.2",
+            "port": 3389,
+            "auth": { "type": "password", "username": "admin" }
+        }"#;
+        let conn_rdp: Connection = serde_json::from_str(json_conn_type).expect("Should parse conn_type");
+        assert_eq!(conn_rdp.connection_type, ConnectionType::Rdp);
+
+        // Test with connection_type present
+        let json_connection_type = r#"{
+            "name": "SFTP Test",
+            "connection_type": "sftp",
+            "host": "192.168.1.3",
+            "port": 22,
+            "auth": { "type": "password", "username": "ftpuser" }
+        }"#;
+        let conn_sftp: Connection = serde_json::from_str(json_connection_type).expect("Should parse connection_type");
+        assert_eq!(conn_sftp.connection_type, ConnectionType::Sftp);
+
+        // Test with BOTH conn_type and connection_type present simultaneously
+        let json_both = r#"{
+            "name": "Both Fields Test",
+            "conn_type": "rdp",
+            "connection_type": "rdp",
+            "host": "192.168.1.4",
+            "port": 3389,
+            "auth": { "type": "password", "username": "admin" }
+        }"#;
+        let conn_both: Connection = serde_json::from_str(json_both).expect("Should parse both fields without duplicate error");
+        assert_eq!(conn_both.connection_type, ConnectionType::Rdp);
     }
 }

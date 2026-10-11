@@ -1,4 +1,4 @@
-import type { RustiusConfig, TabSession, Connection, TreeNode, Folder, AppSettings } from '../types';
+import type { RustiusConfig, TabSession, Connection, TreeNode, Folder, AppSettings, ImportSummary } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 
 export class AppStore {
@@ -24,6 +24,7 @@ export class AppStore {
   isConnectionModalOpen = $state<boolean>(false);
   isFolderModalOpen = $state<boolean>(false);
   isSettingsModalOpen = $state<boolean>(false);
+  isImportModalOpen = $state<boolean>(false);
   editingConnection = $state<Connection | null>(null);
   targetFolderId = $state<string | null>(null);
 
@@ -249,6 +250,38 @@ export class AppStore {
       console.error('Failed to save settings via Tauri:', err);
       this.config.app_settings = settings;
     }
+  }
+
+  async importSessions(
+    filePath: string,
+    source?: string,
+    masterPassword?: string,
+    parentFolderId?: string
+  ): Promise<ImportSummary> {
+    const summary = await invoke<ImportSummary>('import_sessions', {
+      filePath,
+      source: source || 'auto',
+      masterPassword: masterPassword || null,
+      parentFolderId: parentFolderId || null,
+    });
+    await this.loadConfig();
+    return summary;
+  }
+
+  async importSessionsContent(
+    content: string,
+    source?: string,
+    masterPassword?: string,
+    parentFolderId?: string
+  ): Promise<ImportSummary> {
+    const summary = await invoke<ImportSummary>('import_sessions_content', {
+      content,
+      source: source || 'auto',
+      masterPassword: masterPassword || null,
+      parentFolderId: parentFolderId || null,
+    });
+    await this.loadConfig();
+    return summary;
   }
 }
 

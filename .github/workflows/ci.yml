@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Svelte type check
+        run: npm run check
+
+  check-rust:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            workers/rustius-rdp-worker
+
+      - name: Build RDP worker binary
+        run: cargo build --release --manifest-path workers/rustius-rdp-worker/Cargo.toml
+
+      - name: Run Tests
+        run: cargo test --workspace
+
+      - name: Run Clippy
+        run: cargo clippy --workspace -- -D warnings

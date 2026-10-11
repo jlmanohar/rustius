@@ -4,9 +4,28 @@ target/
 **/*.rs.bk
 *.pdb
 
-# Tauri portable data
+# Tauri portable & local user data
 rustius-data/
 **/rustius-data/
+data/
+**/data/
+.portable
+*.toml.bak
+
+# Credentials, private keys & secrets
+*.pem
+*.key
+*.pk8
+*.pfx
+*.p12
+id_rsa*
+id_ed25519*
+id_ecdsa*
+known_hosts
+.env
+.env.*
+!.env.example
+.vault*
 
 # Node / SvelteKit / Vite
 node_modules/
@@ -14,13 +33,40 @@ node_modules/
 build/
 dist/
 package/
-.env
-.env.*
-!.env.example
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
-# OS files
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Tauri generated files
+src-tauri/gen/
+**/gen/schemas/
+
+# IDE & Editor files
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.sublime-*
+*.swp
+*~
+
+# OS artifacts
 .DS_Store
 Thumbs.db
+ehthumbs.db
 desktop.ini
+$RECYCLE.BIN/
+
+# SonarQube / SonarCloud
+.sonar/
+**/.sonar/
+.scannerwork/
+**/.scannerwork/
+

@@ -6,18 +6,107 @@
   import { listen } from '@tauri-apps/api/event';
   import { appState } from '../stores/appState.svelte';
   import { DisposableStore } from '../utils/disposable';
-  import { RotateCcw, X } from '@lucide/svelte';
+  import { RotateCcw, X, FolderTree } from '@lucide/svelte';
+  import SftpSidebar from './SftpSidebar.svelte';
   import '@xterm/xterm/css/xterm.css';
   import type { TabSession } from '../types';
 
   let { session = $bindable() }: { session: TabSession } = $props();
 
+  let shellElement: HTMLDivElement | null = $state(null);
   let terminalContainer: HTMLDivElement | null = $state(null);
-  let term: Terminal | null = null;
-  let fitAddon: FitAddon | null = null;
+  let term = $state<Terminal | null>(null);
+  let fitAddon = $state<FitAddon | null>(null);
   let isConnecting = false;
   let isTauriLive = false;
   let isDisconnected = $state(false);
+
+  // MobaXterm-style SFTP side file navigator state
+  let isSftpOpen = $state(true);
+  let sftpWidth = $state(260);
+  let isDraggingSplitter = $state(false);
+  let terminalCwd = $state<string | null>(null);
+
+  // Helper to extract working directory from OSC 7 escape sequence (e.g. file://hostname/path)
+  function extractCwdFromOsc7(data: string): string | null {
+    if (!data) return null;
+    const raw = data.trim();
+    if (raw.startsWith('file://')) {
+      try {
+        const url = new URL(raw);
+        return decodeURIComponent(url.pathname);
+      } catch {
+        const match = /^file:\/\/[^/]*(\/.*)$/.exec(raw);
+        if (match) return decodeURIComponent(match[1]);
+      }
+    } else if (raw.startsWith('/') || raw.startsWith('~')) {
+      return raw;
+    }
+    return null;
+  }
+
+  // Helper to extract working directory from terminal title (OSC 0 / OSC 2 - default in Linux distributions)
+  function extractCwdFromTitle(title: string): string | null {
+    if (!title) return null;
+    const t = title.trim();
+
+    // Pattern 1: user@host: /path or user@host:/path or user@host: ~ or user@host:~
+    const userHostMatch = /^(?:[a-zA-Z0-9_.+-]+@)?[a-zA-Z0-9_.+-]+:\s*([/~].*)$/.exec(t);
+    if (userHostMatch && userHostMatch[1]) {
+      return userHostMatch[1].trim();
+    }
+
+    // Pattern 2: [user@host /path] or [user@host: /path] or (user@host)-[/path]
+    const bracketMatch = /^[\[(](?:[a-zA-Z0-9_.+-]+@)?[a-zA-Z0-9_.+-]+:?\s+([/~].*?)[\])]$/.exec(t);
+    if (bracketMatch && bracketMatch[1]) {
+      return bracketMatch[1].trim();
+    }
+
+    // Pattern 3: user@host - /path or host - /path
+    const dashMatch = /^(?:[a-zA-Z0-9_.+-]+@)?[a-zA-Z0-9_.+-]+\s*[-–—]\s*([/~].*)$/.exec(t);
+    if (dashMatch && dashMatch[1]) {
+      return dashMatch[1].trim();
+    }
+
+    // Pattern 4: Terminal title is simply the directory itself: "/var/log" or "~" or "~/projects"
+    if (t.startsWith('/') || t.startsWith('~')) {
+      if (!t.includes(' ') && !t.includes('\n')) {
+        return t;
+      }
+    }
+
+    return null;
+  }
+
+  function toggleSftp() {
+    isSftpOpen = !isSftpOpen;
+    setTimeout(() => {
+      fitAddon?.fit();
+    }, 50);
+  }
+
+  function startResizeSplitter(e: MouseEvent) {
+    e.preventDefault();
+    isDraggingSplitter = true;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!shellElement) return;
+      const rect = shellElement.getBoundingClientRect();
+      const newWidth = moveEvent.clientX - rect.left;
+      sftpWidth = Math.max(180, Math.min(500, newWidth));
+      fitAddon?.fit();
+    };
+
+    const onMouseUp = () => {
+      isDraggingSplitter = false;
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      setTimeout(() => fitAddon?.fit(), 20);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }
 
   // Disposable stores:
   // componentDisposables manages the lifetime of DOM listeners, observers, and the Terminal instance.
@@ -32,9 +121,10 @@
         if (componentDisposables.isDisposed) return;
         try {
           fitAddon?.fit();
+          term?.refresh(0, term.rows - 1);
           term?.focus();
         } catch {}
-      }, 50);
+      }, 30);
     }
   });
 
@@ -45,7 +135,7 @@
 
     try {
       isDisconnected = false;
-      session.status = 'connected';
+      session.status = 'connecting';
 
       // Always clear any previous session listeners (xterm onData, tauri terminal-data)
       sessionDisposables.clear();
@@ -77,6 +167,7 @@
           }
 
           isTauriLive = true;
+          session.status = 'connected';
 
           const onDataDisposable = term?.onData((data) => {
             if (isDisconnected) return;
@@ -94,7 +185,7 @@
         }
       } else if (session.type === 'ssh' && session.connectionId) {
         try {
-          term?.writeln(`\x1b[90mConnecting to remote SSH host...\x1b[0m\r\n`);
+          term?.write(`\x1b[90mConnecting to remote SSH host...\x1b[0m\r`);
 
           const unlisten = await listen<number[]>(`terminal-data-${session.id}`, (event) => {
             if (term && event.payload) {
@@ -118,13 +209,23 @@
             return;
           }
 
+          // Clear connecting line so remote prompt/banner begins cleanly
+          term?.write('\x1b[2K\r');
+          session.status = 'connected';
           isTauriLive = true;
+          setTimeout(() => {
+            try {
+              fitAddon?.fit();
+              term?.focus();
+            } catch {}
+          }, 30);
 
           const onDataDisposable = term?.onData((data) => {
             if (isDisconnected) return;
             const encoded = Array.from(new TextEncoder().encode(data));
             invoke('ssh_write', { tabId: session.id, data: encoded }).catch((err) => {
               console.error('Failed to write to SSH session:', err);
+              handleSessionExit(255);
             });
           });
           if (onDataDisposable) {
@@ -132,10 +233,11 @@
           }
         } catch (e: any) {
           console.warn('SSH connection failed or running in web preview mode:', e);
+          const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
           if (term) {
+            term.write('\x1b[2K\r');
             term.writeln(`\x1b[31;1mConnection failed:\x1b[0m \x1b[90m${e?.message || e}\x1b[0m\r\n`);
           }
-          const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
           if (!isTauri) {
             if (term) {
               term.writeln(`\x1b[90mFalling back to demo terminal emulator:\x1b[0m\r\n`);
@@ -154,9 +256,10 @@
   }
 
   function handleSessionExit(exitCode: number = 0) {
+    if (isDisconnected) return;
     isDisconnected = true;
     isTauriLive = false;
-    session.status = 'disconnected';
+    session.status = exitCode === 0 ? 'disconnected' : 'error';
 
     if (appState.config.app_settings?.close_tab_on_exit) {
       appState.closeTab(session.id);
@@ -165,7 +268,11 @@
 
     if (term) {
       term.writeln(`\r\n\x1b[90m──────────────────────────────────────────────\x1b[0m`);
-      term.writeln(`\x1b[33;1m[Session closed]\x1b[0m \x1b[90mConnection closed (exit code: ${exitCode}).\x1b[0m`);
+      if (exitCode === 255) {
+        term.writeln(`\x1b[31;1m[Connection lost]\x1b[0m \x1b[90mRemote host terminated the connection or is offline.\x1b[0m`);
+      } else {
+        term.writeln(`\x1b[33;1m[Session closed]\x1b[0m \x1b[90mConnection closed (exit code: ${exitCode}).\x1b[0m`);
+      }
       term.writeln(`\x1b[90mPress \x1b[37;1m[Enter]\x1b[0m\x1b[90m or click \x1b[37;1mReconnect\x1b[0m\x1b[90m below to restart session.\x1b[0m\r\n`);
     }
   }
@@ -173,7 +280,7 @@
   async function reconnect() {
     if (!term || isConnecting || componentDisposables.isDisposed) return;
     isDisconnected = false;
-    session.status = 'connected';
+    session.status = 'connecting';
     term.reset();
     await startSession();
   }
@@ -221,6 +328,11 @@
 
     term.open(terminalContainer);
     fitAddon.fit();
+    setTimeout(() => {
+      try {
+        term?.focus();
+      } catch {}
+    }, 30);
 
     // Custom keyboard handler for copy / paste and Enter-to-reconnect
     term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
@@ -276,6 +388,14 @@
         return false;
       }
 
+      // Ctrl+Shift+F -> Toggle SFTP side file navigator
+      if (event.ctrlKey && event.shiftKey && (event.key === 'f' || event.key === 'F')) {
+        if (event.type === 'keydown' && session.type === 'ssh') {
+          toggleSftp();
+        }
+        return false;
+      }
+
       return true;
     });
 
@@ -307,6 +427,32 @@
     // Track DOM listener with auto-cleanup
     componentDisposables.trackEventListener(terminalContainer, 'contextmenu', handleContextMenu);
 
+    // Track working directory via OSC 7 (modern shells) and Title changes (default in Linux distributions)
+    try {
+      const osc7Disposable = term.parser.registerOscHandler(7, (data: string) => {
+        try {
+          const path = extractCwdFromOsc7(data);
+          if (path && path !== terminalCwd) {
+            terminalCwd = path;
+          }
+        } catch {}
+        return true;
+      });
+      componentDisposables.add(osc7Disposable);
+    } catch (e) {
+      console.warn('Failed to register OSC 7 handler:', e);
+    }
+
+    const titleDisposable = term.onTitleChange((title: string) => {
+      try {
+        const path = extractCwdFromTitle(title);
+        if (path && path !== terminalCwd) {
+          terminalCwd = path;
+        }
+      } catch {}
+    });
+    componentDisposables.add(titleDisposable);
+
     // Listen for terminal exit event from Rust backend
     const unlistenExit = await listen<number>(`terminal-exit-${session.id}`, (event) => {
       handleSessionExit(event.payload ?? 0);
@@ -319,11 +465,23 @@
 
     await startSession();
 
-    // Resize observer to keep xterm fitting parent container
-    const resizeObserver = new ResizeObserver(() => {
+    setTimeout(() => {
       try {
         fitAddon?.fit();
-        if (isTauriLive && term) {
+        term?.focus();
+      } catch {}
+    }, 50);
+
+    // Resize observer to keep xterm fitting parent container
+    const resizeObserver = new ResizeObserver((entries) => {
+      try {
+        const entry = entries[0];
+        // Ignore collapsed/zero dimensions when hidden or transitioning
+        if (!entry || entry.contentRect.width < 50 || entry.contentRect.height < 50) {
+          return;
+        }
+        fitAddon?.fit();
+        if (isTauriLive && term && term.cols >= 10 && term.rows >= 2) {
           const command = session.type === 'ssh' ? 'ssh_resize' : 'pty_resize';
           invoke(command, {
             tabId: session.id,
@@ -368,12 +526,56 @@
     if (isTauriLive) {
       const closeCmd = session.type === 'ssh' ? 'ssh_disconnect' : 'pty_close';
       invoke(closeCmd, { tabId: session.id }).catch(() => {});
+      if (session.type === 'ssh') {
+        invoke('sftp_disconnect', { tabId: session.id }).catch(() => {});
+      }
     }
   });
 </script>
 
-<div class="terminal-shell">
-  {#if isDisconnected}
+<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions a11y_no_static_element_interactions -->
+<div
+  class="terminal-shell"
+  role="presentation"
+  bind:this={shellElement}
+  onclick={(e) => {
+    const target = e.target as HTMLElement | null;
+    if (target && !target.closest('.sftp-sidebar-pane') && !target.closest('.terminal-topbar')) {
+      term?.focus();
+    }
+  }}
+>
+  <!-- Top Utility Bar for SSH sessions with MobaXterm-style SFTP toggle -->
+  {#if session.type === 'ssh'}
+    <div class="terminal-topbar">
+      <div class="topbar-left">
+        <button
+          class="sftp-toggle-btn {isSftpOpen ? 'active' : ''}"
+          onclick={toggleSftp}
+          title="Toggle SFTP Side File Navigator (Ctrl+Shift+F)"
+          aria-label="Toggle SFTP Side File Navigator"
+        >
+          <FolderTree size={14} />
+          <span>SFTP Browser</span>
+        </button>
+      </div>
+
+      {#if isDisconnected}
+        <div class="disconnect-inline">
+          <span class="status-indicator"></span>
+          <span class="disconnect-text">Session closed</span>
+          <button class="reconnect-btn small" onclick={reconnect}>
+            <RotateCcw size={11} />
+            <span>Reconnect</span>
+          </button>
+          <button class="close-btn small" onclick={() => appState.closeTab(session.id)}>
+            <X size={11} />
+            <span>Close</span>
+          </button>
+        </div>
+      {/if}
+    </div>
+  {:else if isDisconnected}
     <div class="disconnect-bar">
       <div class="disconnect-left">
         <span class="status-indicator"></span>
@@ -391,7 +593,40 @@
       </div>
     </div>
   {/if}
-  <div class="terminal-body" bind:this={terminalContainer}></div>
+
+  <!-- Split Workspace containing SFTP navigator and terminal -->
+  <div class="workspace-split">
+    {#if session.type === 'ssh' && isSftpOpen && session.connectionId}
+      <div class="sftp-sidebar-pane" style="width: {sftpWidth}px;">
+        <SftpSidebar
+          tabId={session.id}
+          connectionId={session.connectionId}
+          {terminalCwd}
+          onclose={toggleSftp}
+          onresize={() => fitAddon?.fit()}
+        />
+      </div>
+
+      <!-- Resizable Splitter Handle -->
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <div
+        class="split-divider {isDraggingSplitter ? 'dragging' : ''}"
+        onmousedown={startResizeSplitter}
+        role="separator"
+        aria-orientation="vertical"
+        tabindex="-1"
+      ></div>
+    {/if}
+
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions a11y_no_static_element_interactions -->
+    <div
+      class="terminal-body"
+      role="presentation"
+      bind:this={terminalContainer}
+      onclick={() => term?.focus()}
+      onmousedown={() => term?.focus()}
+    ></div>
+  </div>
 </div>
 
 <style>
@@ -402,6 +637,101 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+
+  .terminal-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px 10px;
+    background: #09090b;
+    border-bottom: 1px solid #1f1f23;
+    min-height: 26px;
+    flex-shrink: 0;
+  }
+
+  .topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .sftp-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    background: transparent;
+    border: 1px solid var(--hairline, #262626);
+    border-radius: var(--radius-sm, 6px);
+    color: var(--body, #a1a1a1);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+
+  .sftp-toggle-btn:hover {
+    background: var(--canvas-hover, #1a1a1a);
+    color: var(--ink, #ffffff);
+    border-color: var(--hairline-hover, #404040);
+  }
+
+  .sftp-toggle-btn.active {
+    background: var(--canvas-elevated, #0f0f0f);
+    border-color: var(--hairline-focus, #ffffff);
+    color: var(--ink, #ffffff);
+  }
+
+  .disconnect-inline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+  }
+
+  .workspace-split {
+    flex: 1;
+    display: flex;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .sftp-sidebar-pane {
+    height: 100%;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  .split-divider {
+    width: 4px;
+    height: 100%;
+    background: #18181b;
+    border-left: 1px solid #27272a;
+    cursor: col-resize;
+    flex-shrink: 0;
+    transition: background 0.12s ease;
+    position: relative;
+    z-index: 5;
+  }
+
+  .split-divider:hover,
+  .split-divider.dragging {
+    background: #3b82f6;
+    border-left-color: #3b82f6;
+  }
+
+  .reconnect-btn.small {
+    padding: 2px 7px;
+    font-size: 10.5px;
+  }
+
+  .close-btn.small {
+    padding: 2px 6px;
+    font-size: 10.5px;
   }
 
   .disconnect-bar {
@@ -495,6 +825,7 @@
 
   .terminal-body {
     flex: 1;
+    min-width: 0;
     width: 100%;
     height: 100%;
     padding: 10px 14px;

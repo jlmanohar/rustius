@@ -1,11 +1,18 @@
-use crate::state::AppState;
-use rustius_core::connection::AuthMethod;
-use rustius_rdp::client::{RdpFrame, RdpSession};
 use std::sync::Arc;
+
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use rustius_core::connection::AuthMethod;
+use rustius_rdp::client::{RdpFrame, RdpSession};
+
+use crate::state::AppState;
+
+/// Establish a Remote Desktop Protocol (RDP) session for a specific tab.
+///
+/// Connects to the remote desktop server, begins receiving video frames,
+/// and streams them to the frontend via `rdp-frame-{tab_id}` events.
 #[tauri::command]
 pub async fn rdp_connect(
     app_handle: AppHandle,
@@ -13,7 +20,10 @@ pub async fn rdp_connect(
     connection_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    info!("Starting RDP connection for tab: {} with conn: {}", tab_id, connection_id);
+    info!(
+        "Starting RDP connection for tab: {} with conn: {}",
+        tab_id, connection_id
+    );
 
     // Retrieve connection from config manager
     let uuid = rustius_core::connection::parse_uuid_or_fallback(&connection_id);
@@ -22,12 +32,16 @@ pub async fn rdp_connect(
         .get_connection(uuid)
         .await
         .map_err(|e| format!("Connection not found (ID: {connection_id}): {e}"))?;
+    let conn = state
+        .config_manager
+        .resolve_connection(&conn)
+        .map_err(|e| format!("Failed to resolve credentials: {e}"))?;
 
     let host = conn.host;
     let port = conn.port;
 
     let (username, password) = match &conn.auth {
-        AuthMethod::Password { username, password } => {
+        AuthMethod::Password { username, password, .. } => {
             (username.clone(), password.clone().unwrap_or_default())
         }
         AuthMethod::KeyFile { username, .. } => (username.clone(), String::new()),
@@ -77,6 +91,7 @@ pub async fn rdp_connect(
     Ok(())
 }
 
+/// Terminate the active RDP session for the specified tab.
 #[tauri::command]
 pub async fn rdp_disconnect(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let session = {
@@ -92,6 +107,7 @@ pub async fn rdp_disconnect(tab_id: String, state: State<'_, AppState>) -> Resul
     Ok(())
 }
 
+/// Forward keyboard scan codes and press states to the remote RDP session.
 #[tauri::command]
 pub async fn rdp_key_event(
     tab_id: String,
@@ -113,6 +129,7 @@ pub async fn rdp_key_event(
     }
 }
 
+/// Forward mouse coordinates, button clicks, and scroll wheel events to the remote RDP session.
 #[tauri::command]
 pub async fn rdp_mouse_event(
     tab_id: String,
@@ -159,12 +176,16 @@ pub async fn freerdp_connect(
         .get_connection(uuid)
         .await
         .map_err(|e| format!("Connection not found (ID: {connection_id}): {e}"))?;
+    let conn = state
+        .config_manager
+        .resolve_connection(&conn)
+        .map_err(|e| format!("Failed to resolve credentials: {e}"))?;
 
     let host = conn.host;
     let port = conn.port;
 
     let (username, password) = match &conn.auth {
-        AuthMethod::Password { username, password } => {
+        AuthMethod::Password { username, password, .. } => {
             (username.clone(), password.clone())
         }
         AuthMethod::KeyFile { username, .. } => (username.clone(), None),

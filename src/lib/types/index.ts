@@ -1,16 +1,24 @@
 export type ConnectionType = 'ssh' | 'sftp' | 'rdp';
 
+export type SecretRef =
+  | { type: 'keyring'; key: string }
+  | { type: 'plaintext'; value: string }
+  | { type: 'ask_on_connect' }
+  | { type: 'external'; provider: string; vault_id?: string; item_id: string };
+
 export type AuthMethod =
   | {
       type: 'password';
       username: string;
       password?: string;
+      secret_ref?: SecretRef;
     }
   | {
       type: 'keyfile';
       username: string;
       key_path: string;
       passphrase?: string;
+      secret_ref?: SecretRef;
     }
   | {
       type: 'agent';
@@ -77,6 +85,7 @@ export interface AppSettings {
   show_sidebar: boolean;
   sidebar_width: number;
   close_tab_on_exit?: boolean;
+  sftp_follow_terminal_folder?: boolean;
 }
 
 export interface RustiusConfig {
@@ -113,3 +122,10 @@ export interface TransferItem {
   status: 'pending' | 'transferring' | 'completed' | 'failed';
   error?: string;
 }
+
+export interface ImportSummary {
+  connections_imported: number;
+  folders_imported: number;
+}
+
+export type ImportFormat = 'auto' | 'mremoteng' | 'mobaxterm';

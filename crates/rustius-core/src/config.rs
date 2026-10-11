@@ -1,5 +1,6 @@
-use crate::connection::{Connection, Folder, RustiusConfig, TreeNode};
+use crate::connection::{AuthMethod, Connection, Folder, RustiusConfig, TreeNode};
 use crate::error::RustiusError;
+use crate::secret::{SecretManager, SecretRef};
 use crate::storage::ConfigStorage;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
@@ -16,6 +17,7 @@ pub struct ConfigManager {
     config_path: PathBuf,
     storage: Box<dyn ConfigStorage>,
     config: Arc<RwLock<RustiusConfig>>,
+    pub secret_manager: Arc<SecretManager>,
 }
 
 impl ConfigManager {
@@ -31,8 +33,8 @@ impl ConfigManager {
             info!("No config found, creating defaults at: {:?}", config_path);
             let config = RustiusConfig::default();
             // Save the default config immediately
-            let content = toml::to_string_pretty(&config)
-                .context("Failed to serialize default config")?;
+            let content =
+                toml::to_string_pretty(&config).context("Failed to serialize default config")?;
             storage.write(&config_path, &content)?;
             config
         };
@@ -41,7 +43,66 @@ impl ConfigManager {
             config_path,
             storage,
             config: Arc::new(RwLock::new(config)),
+            secret_manager: Arc::new(SecretManager::default()),
         })
+    }
+
+    /// Access the underlying OS keyring secret manager.
+    pub fn secret_manager(&self) -> &Arc<SecretManager> {
+        &self.secret_manager
+    }
+
+    /// Resolve all credentials in a connection into an in-memory copy with secrets hydrated.
+    pub fn resolve_connection(&self, conn: &Connection) -> Result<Connection> {
+        let mut resolved = conn.clone();
+        match &conn.auth {
+            AuthMethod::Password { username, .. } => {
+                let pass = conn.auth.resolve_password(&self.secret_manager)?;
+                resolved.auth = AuthMethod::Password {
+                    username: username.clone(),
+                    password: pass,
+                    secret_ref: None,
+                };
+            }
+            AuthMethod::KeyFile { username, key_path, .. } => {
+                let passphrase = conn.auth.resolve_passphrase(&self.secret_manager)?;
+                resolved.auth = AuthMethod::KeyFile {
+                    username: username.clone(),
+                    key_path: key_path.clone(),
+                    passphrase,
+                    secret_ref: None,
+                };
+            }
+            _ => {}
+        }
+        Ok(resolved)
+    }
+
+    /// Secure a connection before writing to disk:
+    /// Moves plaintext passwords and passphrases into the native OS keyring,
+    /// setting `secret_ref = Keyring` and wiping plaintext fields so secrets
+    /// never hit `connections.toml` unencrypted.
+    pub fn secure_connection(&self, conn: &mut Connection) {
+        let key = format!("connection:{}", conn.id);
+        match &mut conn.auth {
+            AuthMethod::Password { username: _, password, secret_ref } => {
+                if let Some(p) = password.take() {
+                    if !p.is_empty() {
+                        let _ = self.secret_manager.set_secret(&key, &p);
+                        *secret_ref = Some(SecretRef::Keyring { key });
+                    }
+                }
+            }
+            AuthMethod::KeyFile { username: _, key_path: _, passphrase, secret_ref } => {
+                if let Some(p) = passphrase.take() {
+                    if !p.is_empty() {
+                        let _ = self.secret_manager.set_secret(&key, &p);
+                        *secret_ref = Some(SecretRef::Keyring { key });
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Get a clone of the current configuration (read-only snapshot).
@@ -52,8 +113,7 @@ impl ConfigManager {
     /// Persist the current in-memory config to disk.
     pub async fn save(&self) -> Result<()> {
         let config = self.config.read().await;
-        let content = toml::to_string_pretty(&*config)
-            .context("Failed to serialize config")?;
+        let content = toml::to_string_pretty(&*config).context("Failed to serialize config")?;
         self.storage.write(&self.config_path, &content)?;
         debug!("Config saved to {:?}", self.config_path);
         Ok(())
@@ -74,13 +134,19 @@ impl ConfigManager {
         self.save().await
     }
 
-    /// Add a connection to the tree, optionally under a specific folder.
+    /// Add or update a connection in the tree, securing credentials via OS Keyring.
     pub async fn add_connection(
         &self,
-        connection: Connection,
+        mut connection: Connection,
         parent_folder_id: Option<Uuid>,
     ) -> Result<()> {
+        self.secure_connection(&mut connection);
         self.update_config(|config| {
+            // If connection with this ID already exists, update it in place
+            if Self::update_in_tree(&mut config.tree, &connection) {
+                return;
+            }
+
             let node = TreeNode::Connection(connection);
             if let Some(folder_id) = parent_folder_id {
                 // Find the folder and insert the connection
@@ -96,11 +162,7 @@ impl ConfigManager {
     }
 
     /// Create a new folder in the tree.
-    pub async fn add_folder(
-        &self,
-        name: String,
-        parent_folder_id: Option<Uuid>,
-    ) -> Result<Uuid> {
+    pub async fn add_folder(&self, name: String, parent_folder_id: Option<Uuid>) -> Result<Uuid> {
         let folder_id = Uuid::new_v4();
         let folder = Folder {
             id: folder_id,
@@ -127,7 +189,10 @@ impl ConfigManager {
     }
 
     /// Remove a node (connection or folder) from the tree by its ID.
+    /// If removing a connection, also purges its secret from the OS keyring.
     pub async fn remove_node(&self, node_id: Uuid) -> Result<()> {
+        let key = format!("connection:{}", node_id);
+        let _ = self.secret_manager.delete_secret(&key);
         self.update_config(|config| {
             Self::remove_from_tree(&mut config.tree, node_id);
         })
@@ -138,15 +203,72 @@ impl ConfigManager {
     pub async fn get_connection(&self, id: Uuid) -> Result<Connection> {
         let config = self.config.read().await;
         Self::find_connection_in_tree(&config.tree, id)
-            .ok_or_else(|| {
-                RustiusError::ConnectionNotFound(id.to_string()).into()
-            })
+            .ok_or_else(|| RustiusError::ConnectionNotFound(id.to_string()).into())
+    }
+
+    /// Recursively secures all connections in a slice of tree nodes.
+    pub fn secure_tree_nodes(&self, nodes: &mut [TreeNode]) {
+        for node in nodes {
+            match node {
+                TreeNode::Connection(conn) => {
+                    self.secure_connection(conn);
+                }
+                TreeNode::Folder(folder) => {
+                    self.secure_tree_nodes(&mut folder.children);
+                }
+            }
+        }
+    }
+
+    /// Import a list of tree nodes (folders and connections), securing all credentials
+    /// in the OS keyring and appending them into the config tree.
+    pub async fn import_tree(
+        &self,
+        mut nodes: Vec<TreeNode>,
+        parent_folder_id: Option<Uuid>,
+    ) -> Result<crate::importer::ImportSummary> {
+        self.secure_tree_nodes(&mut nodes);
+        let summary = crate::importer::count_imported(&nodes);
+
+        self.update_config(|config| {
+            if let Some(parent_id) = parent_folder_id {
+                for node in nodes {
+                    if !Self::insert_into_folder(&mut config.tree, parent_id, node.clone()) {
+                        config.tree.push(node);
+                    }
+                }
+            } else {
+                config.tree.extend(nodes);
+            }
+        })
+        .await?;
+
+        Ok(summary)
     }
 
     // --- Private helper methods for tree traversal ---
 
+    /// Recursively update an existing connection in the tree if present.
+    fn update_in_tree(tree: &mut [TreeNode], connection: &Connection) -> bool {
+        for item in tree.iter_mut() {
+            match item {
+                TreeNode::Connection(c) if c.id == connection.id => {
+                    *c = connection.clone();
+                    return true;
+                }
+                TreeNode::Folder(f) => {
+                    if Self::update_in_tree(&mut f.children, connection) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// Recursively insert a node into the folder with the given ID.
-    fn insert_into_folder(tree: &mut Vec<TreeNode>, folder_id: Uuid, node: TreeNode) -> bool {
+    fn insert_into_folder(tree: &mut [TreeNode], folder_id: Uuid, node: TreeNode) -> bool {
         for item in tree.iter_mut() {
             if let TreeNode::Folder(ref mut folder) = item {
                 if folder.id == folder_id {
@@ -236,23 +358,27 @@ mod tests {
             ConnectionType::Ssh,
             "10.0.0.1".into(),
             22,
-            AuthMethod::Password {
-                username: "root".into(),
-                password: Some("toor".into()),
-            },
+            AuthMethod::password("root", Some("toor".into())),
         );
         let conn_id = conn.id;
 
-        manager.add_connection(conn, None).await.expect("Failed to add connection");
+        manager
+            .add_connection(conn, None)
+            .await
+            .expect("Failed to add connection");
 
         let config = manager.get_config().await;
         assert_eq!(config.tree.len(), 1);
 
         // Verify we can find it
-        let found = manager.get_connection(conn_id).await.expect("Connection not found");
+        let found = manager
+            .get_connection(conn_id)
+            .await
+            .expect("Connection not found");
         assert_eq!(found.name, "My Server");
 
         // Cleanup
+        manager.remove_node(conn_id).await.unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -274,10 +400,7 @@ mod tests {
             ConnectionType::Ssh,
             "10.0.0.2".into(),
             22,
-            AuthMethod::Password {
-                username: "deploy".into(),
-                password: Some("secret".into()),
-            },
+            AuthMethod::password("deploy", Some("secret".into())),
         );
         let conn_id = conn.id;
 
@@ -299,10 +422,14 @@ mod tests {
         }
 
         // Should still be findable by ID
-        let found = manager.get_connection(conn_id).await.expect("Connection not found");
+        let found = manager
+            .get_connection(conn_id)
+            .await
+            .expect("Connection not found");
         assert_eq!(found.name, "Web Server");
 
         // Cleanup
+        manager.remove_node(conn_id).await.unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -317,10 +444,7 @@ mod tests {
             ConnectionType::Ssh,
             "10.0.0.3".into(),
             22,
-            AuthMethod::Password {
-                username: "user".into(),
-                password: Some("pass".into()),
-            },
+            AuthMethod::password("user", Some("pass".into())),
         );
         let conn_id = conn.id;
 
@@ -331,6 +455,46 @@ mod tests {
         assert_eq!(manager.get_config().await.tree.len(), 0);
 
         // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_keyring_secret_resolution() {
+        let dir = test_config_dir();
+        let manager = ConfigManager::new(dir.clone(), Box::new(PlaintextStorage))
+            .expect("Failed to create ConfigManager");
+
+        let plain_pass = "top-secret-password-xyz";
+        let conn = Connection::new(
+            "Secure Server".into(),
+            ConnectionType::Ssh,
+            "10.0.0.9".into(),
+            22,
+            AuthMethod::password("admin", Some(plain_pass.into())),
+        );
+        let conn_id = conn.id;
+
+        // Adding connection should secure it (strip password from struct, set secret_ref)
+        manager.add_connection(conn, None).await.unwrap();
+
+        let stored = manager.get_connection(conn_id).await.unwrap();
+        if let AuthMethod::Password { password, secret_ref, .. } = &stored.auth {
+            assert_eq!(password, &None, "Password must not be stored in plaintext!");
+            assert!(secret_ref.is_some(), "Secret reference must be populated!");
+        } else {
+            panic!("Expected password auth");
+        }
+
+        // Resolving connection should rehydrate plaintext password from keyring
+        let resolved = manager.resolve_connection(&stored).unwrap();
+        if let AuthMethod::Password { password, .. } = &resolved.auth {
+            assert_eq!(password.as_deref(), Some(plain_pass));
+        } else {
+            panic!("Expected password auth");
+        }
+
+        // Cleanup
+        manager.remove_node(conn_id).await.unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

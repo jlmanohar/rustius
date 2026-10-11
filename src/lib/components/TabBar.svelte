@@ -53,6 +53,12 @@
 
         <span class="tab-label">{tab.title}</span>
 
+        {#if tab.status === 'connecting'}
+          <span class="tab-status-dot connecting" title="Connecting..."></span>
+        {:else if tab.status === 'error' || tab.status === 'disconnected'}
+          <span class="tab-status-dot disconnected" title={tab.status === 'error' ? 'Connection lost' : 'Disconnected'}></span>
+        {/if}
+
         {#if tab.badge}
           <span class="tab-mono-badge">{tab.badge}</span>
         {/if}
@@ -205,6 +211,34 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .tab-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .tab-status-dot.connecting {
+    background: #f5a623;
+    box-shadow: 0 0 6px rgba(245, 166, 35, 0.6);
+    animation: pulse-dot 1.2s ease-in-out infinite;
+  }
+
+  .tab-status-dot.disconnected {
+    background: #888888;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% {
+      opacity: 0.3;
+      transform: scale(0.85);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.15);
+    }
   }
 
   .tab-mono-badge {
