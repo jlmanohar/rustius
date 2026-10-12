@@ -192,6 +192,7 @@
 
   $effect(() => {
     const isTabActive = appState.activeTabId === session.id;
+    const _drawerOpen = appState.isNotesDrawerOpen;
     if (isConnected) {
       invoke('freerdp_set_visibility', { tabId: session.id, visible: isTabActive }).catch(() => {});
       if (isTabActive && isDocked) {
@@ -227,7 +228,7 @@
   });
 </script>
 
-<div class="rdp-shell" bind:this={containerRef}>
+<div class="rdp-shell" class:with-notes-drawer={appState.isNotesDrawerOpen} bind:this={containerRef}>
   <!-- Minimalist Geist Control Bar -->
   <div class="rdp-header">
     <div class="header-left">
@@ -357,6 +358,10 @@
     flex-direction: column;
     background: #000000;
     overflow: hidden;
+  }
+
+  .rdp-shell.with-notes-drawer {
+    width: calc(100% - 380px);
   }
 
   .rdp-header {
