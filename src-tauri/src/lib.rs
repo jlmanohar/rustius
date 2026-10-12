@@ -54,6 +54,20 @@ pub fn run() {
                 for session in sessions {
                     session.sync_screen_position();
                 }
+            } else if matches!(event, tauri::WindowEvent::Destroyed) {
+                let state = window.state::<AppState>();
+                let freerdp = state.freerdp_sessions.clone();
+                let pty = state.local_terminals.clone();
+                if let Ok(mut guard) = freerdp.try_write() {
+                    for (_, session) in guard.drain() {
+                        session.disconnect();
+                    }
+                };
+                if let Ok(mut guard) = pty.try_write() {
+                    for (_, session) in guard.drain() {
+                        session.close();
+                    }
+                };
             }
         })
         .manage(app_state)
