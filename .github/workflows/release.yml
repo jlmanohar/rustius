@@ -92,8 +92,38 @@ jobs:
             ## ${{ steps.vars.outputs.release_name }}
 
             See the release assets below to download the installer:
-            - **Windows**: `.msi` / `.exe` (NSIS)
+            - **Windows**: `.msi` / `.exe` (NSIS) / `.zip` (Portable)
             <!-- - **macOS**: `.dmg` / `.app` -->
             <!-- - **Linux**: `.deb` / `.AppImage` -->
           releaseDraft: ${{ steps.vars.outputs.draft == 'true' }}
           prerelease: ${{ steps.vars.outputs.prerelease == 'true' }}
+
+      - name: Package & Upload Windows Portable Zip
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PORTABLE_DIR="rustius-portable"
+          rm -rf "$PORTABLE_DIR"
+          mkdir -p "$PORTABLE_DIR/resources/binaries/freerdp"
+
+          # Copy standalone binary
+          if [ -f "target/release/rustius.exe" ]; then
+            cp "target/release/rustius.exe" "$PORTABLE_DIR/"
+          elif [ -f "src-tauri/target/release/rustius.exe" ]; then
+            cp "src-tauri/target/release/rustius.exe" "$PORTABLE_DIR/"
+          fi
+
+          # Include FreeRDP binary for hardware accelerated RDP support
+          cp "resources/binaries/freerdp/wfreerdp.exe" "$PORTABLE_DIR/resources/binaries/freerdp/"
+
+          # Marker file to activate portable data directory (isolated to ./data/)
+          touch "$PORTABLE_DIR/.portable"
+
+          VERSION=$(node -p "require('./package.json').version")
+          ZIP_NAME="rustius_${VERSION}_x64-portable.zip"
+          7z a "$ZIP_NAME" "./$PORTABLE_DIR/*"
+
+          gh release upload "${{ steps.vars.outputs.tag }}" "$ZIP_NAME" --clobber
+
