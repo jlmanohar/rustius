@@ -32,6 +32,96 @@
   const sessionDisposables = new DisposableStore();
   let sessionGeneration = 0;
 
+  function getFittedBounds() {
+    if (!viewportRef) return null;
+    const rect = viewportRef.getBoundingClientRect();
+    const scale = window.devicePixelRatio || 1;
+    const rdpCfg = appState.findConnection(session.connectionId)?.rdp_config;
+    const resMode = rdpCfg?.resolution_mode || 'auto';
+
+    let desktopW: number;
+    let desktopH: number;
+
+    if (resMode === 'auto') {
+      // Auto (Fit Window): negotiate at docked viewport size -> larger comfortable UI (classic c6987d1 behavior)
+      desktopW = Math.round(Math.max(rect.width * scale, 800));
+      desktopH = Math.round(Math.max(rect.height * scale, 600));
+    } else if (resMode === 'native') {
+      // Native monitor resolution
+      desktopW = Math.round((window.screen?.width || 1920) * scale);
+      desktopH = Math.round((window.screen?.height || 1080) * scale);
+    } else if (resMode === '1080p') {
+      desktopW = 1920;
+      desktopH = 1080;
+    } else if (resMode === '720p') {
+      desktopW = 1280;
+      desktopH = 720;
+    } else if (resMode === 'custom') {
+      desktopW = rdpCfg?.width || 1920;
+      desktopH = rdpCfg?.height || 1080;
+    } else {
+      desktopW = Math.round(Math.max(rect.width * scale, 800));
+      desktopH = Math.round(Math.max(rect.height * scale, 600));
+    }
+
+    // Determine remote desktop DPI scaling factor
+    let desktopScale: number | undefined;
+    const cfgScale = rdpCfg?.scale_factor ?? 0;
+    if (cfgScale > 0) {
+      desktopScale = cfgScale;
+    } else {
+      // Auto: if high-res (native or >= 1440p), auto-scale using display DPI; otherwise standard 100%
+      if (resMode === 'native' || desktopW >= 2560 || desktopH >= 1440) {
+        desktopScale = Math.min(Math.max(Math.round(scale * 100), 100), 250);
+      } else {
+        desktopScale = 100;
+      }
+    }
+
+    const aspect = (desktopW > 0 && desktopH > 0) ? (desktopW / desktopH) : (16 / 9);
+
+    let renderW = rect.width;
+    let renderH = rect.height;
+    let offX = 0;
+    let offY = 0;
+
+    if (renderW > 0 && renderH > 0) {
+      if (renderW / renderH > aspect) {
+        const fittedW = renderH * aspect;
+        offX = (renderW - fittedW) / 2;
+        renderW = fittedW;
+      } else {
+        const fittedH = renderW / aspect;
+        offY = (renderH - fittedH) / 2;
+        renderH = fittedH;
+      }
+    }
+
+    return {
+      x: Math.round((rect.left + offX) * scale),
+      y: Math.round((rect.top + offY) * scale),
+      width: Math.round(Math.max(renderW * scale, 100)),
+      height: Math.round(Math.max(renderH * scale, 100)),
+      desktopWidth: desktopW,
+      desktopHeight: desktopH,
+      scaleDesktop: desktopScale,
+    };
+  }
+
+  function syncBounds() {
+    if (!viewportRef || isDisconnected || !isDocked) return;
+    if (appState.activeTabId !== session.id) return;
+    const bounds = getFittedBounds();
+    if (!bounds) return;
+    invoke('freerdp_update_bounds', {
+      tabId: session.id,
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+    }).catch(() => {});
+  }
+
   async function startSession() {
     if (componentDisposables.isDisposed) return;
     const currentGen = ++sessionGeneration;
@@ -62,16 +152,16 @@
     }
 
     try {
-      // 1. Calculate physical viewport coordinates on the desktop
-      let x = 0, y = 0, width = 1280, height = 800;
-      const dpr = window.devicePixelRatio || 1;
-      if (viewportRef) {
-        const rect = viewportRef.getBoundingClientRect();
-        x = Math.round(rect.left * dpr);
-        y = Math.round(rect.top * dpr);
-        width = Math.round(Math.max(rect.width * dpr, 200));
-        height = Math.round(Math.max(rect.height * dpr, 200));
-      }
+      // 1. Calculate physical desktop size and fitted viewport coordinates
+      const bounds = getFittedBounds() || {
+        x: 0,
+        y: 0,
+        width: 1280,
+        height: 720,
+        desktopWidth: 1920,
+        desktopHeight: 1080,
+        scaleDesktop: 100,
+      };
 
       // 2. Listen for session exit event
       const unlistenExit = await listen<number>(`rdp-exit-${session.id}`, (event) => {
@@ -95,10 +185,13 @@
       await invoke('freerdp_connect', {
         tabId: session.id,
         connectionId: session.connectionId,
-        x,
-        y,
-        width,
-        height,
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+        desktopWidth: bounds.desktopWidth,
+        desktopHeight: bounds.desktopHeight,
+        scaleDesktop: bounds.scaleDesktop,
       });
 
       if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
@@ -112,20 +205,6 @@
       session.status = 'connected';
 
       // 4. Setup viewport bounds sync on container resize or window resize
-      const syncBounds = () => {
-        if (!viewportRef || isDisconnected || !isDocked) return;
-        if (appState.activeTabId !== session.id) return;
-        const rect = viewportRef.getBoundingClientRect();
-        const scale = window.devicePixelRatio || 1;
-        invoke('freerdp_update_bounds', {
-          tabId: session.id,
-          x: Math.round(rect.left * scale),
-          y: Math.round(rect.top * scale),
-          width: Math.round(Math.max(rect.width * scale, 100)),
-          height: Math.round(Math.max(rect.height * scale, 100)),
-        }).catch(() => {});
-      };
-
       if (window.ResizeObserver && viewportRef) {
         const ro = new ResizeObserver(() => {
           syncBounds();
@@ -197,16 +276,7 @@
       invoke('freerdp_set_visibility', { tabId: session.id, visible: isTabActive }).catch(() => {});
       if (isTabActive && isDocked) {
         requestAnimationFrame(() => {
-          if (!viewportRef) return;
-          const rect = viewportRef.getBoundingClientRect();
-          const scale = window.devicePixelRatio || 1;
-          invoke('freerdp_update_bounds', {
-            tabId: session.id,
-            x: Math.round(rect.left * scale),
-            y: Math.round(rect.top * scale),
-            width: Math.round(Math.max(rect.width * scale, 100)),
-            height: Math.round(Math.max(rect.height * scale, 100)),
-          }).catch(() => {});
+          syncBounds();
         });
       }
     }

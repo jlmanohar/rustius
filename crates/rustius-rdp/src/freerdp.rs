@@ -48,6 +48,12 @@ pub struct FreeRdpConfig {
     pub y: i32,
     pub width: i32,
     pub height: i32,
+    #[serde(default)]
+    pub desktop_width: Option<u32>,
+    #[serde(default)]
+    pub desktop_height: Option<u32>,
+    #[serde(default)]
+    pub scale_desktop: Option<u32>,
 }
 
 /// Active FreeRDP session managing the child container window and worker process.
@@ -313,11 +319,17 @@ impl FreeRdpSession {
         }
 
         // Size & Smart-Sizing: scale remote desktop dynamically to window size
-        if config.width > 0 && config.height > 0 {
-            cmd.arg(format!("/size:{}x{}", config.width.max(100), config.height.max(100)));
-        }
+        let session_w = config.desktop_width.unwrap_or(config.width.max(100) as u32).max(100);
+        let session_h = config.desktop_height.unwrap_or(config.height.max(100) as u32).max(100);
+        cmd.arg(format!("/size:{}x{}", session_w, session_h));
 
         // Performance, Scaling, and Hardware Acceleration Flags
+        if let Some(scale) = config.scale_desktop {
+            if scale >= 100 && scale <= 500 {
+                cmd.arg(format!("/scale-desktop:{}", scale));
+            }
+        }
+
         cmd.arg("/smart-sizing")
             .arg("-toggle-fullscreen")
             .arg("/cert:ignore")

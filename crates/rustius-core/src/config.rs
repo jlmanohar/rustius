@@ -107,12 +107,8 @@ impl ConfigManager {
                                 }
                             } else {
                                 resolved.rdp_config = Some(crate::connection::RdpConfig {
-                                    width: 1280,
-                                    height: 800,
-                                    color_depth: 24,
-                                    fullscreen: false,
-                                    clipboard_sharing: true,
                                     domain: Some(prof_dom.clone()),
+                                    ..Default::default()
                                 });
                             }
                         }

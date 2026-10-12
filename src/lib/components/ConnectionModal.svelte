@@ -84,8 +84,12 @@
         rdpHeight = c.rdp_config.height;
         clipboardSharing = c.rdp_config.clipboard_sharing;
         domain = c.rdp_config.domain || '';
+        rdpResolutionMode = (c.rdp_config.resolution_mode as any) || 'auto';
+        rdpScaleFactor = c.rdp_config.scale_factor ?? 0;
       } else {
         domain = '';
+        rdpResolutionMode = 'auto';
+        rdpScaleFactor = 0;
       }
       if (connType === 'rdp' && !domain && username.includes('\\')) {
         const parts = username.split('\\');
@@ -101,6 +105,8 @@
       description = '';
       notes = '';
       notesTab = 'write';
+      rdpResolutionMode = 'auto';
+      rdpScaleFactor = 0;
     }
   });
 
@@ -110,6 +116,8 @@
   let keepalive = $state(30);
 
   // RDP options
+  let rdpResolutionMode = $state<'auto' | 'native' | '1080p' | '720p' | 'custom'>('auto');
+  let rdpScaleFactor = $state<number>(0);
   let rdpWidth = $state(1920);
   let rdpHeight = $state(1080);
   let clipboardSharing = $state(true);
@@ -304,6 +312,8 @@
               fullscreen: false,
               clipboard_sharing: clipboardSharing,
               domain: finalDomain || undefined,
+              resolution_mode: rdpResolutionMode,
+              scale_factor: rdpScaleFactor > 0 ? rdpScaleFactor : undefined,
             }
           : undefined,
     };
@@ -636,18 +646,44 @@
         </div>
       {:else if connType === 'rdp'}
         <div class="form-grid">
-          <div class="form-cell col-1">
-            <label for="rdp-w">Resolution Width</label>
-            <input id="rdp-w" type="number" bind:value={rdpWidth} class="input-field" />
+          <div class="form-cell col-2">
+            <label for="rdp-resolution-mode">Display Resolution</label>
+            <select id="rdp-resolution-mode" bind:value={rdpResolutionMode} class="input-field">
+              <option value="auto">Auto (Fit Window · Larger UI)</option>
+              <option value="native">Native Monitor (1440p / 4K / High Res)</option>
+              <option value="1080p">1080p (Full HD · 1920×1080)</option>
+              <option value="720p">720p (HD · 1280×720)</option>
+              <option value="custom">Custom (Width × Height)</option>
+            </select>
           </div>
+
           <div class="form-cell col-1">
-            <label for="rdp-h">Resolution Height</label>
-            <input id="rdp-h" type="number" bind:value={rdpHeight} class="input-field" />
+            <label for="rdp-scale">Desktop Scaling (DPI)</label>
+            <select id="rdp-scale" bind:value={rdpScaleFactor} class="input-field">
+              <option value={0}>Auto (Recommended)</option>
+              <option value={100}>100% (Standard)</option>
+              <option value={125}>125%</option>
+              <option value={150}>150% (Recommended for 1440p)</option>
+              <option value={175}>175%</option>
+              <option value={200}>200% (Recommended for 4K)</option>
+            </select>
           </div>
+
+          {#if rdpResolutionMode === 'custom'}
+            <div class="form-cell col-1">
+              <label for="rdp-w">Custom Width</label>
+              <input id="rdp-w" type="number" bind:value={rdpWidth} class="input-field" />
+            </div>
+            <div class="form-cell col-1">
+              <label for="rdp-h">Custom Height</label>
+              <input id="rdp-h" type="number" bind:value={rdpHeight} class="input-field" />
+            </div>
+          {/if}
+
           <div class="form-cell col-1">
             <label class="check-row" style="margin-top: 24px;">
               <input type="checkbox" bind:checked={clipboardSharing} />
-              <span class="check-title">Clipboard</span>
+              <span class="check-title">Clipboard Sharing</span>
             </label>
           </div>
         </div>

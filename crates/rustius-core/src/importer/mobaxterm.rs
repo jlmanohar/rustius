@@ -302,12 +302,8 @@ fn parse_session_entry(
 
     let rdp_config = if conn_type == ConnectionType::Rdp {
         Some(RdpConfig {
-            width: 1280,
-            height: 800,
-            color_depth: 24,
-            fullscreen: false,
-            clipboard_sharing: true,
             domain,
+            ..Default::default()
         })
     } else {
         None

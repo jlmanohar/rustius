@@ -296,6 +296,27 @@ pub struct RdpConfig {
     /// Optional Windows domain for authentication.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    /// Resolution mode: "auto" (fit window), "native", "1080p", "720p", "custom"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution_mode: Option<String>,
+    /// Remote desktop DPI scale percentage: 100, 125, 150, 175, 200, or 0 (auto)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_factor: Option<u32>,
+}
+
+impl Default for RdpConfig {
+    fn default() -> Self {
+        Self {
+            width: default_rdp_width(),
+            height: default_rdp_height(),
+            color_depth: default_rdp_color_depth(),
+            fullscreen: false,
+            clipboard_sharing: true,
+            domain: None,
+            resolution_mode: None,
+            scale_factor: None,
+        }
+    }
 }
 
 fn default_true() -> bool {

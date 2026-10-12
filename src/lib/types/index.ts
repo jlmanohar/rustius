@@ -46,6 +46,8 @@ export interface RdpConfig {
   fullscreen: boolean;
   clipboard_sharing: boolean;
   domain?: string;
+  resolution_mode?: 'auto' | 'native' | '1080p' | '720p' | 'custom';
+  scale_factor?: number;
 }
 
 export interface CredentialProfile {

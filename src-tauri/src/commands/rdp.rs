@@ -19,6 +19,9 @@ pub async fn freerdp_connect(
     y: i32,
     width: i32,
     height: i32,
+    desktop_width: Option<u32>,
+    desktop_height: Option<u32>,
+    scale_desktop: Option<u32>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     info!(
@@ -94,6 +97,11 @@ pub async fn freerdp_connect(
         y,
         width,
         height,
+        desktop_width,
+        desktop_height,
+        scale_desktop: scale_desktop
+            .filter(|&s| s >= 100)
+            .or_else(|| conn.rdp_config.as_ref().and_then(|r| r.scale_factor).filter(|&s| s >= 100)),
     };
 
     let session = FreeRdpSession::connect(config)
