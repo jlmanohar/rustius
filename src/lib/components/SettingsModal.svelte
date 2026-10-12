@@ -167,6 +167,7 @@
   .modal-card {
     width: 440px;
     max-width: 90vw;
+    max-height: min(88vh, calc(100vh - 40px));
     background: #000000;
     border: 1px solid #262626;
     border-radius: 8px;
@@ -189,6 +190,7 @@
   }
 
   .modal-top {
+    flex-shrink: 0;
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
@@ -236,10 +238,13 @@
   }
 
   .modal-body {
-    padding: 20px;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: clamp(12px, 2vh, 20px);
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: clamp(10px, 1.8vh, 18px);
   }
 
   .setting-row {

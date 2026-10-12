@@ -282,9 +282,8 @@
     width: 100%;
     height: 100%;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 32px;
+    flex-direction: column;
+    padding: clamp(12px, 2.5vh, 32px);
     position: relative;
     overflow-y: auto;
   }
@@ -295,8 +294,8 @@
     top: 5%;
     left: 50%;
     transform: translateX(-50%);
-    width: 600px;
-    height: 220px;
+    width: min(600px, 80vw);
+    height: clamp(120px, 20vh, 220px);
     background: radial-gradient(ellipse at center, rgba(0, 124, 240, 0.12) 0%, rgba(121, 40, 202, 0.12) 40%, rgba(255, 0, 128, 0.08) 70%, transparent 100%);
     filter: blur(50px);
     pointer-events: none;
@@ -304,68 +303,74 @@
   }
 
   .hero-content {
-    max-width: 760px;
+    margin: auto;
+    max-width: 740px;
     width: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;
     text-align: center;
     z-index: 1;
-    gap: 16px;
+    gap: clamp(8px, 1.8vh, 16px);
   }
 
   .hero-logo {
-    width: 84px;
-    height: 84px;
+    height: clamp(38px, 6.5vh, 80px);
+    width: auto;
     object-fit: contain;
-    margin-bottom: 4px;
+    margin-bottom: clamp(0px, 0.5vh, 4px);
     filter: drop-shadow(0 6px 20px rgba(240, 67, 36, 0.2));
   }
 
+  .mono-eyebrow {
+    font-size: clamp(9.5px, 1.2vh, 11px);
+    letter-spacing: 0.08em;
+  }
+
   .hero-heading {
-    margin: 4px 0 0 0;
-    font-size: 40px;
+    margin: 0;
+    font-size: clamp(22px, 3.8vh, 40px);
     font-weight: 600;
-    line-height: 1.1;
-    letter-spacing: -2px;
+    line-height: 1.15;
+    letter-spacing: clamp(-1.8px, -0.2vw, -0.8px);
     color: var(--ink);
   }
 
   .hero-body {
     margin: 0;
-    font-size: 15px;
+    font-size: clamp(12px, 1.5vh, 15px);
     color: var(--body);
     max-width: 480px;
-    line-height: 1.5;
+    line-height: 1.45;
   }
 
   .hero-actions {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-top: 10px;
-    margin-bottom: 24px;
+    gap: clamp(6px, 1vw, 10px);
+    margin-top: clamp(2px, 0.8vh, 8px);
+    margin-bottom: clamp(6px, 1.8vh, 20px);
   }
 
   .cards-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
+    gap: clamp(6px, 1.2vh, 12px);
     width: 100%;
-    margin-bottom: 20px;
+    margin-bottom: clamp(6px, 1.5vh, 16px);
   }
 
   .feature-card {
     background: var(--canvas-subtle);
     border: 1px solid var(--hairline);
     border-radius: var(--radius-md);
-    padding: 20px;
+    padding: clamp(8px, 1.5vh, 18px);
     text-align: left;
     cursor: pointer;
     transition: background 0.12s ease, border-color 0.12s ease;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: clamp(2px, 0.5vh, 6px);
   }
 
   .feature-card:hover {
@@ -378,18 +383,18 @@
     align-items: center;
     justify-content: space-between;
     color: var(--body);
-    margin-bottom: 4px;
+    margin-bottom: clamp(2px, 0.4vh, 4px);
   }
 
   .card-type {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: clamp(9.5px, 1.1vh, 11px);
     color: var(--mute);
   }
 
   .card-title {
     margin: 0;
-    font-size: 14px;
+    font-size: clamp(12px, 1.4vh, 14px);
     font-weight: 500;
     letter-spacing: -0.2px;
     color: var(--ink);
@@ -397,27 +402,27 @@
 
   .card-desc {
     margin: 0;
-    font-size: 12px;
+    font-size: clamp(10.5px, 1.2vh, 12px);
     color: var(--body);
-    line-height: 1.4;
+    line-height: 1.35;
   }
 
   .specs-bar {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: 16px;
+    gap: clamp(8px, 1.6vw, 16px);
     border-top: 1px solid var(--hairline-soft);
-    padding-top: 16px;
+    padding-top: clamp(8px, 1.4vh, 14px);
     width: 100%;
   }
 
   .spec-node {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: clamp(4px, 0.6vw, 6px);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: clamp(9.5px, 1.1vh, 11px);
     color: var(--mute);
   }
 </style>

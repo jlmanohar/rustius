@@ -465,7 +465,7 @@
   .modal-card {
     width: 580px;
     max-width: 95vw;
-    max-height: 85vh;
+    max-height: min(88vh, calc(100vh - 40px));
     background: #000000;
     border: 1px solid var(--hairline);
     border-radius: var(--radius-md);
@@ -476,6 +476,7 @@
   }
 
   .modal-top {
+    flex-shrink: 0;
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
@@ -523,6 +524,7 @@
   }
 
   .list-controls {
+    flex-shrink: 0;
     display: flex;
     gap: 10px;
     padding: 14px 20px 8px 20px;
@@ -559,12 +561,13 @@
   }
 
   .profiles-list {
+    flex: 1;
+    min-height: 0;
     padding: 10px 20px 16px 20px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 8px;
-    max-height: 440px;
   }
 
   .empty-state {

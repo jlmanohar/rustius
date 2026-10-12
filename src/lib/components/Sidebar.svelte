@@ -333,7 +333,7 @@
 
 <style>
   .sidebar {
-    width: 270px;
+    width: clamp(230px, 18vw, 270px);
     height: 100%;
     background: var(--canvas);
     border-right: 1px solid var(--hairline);

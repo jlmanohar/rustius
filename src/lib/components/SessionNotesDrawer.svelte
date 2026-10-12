@@ -161,7 +161,7 @@
     top: 0;
     right: 0;
     bottom: 0;
-    width: 380px;
+    width: clamp(280px, 26vw, 380px);
     max-width: 90vw;
     background: var(--canvas-elevated);
     border-left: 1px solid var(--hairline);

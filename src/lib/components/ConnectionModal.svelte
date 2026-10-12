@@ -811,7 +811,7 @@
   .modal-card {
     width: 540px;
     max-width: 95vw;
-    max-height: 90vh;
+    max-height: min(88vh, calc(100vh - 40px));
     background: #000000;
     border: 1px solid var(--hairline);
     border-radius: var(--radius-md);
@@ -822,10 +822,11 @@
   }
 
   .modal-top {
+    flex-shrink: 0;
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    padding: 18px 20px 14px 20px;
+    padding: clamp(12px, 1.8vh, 18px) 20px clamp(10px, 1.4vh, 14px) 20px;
     border-bottom: 1px solid var(--hairline);
   }
 
@@ -844,6 +845,7 @@
   }
 
   .proto-segment {
+    flex-shrink: 0;
     display: flex;
     padding: 8px 20px;
     gap: 4px;
@@ -880,11 +882,13 @@
   }
 
   .modal-scroll-body {
-    padding: 20px;
+    flex: 1;
+    min-height: 0;
+    padding: clamp(12px, 2vh, 20px);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: clamp(8px, 1.4vh, 12px);
   }
 
   .form-grid {
@@ -1257,11 +1261,12 @@
   }
 
   .modal-bottom {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: flex-end;
     gap: 8px;
-    padding: 14px 20px;
+    padding: clamp(10px, 1.4vh, 14px) 20px;
     border-top: 1px solid var(--hairline);
     background: var(--canvas-subtle);
   }

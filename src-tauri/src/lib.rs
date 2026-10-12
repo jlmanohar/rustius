@@ -40,6 +40,26 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                if let Ok(Some(monitor)) = window.current_monitor() {
+                    let size = monitor.size();
+                    let scale = monitor.scale_factor();
+                    if scale > 0.0 {
+                        let logical_w = size.width as f64 / scale;
+                        let logical_h = size.height as f64 / scale;
+
+                        // Dynamically scale window to ~88% width and ~85% height of the user's active display
+                        let target_w = (logical_w * 0.88).clamp(840.0, 1600.0);
+                        let target_h = (logical_h * 0.85).clamp(500.0, 1000.0);
+
+                        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(target_w, target_h)));
+                        let _ = window.center();
+                    }
+                }
+            }
+            Ok(())
+        })
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
                 let _ = window.emit("window-moved", ());
