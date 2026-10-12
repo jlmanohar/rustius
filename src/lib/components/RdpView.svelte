@@ -392,20 +392,23 @@
     width: 6px;
     height: 6px;
     border-radius: var(--radius-full);
+    flex-shrink: 0;
   }
 
   .status-indicator.online {
     background: var(--accent-green);
-    box-shadow: 0 0 6px rgba(80, 227, 194, 0.4);
+    box-shadow: none;
   }
 
   .status-indicator.connecting {
     background: var(--accent-amber);
+    box-shadow: none;
     animation: pulse 1.2s infinite ease-in-out;
   }
 
   .status-indicator.offline {
-    background: var(--accent-red);
+    background: var(--faint);
+    box-shadow: none;
   }
 
   @keyframes pulse {
@@ -537,19 +540,37 @@
   .acceleration-pill {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
     font-size: 10px;
     font-family: var(--font-mono);
     padding: 2px 7px;
-    border-radius: var(--radius-full);
-    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--hairline);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--body);
     user-select: none;
+    transition: all 0.12s ease;
+  }
+
+  .acceleration-pill :global(svg) {
+    color: var(--mute);
+    transition: color 0.12s ease;
   }
 
   .acceleration-pill.native {
-    background: rgba(0, 223, 216, 0.12);
-    border-color: rgba(0, 223, 216, 0.35);
-    color: #00dfd8;
+    background: rgba(255, 255, 255, 0.03);
+    border-color: var(--hairline);
+    color: var(--body);
+  }
+
+  .acceleration-pill.native:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--hairline-hover);
+    color: var(--ink-secondary);
+  }
+
+  .acceleration-pill.native:hover :global(svg) {
+    color: var(--ink-secondary);
   }
 
   .detached-badge {
