@@ -49,18 +49,25 @@
     }
   }
 
-  function handleContentClick(e: MouseEvent) {
-    const target = e.target as HTMLElement;
-    // Quick copy on clicking pre/code blocks
-    const pre = target.closest('pre');
-    if (pre && pre.textContent) {
-      navigator.clipboard.writeText(pre.textContent.trim());
-      const originalBg = pre.style.borderColor;
-      pre.style.borderColor = 'var(--accent)';
-      setTimeout(() => {
-        pre.style.borderColor = originalBg;
-      }, 800);
-    }
+  function copyOnCodeClick(node: HTMLElement) {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const pre = target.closest('pre');
+      if (pre && pre.textContent) {
+        navigator.clipboard.writeText(pre.textContent.trim());
+        const originalBg = pre.style.borderColor;
+        pre.style.borderColor = 'var(--accent)';
+        setTimeout(() => {
+          pre.style.borderColor = originalBg;
+        }, 800);
+      }
+    };
+    node.addEventListener('click', handler);
+    return {
+      destroy() {
+        node.removeEventListener('click', handler);
+      }
+    };
   }
 </script>
 
@@ -119,8 +126,7 @@
   </div>
 
   <!-- Drawer Body -->
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="drawer-body" onclick={handleContentClick}>
+  <div class="drawer-body" use:copyOnCodeClick>
     {#if activeConn && activeConn.notes && activeConn.notes.trim()}
       <div class="markdown-body">
         {@html renderedHtml}

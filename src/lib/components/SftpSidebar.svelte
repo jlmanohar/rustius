@@ -527,15 +527,17 @@
         <span>{searchQuery ? 'No matching files' : 'Directory is empty'}</span>
       </div>
     {:else}
-      <div class="file-table" role="list">
+      <div class="file-table" role="listbox" aria-label="Remote file list">
         {#each filteredFiles as file (file.path)}
           {@const IconComponent = getFileIcon(file)}
-          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
           <div
             class="file-row {selectedFile?.path === file.path ? 'selected' : ''}"
             onclick={() => handleItemClick(file)}
             ondblclick={() => handleItemDblClick(file)}
-            role="listitem"
+            onkeydown={(e) => { if (e.key === 'Enter') handleItemDblClick(file); }}
+            role="option"
+            aria-selected={selectedFile?.path === file.path}
+            tabindex="0"
           >
             <div class="col-main">
               <IconComponent size={15} class="row-icon {file.is_dir ? 'dir-icon' : 'file-icon'}" />
@@ -617,9 +619,15 @@
 
   <!-- Modals -->
   {#if activeModal}
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
-    <div class="modal-backdrop" onclick={closeModal} role="dialog" aria-modal="true">
-      <div class="modal-card" onclick={(e) => e.stopPropagation()} role="document">
+    <div
+      class="modal-backdrop"
+      onclick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
+      onkeydown={(e) => { if (e.key === 'Escape') closeModal(); }}
+      role="dialog"
+      aria-modal="true"
+      tabindex="-1"
+    >
+      <div class="modal-card">
         <div class="modal-header">
           <span class="modal-title">
             {#if activeModal === 'new_folder'}Create Remote Folder
