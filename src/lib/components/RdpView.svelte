@@ -114,6 +114,11 @@
       // 4. Setup viewport bounds sync on container resize or window resize
       const syncBounds = () => {
         if (!viewportRef || isDisconnected || !isDocked) return;
+        const isTabActive = appState.activeTabId === session.id;
+        if (!isTabActive) {
+          invoke('freerdp_set_visibility', { tabId: session.id, visible: false }).catch(() => {});
+          return;
+        }
         const rect = viewportRef.getBoundingClientRect();
         const scale = window.devicePixelRatio || 1;
         invoke('freerdp_update_bounds', {
@@ -133,6 +138,21 @@
         sessionDisposables.add(() => ro.disconnect());
       }
       sessionDisposables.trackEventListener(window, 'resize', syncBounds);
+
+      // Re-enforce visibility when window regains focus or restores from taskbar / system tray
+      sessionDisposables.trackEventListener(window, 'focus', () => {
+        const isTabActive = appState.activeTabId === session.id;
+        invoke('freerdp_set_visibility', { tabId: session.id, visible: isTabActive }).catch(() => {});
+        if (isTabActive) syncBounds();
+      });
+
+      sessionDisposables.trackEventListener(document, 'visibilitychange', () => {
+        if (!document.hidden) {
+          const isTabActive = appState.activeTabId === session.id;
+          invoke('freerdp_set_visibility', { tabId: session.id, visible: isTabActive }).catch(() => {});
+          if (isTabActive) syncBounds();
+        }
+      });
 
       const unlistenMove = await listen('window-moved', () => syncBounds());
       sessionDisposables.add(unlistenMove);

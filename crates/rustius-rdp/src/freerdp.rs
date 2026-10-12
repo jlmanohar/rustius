@@ -60,6 +60,7 @@ pub struct FreeRdpSession {
     last_bounds: Arc<parking_lot::Mutex<(i32, i32, i32, i32)>>,
     is_connected: Arc<AtomicBool>,
     is_docked: Arc<AtomicBool>,
+    pub is_visible: Arc<AtomicBool>,
     child_process: parking_lot::Mutex<Option<Child>>,
 }
 
@@ -346,6 +347,7 @@ impl FreeRdpSession {
         let last_bounds = Arc::new(parking_lot::Mutex::new((config.x, config.y, config.width, config.height)));
         let is_connected = Arc::new(AtomicBool::new(true));
         let is_docked = Arc::new(AtomicBool::new(true));
+        let is_visible = Arc::new(AtomicBool::new(true));
 
         #[cfg(windows)]
         {
@@ -353,6 +355,7 @@ impl FreeRdpSession {
             let bounds_clone = last_bounds.clone();
             let is_conn_clone = is_connected.clone();
             let is_docked_clone = is_docked.clone();
+            let is_visible_clone = is_visible.clone();
             let parent_hwnd = config.parent_window;
 
             // Continuous monitor loop: discovers FreeRDP HWND and enforces boundary containment
@@ -374,6 +377,14 @@ impl FreeRdpSession {
                     }
 
                     if current_hwnd != 0 && parent_hwnd != 0 {
+                        let visible = is_visible_clone.load(Ordering::SeqCst);
+                        if !visible {
+                            unsafe {
+                                ShowWindow(current_hwnd as HWND, SW_HIDE);
+                            }
+                            continue;
+                        }
+
                         let docked = is_docked_clone.load(Ordering::SeqCst);
                         if docked {
                             let (x, y, w, h) = *bounds_clone.lock();
@@ -425,6 +436,7 @@ impl FreeRdpSession {
             last_bounds,
             is_connected,
             is_docked,
+            is_visible,
             child_process: parking_lot::Mutex::new(Some(child)),
         })
     }
@@ -455,6 +467,16 @@ impl FreeRdpSession {
 
     /// Synchronize the FreeRDP window position on the monitor using saved bounds.
     pub fn sync_screen_position(&self) {
+        #[cfg(windows)]
+        {
+            let hwnd = *self.child_hwnd.lock();
+            if hwnd != 0 && !self.is_visible.load(Ordering::SeqCst) {
+                unsafe {
+                    ShowWindow(hwnd as HWND, SW_HIDE);
+                }
+                return;
+            }
+        }
         let (x, y, w, h) = *self.last_bounds.lock();
         let _ = self.update_bounds(x, y, w, h);
     }
@@ -473,17 +495,26 @@ impl FreeRdpSession {
                     log_freerdp(&format!("update_bounds discovered FreeRDP HWND: 0x{:X}", hwnd));
                 }
             }
-            if hwnd != 0 && self.parent_hwnd != 0 && self.is_docked.load(Ordering::SeqCst) {
-                unsafe {
-                    apply_window_docking(
-                        self.parent_hwnd as HWND,
-                        hwnd as HWND,
-                        x,
-                        y,
-                        width,
-                        height,
-                        true,
-                    );
+            if hwnd != 0 && self.parent_hwnd != 0 {
+                if !self.is_visible.load(Ordering::SeqCst) {
+                    unsafe {
+                        ShowWindow(hwnd as HWND, SW_HIDE);
+                    }
+                    return Ok(());
+                }
+
+                if self.is_docked.load(Ordering::SeqCst) {
+                    unsafe {
+                        apply_window_docking(
+                            self.parent_hwnd as HWND,
+                            hwnd as HWND,
+                            x,
+                            y,
+                            width,
+                            height,
+                            true,
+                        );
+                    }
                 }
             }
         }
@@ -492,6 +523,7 @@ impl FreeRdpSession {
 
     /// Show or hide the native embedded window when switching tabs.
     pub fn set_visibility(&self, visible: bool) -> Result<()> {
+        self.is_visible.store(visible, Ordering::SeqCst);
         #[cfg(windows)]
         {
             let hwnd = *self.child_hwnd.lock();
