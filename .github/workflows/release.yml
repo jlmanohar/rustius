@@ -10,7 +10,7 @@ on:
         description: 'Create as a draft release'
         required: false
         type: boolean
-        default: true
+        default: false
 
 jobs:
   release:
@@ -19,7 +19,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [windows-latest, macos-latest, ubuntu-22.04]
+        platform: [windows-latest]
+        # Linux and macOS builds temporarily disabled:
+        # platform: [windows-latest, macos-latest, ubuntu-22.04]
 
     runs-on: ${{ matrix.platform }}
 
@@ -52,24 +54,46 @@ jobs:
             libxdo-dev \
             libssl-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            patchelf \
+            xdg-utils
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Compute Tag & Release Info
+        id: vars
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            SAFE_REF=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9._-]/-/g')
+            TAG="v${VERSION}-${SAFE_REF}.${SHORT_SHA}"
+            echo "tag=${TAG}" >> $GITHUB_OUTPUT
+            echo "release_name=Rustius ${TAG}" >> $GITHUB_OUTPUT
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+            echo "draft=${{ github.event.inputs.draft }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "release_name=Rustius ${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+            echo "draft=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Build Tauri app & create GitHub Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Rustius ${{ github.ref_name }}'
+          tagName: ${{ steps.vars.outputs.tag }}
+          releaseName: ${{ steps.vars.outputs.release_name }}
           releaseBody: |
-            ## Rustius Desktop Release ${{ github.ref_name }}
+            ## ${{ steps.vars.outputs.release_name }}
 
-            See the release assets below to download the installer for your operating system:
+            See the release assets below to download the installer:
             - **Windows**: `.msi` / `.exe` (NSIS)
-            - **macOS**: `.dmg` / `.app`
-            - **Linux**: `.deb` / `.AppImage`
-          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft || true }}
-          prerelease: false
+            <!-- - **macOS**: `.dmg` / `.app` -->
+            <!-- - **Linux**: `.deb` / `.AppImage` -->
+          releaseDraft: ${{ steps.vars.outputs.draft == 'true' }}
+          prerelease: ${{ steps.vars.outputs.prerelease == 'true' }}
