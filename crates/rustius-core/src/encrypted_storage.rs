@@ -110,13 +110,30 @@ impl ConfigStorage for EncryptedStorage {
             std::fs::create_dir_all(parent)?;
         }
         let encrypted_bytes = self.encrypt(content)?;
-        std::fs::write(path, encrypted_bytes)
-            .with_context(|| format!("Failed to write encrypted file: {}", path.display()))?;
+        let tmp_path = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+        std::fs::write(&tmp_path, encrypted_bytes)
+            .with_context(|| format!("Failed to write encrypted file: {}", tmp_path.display()))?;
+
+        #[cfg(windows)]
+        {
+            if path.exists() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        std::fs::rename(&tmp_path, path)
+            .with_context(|| format!("Failed to atomically rename encrypted file: {}", path.display()))?;
         Ok(())
     }
 
     fn exists(&self, path: &Path) -> bool {
         path.exists()
+    }
+
+    fn delete(&self, path: &Path) -> Result<()> {
+        if path.exists() {
+            std::fs::remove_file(path)?;
+        }
+        Ok(())
     }
 }
 

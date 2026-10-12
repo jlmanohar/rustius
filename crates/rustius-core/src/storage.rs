@@ -17,9 +17,17 @@ pub trait ConfigStorage: Send + Sync {
 
     /// Check if a config file exists.
     fn exists(&self, path: &Path) -> bool;
+
+    /// Delete a config file if it exists.
+    fn delete(&self, path: &Path) -> Result<()> {
+        if path.exists() {
+            std::fs::remove_file(path)?;
+        }
+        Ok(())
+    }
 }
 
-/// Phase 1 implementation: plain TOML files on disk.
+/// Phase 1 implementation: plain configuration files on disk with atomic writes.
 pub struct PlaintextStorage;
 
 impl ConfigStorage for PlaintextStorage {
@@ -32,11 +40,31 @@ impl ConfigStorage for PlaintextStorage {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        Ok(std::fs::write(path, content)?)
+
+        // Write to temporary file first for atomic persistence
+        let tmp_path = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+        std::fs::write(&tmp_path, content)?;
+
+        // On Windows std::fs::rename will fail if target exists, so remove target if it already exists or use atomic replace
+        #[cfg(windows)]
+        {
+            if path.exists() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        std::fs::rename(&tmp_path, path)?;
+        Ok(())
     }
 
     fn exists(&self, path: &Path) -> bool {
         path.exists()
+    }
+
+    fn delete(&self, path: &Path) -> Result<()> {
+        if path.exists() {
+            std::fs::remove_file(path)?;
+        }
+        Ok(())
     }
 }
 

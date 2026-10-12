@@ -1,48 +1,137 @@
 use crate::connection::{
-    AuthMethod, Connection, CredentialProfile, Folder, RustiusConfig, TreeNode,
+    AppSettings, AuthMethod, Connection, CredentialProfile, Folder, RustiusConfig, TreeNode,
 };
 use crate::error::RustiusError;
 use crate::secret::{SecretManager, SecretRef};
 use crate::storage::ConfigStorage;
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+/// Lightweight store structure for connections and credential profiles on disk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionsStore {
+    #[serde(default = "default_store_version")]
+    pub version: String,
+    #[serde(default)]
+    pub credentials: Vec<CredentialProfile>,
+    #[serde(default)]
+    pub tree: Vec<TreeNode>,
+}
+
+fn default_store_version() -> String {
+    "1.0.0".to_string()
+}
+
 /// Manages loading, saving, and modifying the application configuration.
 ///
-/// Uses `Arc<RwLock<RustiusConfig>>` for thread-safe concurrent access,
-/// since multiple Tauri commands may read/write config simultaneously.
+/// Uses modular storage on disk:
+/// - `settings.json`: UI settings, fonts, and terminal preferences
+/// - `connections.json`: Connections tree hierarchy and credential profiles
+/// - `notes/<id>.md`: Standalone Markdown runbooks per connection
+///
+/// Uses `Arc<RwLock<RustiusConfig>>` for thread-safe concurrent in-memory access.
 pub struct ConfigManager {
-    config_path: PathBuf,
+    config_dir: PathBuf,
+    settings_path: PathBuf,
+    connections_path: PathBuf,
+    notes_dir: PathBuf,
     storage: Box<dyn ConfigStorage>,
     config: Arc<RwLock<RustiusConfig>>,
     pub secret_manager: Arc<SecretManager>,
 }
 
 impl ConfigManager {
-    /// Create a new ConfigManager, loading existing config or creating defaults.
+    /// Create a new ConfigManager, loading modular configs, migrating legacy TOML, or creating defaults.
     pub fn new(config_dir: PathBuf, storage: Box<dyn ConfigStorage>) -> Result<Self> {
-        let config_path = config_dir.join("config.toml");
+        let settings_path = config_dir.join("settings.json");
+        let connections_path = config_dir.join("connections.json");
+        let notes_dir = config_dir.join("notes");
+        let legacy_toml_path = config_dir.join("config.toml");
 
-        let config = if storage.exists(&config_path) {
-            info!("Loading config from: {:?}", config_path);
-            let content = storage.read(&config_path)?;
-            toml::from_str(&content).context("Failed to parse config.toml")?
+        let config = if storage.exists(&connections_path) {
+            info!("Loading modular config from: {:?}", config_dir);
+            // 1. Load settings.json
+            let app_settings = if storage.exists(&settings_path) {
+                let s_str = storage.read(&settings_path)?;
+                serde_json::from_str::<AppSettings>(&s_str).unwrap_or_default()
+            } else {
+                AppSettings::default()
+            };
+
+            // 2. Load connections.json
+            let c_str = storage.read(&connections_path)?;
+            let mut store: ConnectionsStore = serde_json::from_str(&c_str)
+                .context("Failed to parse connections.json")?;
+
+            // 3. Load Markdown runbooks from notes/ directory
+            Self::populate_notes_in_tree(&mut store.tree, &notes_dir, storage.as_ref());
+
+            RustiusConfig {
+                version: store.version,
+                app_settings,
+                credentials: store.credentials,
+                tree: store.tree,
+            }
+        } else if storage.exists(&legacy_toml_path) {
+            info!(
+                "Migrating legacy config.toml to modular storage in {:?}",
+                config_dir
+            );
+            let content = storage.read(&legacy_toml_path)?;
+            let legacy: RustiusConfig = toml::from_str(&content)
+                .context("Failed to parse legacy config.toml during migration")?;
+
+            // 1. Save settings.json
+            let s_json = serde_json::to_string_pretty(&legacy.app_settings)?;
+            storage.write(&settings_path, &s_json)?;
+
+            // 2. Save notes to notes/ and write clean connections.json
+            let mut clean_tree = legacy.tree.clone();
+            Self::sync_and_strip_notes_in_tree(&mut clean_tree, &notes_dir, storage.as_ref())?;
+            let store = ConnectionsStore {
+                version: legacy.version.clone(),
+                credentials: legacy.credentials.clone(),
+                tree: clean_tree,
+            };
+            let c_json = serde_json::to_string_pretty(&store)?;
+            storage.write(&connections_path, &c_json)?;
+
+            // 3. Backup config.toml to config.toml.bak and delete original
+            let _ = storage.write(&config_dir.join("config.toml.bak"), &content);
+            let _ = storage.delete(&legacy_toml_path);
+
+            info!("Migration to modular storage completed successfully");
+            legacy
         } else {
-            info!("No config found, creating defaults at: {:?}", config_path);
+            info!("No config found, creating modular defaults at: {:?}", config_dir);
             let config = RustiusConfig::default();
-            // Save the default config immediately
-            let content =
-                toml::to_string_pretty(&config).context("Failed to serialize default config")?;
-            storage.write(&config_path, &content)?;
+
+            // Save default settings.json
+            let s_json = serde_json::to_string_pretty(&config.app_settings)?;
+            storage.write(&settings_path, &s_json)?;
+
+            // Save default connections.json
+            let store = ConnectionsStore {
+                version: config.version.clone(),
+                credentials: config.credentials.clone(),
+                tree: config.tree.clone(),
+            };
+            let c_json = serde_json::to_string_pretty(&store)?;
+            storage.write(&connections_path, &c_json)?;
+
             config
         };
 
         Ok(Self {
-            config_path,
+            config_dir,
+            settings_path,
+            connections_path,
+            notes_dir,
             storage,
             config: Arc::new(RwLock::new(config)),
             secret_manager: Arc::new(SecretManager::default()),
@@ -321,13 +410,87 @@ impl ConfigManager {
         self.config.read().await.clone()
     }
 
-    /// Persist the current in-memory config to disk.
+    /// Persist the current in-memory config to modular files on disk.
     pub async fn save(&self) -> Result<()> {
         let config = self.config.read().await;
-        let content = toml::to_string_pretty(&*config).context("Failed to serialize config")?;
-        self.storage.write(&self.config_path, &content)?;
-        debug!("Config saved to {:?}", self.config_path);
+
+        // 1. Save settings.json
+        let settings_json = serde_json::to_string_pretty(&config.app_settings)
+            .context("Failed to serialize settings.json")?;
+        self.storage.write(&self.settings_path, &settings_json)?;
+
+        // 2. Save notes to notes/ and strip them for connections.json
+        let mut clean_tree = config.tree.clone();
+        Self::sync_and_strip_notes_in_tree(&mut clean_tree, &self.notes_dir, self.storage.as_ref())?;
+
+        // 3. Save connections.json
+        let connections_store = ConnectionsStore {
+            version: config.version.clone(),
+            credentials: config.credentials.clone(),
+            tree: clean_tree,
+        };
+        let connections_json = serde_json::to_string_pretty(&connections_store)
+            .context("Failed to serialize connections.json")?;
+        self.storage.write(&self.connections_path, &connections_json)?;
+
+        debug!(
+            "Modular config saved (settings: {:?}, connections: {:?})",
+            self.settings_path, self.connections_path
+        );
         Ok(())
+    }
+
+    /// Read a connection's Markdown runbook note directly from disk.
+    pub fn get_connection_note(&self, conn_id: Uuid) -> Option<String> {
+        let note_path = self.notes_dir.join(format!("{}.md", conn_id));
+        if self.storage.exists(&note_path) {
+            self.storage.read(&note_path).ok()
+        } else {
+            None
+        }
+    }
+
+    /// Save a connection's Markdown runbook note directly to disk and update in-memory state.
+    pub async fn save_connection_note(&self, conn_id: Uuid, note_content: &str) -> Result<()> {
+        let note_path = self.notes_dir.join(format!("{}.md", conn_id));
+        if !note_content.trim().is_empty() {
+            self.storage.write(&note_path, note_content)?;
+        } else if self.storage.exists(&note_path) {
+            let _ = self.storage.delete(&note_path);
+        }
+
+        // Update in-memory config
+        {
+            let mut config = self.config.write().await;
+            if let Some(conn) = Self::find_connection_in_tree_mut(&mut config.tree, conn_id) {
+                conn.notes = if note_content.trim().is_empty() {
+                    None
+                } else {
+                    Some(note_content.to_string())
+                };
+            }
+        }
+        Ok(())
+    }
+
+    /// Get path to the base configuration directory.
+    pub fn config_dir(&self) -> &Path {
+        &self.config_dir
+    }
+
+    /// Get path to the modular settings.json file.
+    pub fn settings_path(&self) -> &Path {
+        &self.settings_path
+    }
+
+    /// Get path to the modular connections.json file.
+    pub fn connections_path(&self) -> &Path {
+        &self.connections_path
+    }
+
+    /// Get path to the notes/ directory.
+    pub fn notes_dir(&self) -> &Path {
+        &self.notes_dir
     }
 
     /// Apply a mutation to the config and save it.
@@ -400,10 +563,18 @@ impl ConfigManager {
     }
 
     /// Remove a node (connection or folder) from the tree by its ID.
-    /// If removing a connection, also purges its secret from the OS keyring.
+    /// If removing a connection, also purges its secret from the OS keyring and deletes its markdown note.
     pub async fn remove_node(&self, node_id: Uuid) -> Result<()> {
-        let key = format!("connection:{}", node_id);
-        let _ = self.secret_manager.delete_secret(&key);
+        let conn_ids = {
+            let config = self.config.read().await;
+            Self::collect_connection_ids_in_node(&config.tree, node_id)
+        };
+        for id in conn_ids {
+            let key = format!("connection:{}", id);
+            let _ = self.secret_manager.delete_secret(&key);
+            let note_path = self.notes_dir.join(format!("{}.md", id));
+            let _ = self.storage.delete(&note_path);
+        }
         self.update_config(|config| {
             Self::remove_from_tree(&mut config.tree, node_id);
         })
@@ -529,6 +700,106 @@ impl ConfigManager {
         }
         None
     }
+
+    /// Recursively find a mutable connection in the tree by ID.
+    fn find_connection_in_tree_mut(tree: &mut [TreeNode], id: Uuid) -> Option<&mut Connection> {
+        for node in tree {
+            match node {
+                TreeNode::Connection(c) if c.id == id => return Some(c),
+                TreeNode::Folder(f) => {
+                    if let Some(c) = Self::find_connection_in_tree_mut(&mut f.children, id) {
+                        return Some(c);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Read Markdown notes from notes/ and populate connection notes in the tree.
+    fn populate_notes_in_tree(
+        tree: &mut [TreeNode],
+        notes_dir: &Path,
+        storage: &dyn ConfigStorage,
+    ) {
+        for node in tree.iter_mut() {
+            match node {
+                TreeNode::Connection(conn) => {
+                    let note_path = notes_dir.join(format!("{}.md", conn.id));
+                    if storage.exists(&note_path) {
+                        if let Ok(note_text) = storage.read(&note_path) {
+                            if !note_text.trim().is_empty() {
+                                conn.notes = Some(note_text);
+                            }
+                        }
+                    }
+                }
+                TreeNode::Folder(folder) => {
+                    Self::populate_notes_in_tree(&mut folder.children, notes_dir, storage);
+                }
+            }
+        }
+    }
+
+    /// Save connection notes to notes/ and strip them from the tree so connections.json remains compact.
+    fn sync_and_strip_notes_in_tree(
+        tree: &mut [TreeNode],
+        notes_dir: &Path,
+        storage: &dyn ConfigStorage,
+    ) -> Result<()> {
+        for node in tree.iter_mut() {
+            match node {
+                TreeNode::Connection(conn) => {
+                    let note_path = notes_dir.join(format!("{}.md", conn.id));
+                    if let Some(ref note_text) = conn.notes {
+                        if !note_text.trim().is_empty() {
+                            storage.write(&note_path, note_text)?;
+                        } else if storage.exists(&note_path) {
+                            let _ = storage.delete(&note_path);
+                        }
+                    } else if storage.exists(&note_path) {
+                        let _ = storage.delete(&note_path);
+                    }
+                    conn.notes = None;
+                }
+                TreeNode::Folder(folder) => {
+                    Self::sync_and_strip_notes_in_tree(&mut folder.children, notes_dir, storage)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Collect all connection IDs within a node (including nested children of folders).
+    fn collect_connection_ids_in_node(tree: &[TreeNode], node_id: Uuid) -> Vec<Uuid> {
+        let mut ids = Vec::new();
+        for node in tree {
+            match node {
+                TreeNode::Connection(c) if c.id == node_id => {
+                    ids.push(c.id);
+                }
+                TreeNode::Folder(f) if f.id == node_id => {
+                    Self::collect_all_connection_ids(&f.children, &mut ids);
+                }
+                TreeNode::Folder(f) => {
+                    let child_ids = Self::collect_connection_ids_in_node(&f.children, node_id);
+                    ids.extend(child_ids);
+                }
+                _ => {}
+            }
+        }
+        ids
+    }
+
+    fn collect_all_connection_ids(tree: &[TreeNode], ids: &mut Vec<Uuid>) {
+        for node in tree {
+            match node {
+                TreeNode::Connection(c) => ids.push(c.id),
+                TreeNode::Folder(f) => Self::collect_all_connection_ids(&f.children, ids),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -551,8 +822,130 @@ mod tests {
         assert_eq!(config.version, "1.0.0");
         assert!(config.tree.is_empty());
 
-        // Verify file was created
-        assert!(dir.join("config.toml").exists());
+        // Verify modular files were created
+        assert!(dir.join("connections.json").exists());
+        assert!(dir.join("settings.json").exists());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_migrate_legacy_toml_to_modular() {
+        let dir = test_config_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Create a simulated legacy config.toml with connections and notes
+        let legacy_conn_id = Uuid::new_v4();
+        let legacy_toml = format!(
+            r##"version = "1.0.0"
+
+[app_settings]
+theme = "dark"
+font_family = "JetBrains Mono"
+font_size = 15
+default_terminal_type = "xterm-256color"
+show_sidebar = true
+sidebar_width = 320
+close_tab_on_exit = true
+sftp_follow_terminal_folder = true
+
+[[tree]]
+node_type = "connection"
+id = "{legacy_conn_id}"
+name = "Legacy Ubuntu"
+connection_type = "ssh"
+host = "192.168.1.100"
+port = 22
+tags = ["prod", "cloud"]
+notes = "# Runbook\n\nRun `systemctl restart app` on deploy."
+
+[tree.auth]
+type = "password"
+username = "ubuntu"
+password = "secretpassword"
+"##
+        );
+
+        std::fs::write(dir.join("config.toml"), &legacy_toml).unwrap();
+
+        // Instantiate manager, which should detect and migrate legacy config.toml
+        let manager = ConfigManager::new(dir.clone(), Box::new(PlaintextStorage))
+            .expect("Failed to create ConfigManager with migration");
+
+        // Verify modular files exist
+        assert!(dir.join("connections.json").exists());
+        assert!(dir.join("settings.json").exists());
+        assert!(dir.join("config.toml.bak").exists());
+        assert!(!dir.join("config.toml").exists());
+
+        // Verify notes file was extracted cleanly
+        let note_file = dir.join("notes").join(format!("{}.md", legacy_conn_id));
+        assert!(note_file.exists());
+        let note_content = std::fs::read_to_string(&note_file).unwrap();
+        assert!(note_content.contains("systemctl restart app"));
+
+        // Verify in-memory config loaded successfully
+        let cfg = manager.get_config().await;
+        assert_eq!(cfg.app_settings.sidebar_width, 320);
+        assert_eq!(cfg.tree.len(), 1);
+        let conn = manager.get_connection(legacy_conn_id).await.unwrap();
+        assert_eq!(conn.name, "Legacy Ubuntu");
+        assert_eq!(
+            conn.notes.as_deref(),
+            Some("# Runbook\n\nRun `systemctl restart app` on deploy.")
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_modular_notes_crud_and_cleanup() {
+        let dir = test_config_dir();
+        let manager = ConfigManager::new(dir.clone(), Box::new(PlaintextStorage))
+            .expect("Failed to create ConfigManager");
+
+        let mut conn = Connection::new(
+            "Database Node".into(),
+            ConnectionType::Ssh,
+            "10.0.0.5".into(),
+            22,
+            AuthMethod::password("dbadmin", Some("dbpass".into())),
+        );
+        conn.notes = Some("# DB Runbook\n\n- Step 1: Backup\n- Step 2: Migrate".into());
+        let conn_id = conn.id;
+
+        // 1. Add connection with notes
+        manager.add_connection(conn, None).await.unwrap();
+
+        // Verify note file exists
+        let note_path = dir.join("notes").join(format!("{}.md", conn_id));
+        assert!(note_path.exists());
+        assert_eq!(
+            std::fs::read_to_string(&note_path).unwrap(),
+            "# DB Runbook\n\n- Step 1: Backup\n- Step 2: Migrate"
+        );
+
+        // 2. Direct note update
+        manager
+            .save_connection_note(conn_id, "# Updated Runbook v2")
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&note_path).unwrap(),
+            "# Updated Runbook v2"
+        );
+
+        let reloaded_conn = manager.get_connection(conn_id).await.unwrap();
+        assert_eq!(
+            reloaded_conn.notes.as_deref(),
+            Some("# Updated Runbook v2")
+        );
+
+        // 3. Remove connection -> note file should be cleaned up automatically!
+        manager.remove_node(conn_id).await.unwrap();
+        assert!(!note_path.exists());
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&dir);
