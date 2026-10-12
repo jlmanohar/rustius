@@ -325,7 +325,7 @@ impl FreeRdpSession {
 
         // Performance, Scaling, and Hardware Acceleration Flags
         if let Some(scale) = config.scale_desktop {
-            if scale >= 100 && scale <= 500 {
+            if (100..=500).contains(&scale) {
                 cmd.arg(format!("/scale-desktop:{}", scale));
             }
         }
