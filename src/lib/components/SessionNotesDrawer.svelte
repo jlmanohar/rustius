@@ -64,13 +64,13 @@
   }
 </script>
 
-<aside class="notes-drawer" aria-label="Session Runbook & Notes">
+<aside class="notes-drawer" aria-label="Connection Notes">
   <!-- Drawer Header -->
   <div class="drawer-header">
     <div class="header-left">
       <div class="title-row">
         <FileText size={14} class="header-icon" />
-        <h2 class="conn-name">{activeConn ? activeConn.name : 'Session Runbook'}</h2>
+        <h2 class="conn-name">{activeConn ? activeConn.name : 'Connection Notes'}</h2>
         {#if activeConn?.environment}
           <span class="env-pill">{activeConn.environment}</span>
         {/if}
@@ -110,7 +110,7 @@
       {/if}
       <button
         class="btn-icon"
-        title="Close runbook drawer (Esc)"
+        title="Close notes drawer (Esc)"
         onclick={closeDrawer}
       >
         <X size={14} />
@@ -132,11 +132,11 @@
         </div>
         <h3 class="empty-title">No notes attached</h3>
         <p class="empty-desc">
-          Add operational runbooks, checklists, or command snippets to this connection for instant access.
+          Add notes, documentation, checklists, or command snippets to this connection for instant access.
         </p>
         <button class="btn btn-secondary btn-sm" onclick={handleEdit}>
           <Pencil size={12} />
-          <span>Add Notes & Runbook</span>
+          <span>Add Notes</span>
         </button>
       </div>
     {/if}

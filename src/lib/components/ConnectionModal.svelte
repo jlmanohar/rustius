@@ -655,7 +655,7 @@
 
       <!-- Documentation & Notes -->
       <div class="section-divider">
-        <span class="mono-eyebrow">NOTES & RUNBOOK</span>
+        <span class="mono-eyebrow">NOTES</span>
         <span class="vault-badge" title="Markdown formatting supported">
           <FileText size={11} />
           <span>Markdown Supported</span>
@@ -723,7 +723,7 @@
           <textarea
             id="conn-notes-input"
             class="notes-textarea input-field"
-            placeholder="# Server Notes & Runbook&#10;&#10;- Service restart: `sudo systemctl restart service`&#10;- On-call escalation: #devops-alert&#10;- [ ] Checklist tasks..."
+            placeholder="# Server Notes&#10;&#10;- Service restart: `sudo systemctl restart service`&#10;- On-call escalation: #devops-alert&#10;- [ ] Checklist tasks..."
             bind:value={notes}
             rows="6"
           ></textarea>
@@ -732,7 +732,7 @@
             {#if notes.trim()}
               {@html renderMarkdown(notes)}
             {:else}
-              <p class="preview-empty">No notes entered yet. Switch to "Write" to document runbooks, checklists, or commands.</p>
+              <p class="preview-empty">No notes entered yet. Switch to "Write" to add notes, checklists, or commands.</p>
             {/if}
           </div>
         {/if}

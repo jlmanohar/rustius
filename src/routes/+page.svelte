@@ -66,7 +66,7 @@
           </div>
         {/each}
 
-        <!-- In-Session Runbook & Markdown Notes Drawer -->
+        <!-- In-Session Notes Drawer -->
         {#if appState.isNotesDrawerOpen}
           <SessionNotesDrawer />
         {/if}

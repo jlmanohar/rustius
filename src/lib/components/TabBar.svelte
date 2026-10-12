@@ -109,11 +109,11 @@
     {#if activeConn}
       <button
         class="notes-toggle-btn {appState.isNotesDrawerOpen ? 'active' : ''}"
-        title={hasNotes ? 'Runbook & Notes (Ctrl+Alt+N)' : 'Add Runbook / Notes (Ctrl+Alt+N)'}
+        title={hasNotes ? 'Connection Notes (Ctrl+Alt+N)' : 'Add Notes (Ctrl+Alt+N)'}
         onclick={() => appState.toggleNotesDrawer()}
       >
         <FileText size={12} />
-        <span class="notes-btn-text">Runbook</span>
+        <span class="notes-btn-text">Notes</span>
         {#if hasNotes}
           <span class="has-notes-badge" title="Has notes"></span>
         {/if}
