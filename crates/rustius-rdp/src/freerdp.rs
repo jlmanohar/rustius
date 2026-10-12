@@ -17,10 +17,10 @@ use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
 use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
 #[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, DestroyWindow, EnumChildWindows, EnumWindows, GetClientRect, GetParent,
-    GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsWindowVisible, SetParent,
+    DestroyWindow, EnumChildWindows, EnumWindows, GetClientRect, GetParent,
+    GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetParent,
     SetWindowLongPtrW, SetWindowLongW, SetWindowPos, ShowWindow, GWL_EXSTYLE, GWL_STYLE,
-    GWLP_HWNDPARENT, SW_HIDE, SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    GWLP_HWNDPARENT, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
     SWP_SHOWWINDOW, WS_CAPTION, WS_CHILD, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
     WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME, WS_VISIBLE,
 };
@@ -213,13 +213,22 @@ unsafe fn apply_window_docking(
     }
 
     // Embedded Docked Mode: Constrain strictly within tab viewport boundaries
+    if IsIconic(parent_hwnd) != 0 {
+        if IsWindowVisible(hwnd) != 0 {
+            ShowWindow(hwnd, SW_HIDE);
+        }
+        return;
+    }
+
     let mut client_rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
     GetClientRect(parent_hwnd, &mut client_rect);
     let parent_w = client_rect.right - client_rect.left;
     let parent_h = client_rect.bottom - client_rect.top;
 
     if parent_w <= 0 || parent_h <= 0 || x >= parent_w || y >= parent_h {
-        ShowWindow(hwnd, SW_HIDE);
+        if IsWindowVisible(hwnd) != 0 {
+            ShowWindow(hwnd, SW_HIDE);
+        }
         return;
     }
 
@@ -227,7 +236,9 @@ unsafe fn apply_window_docking(
     let clamped_h = height.min(parent_h - y).max(0);
 
     if clamped_w <= 10 || clamped_h <= 10 {
-        ShowWindow(hwnd, SW_HIDE);
+        if IsWindowVisible(hwnd) != 0 {
+            ShowWindow(hwnd, SW_HIDE);
+        }
         return;
     }
 
@@ -259,7 +270,6 @@ unsafe fn apply_window_docking(
         hwnd as usize, parent_hwnd as usize, x, y, width, height, pt.x, pt.y, clamped_w, clamped_h
     ));
 
-    BringWindowToTop(hwnd);
     SetWindowPos(
         hwnd,
         0 as HWND,
@@ -269,7 +279,6 @@ unsafe fn apply_window_docking(
         clamped_h,
         SWP_SHOWWINDOW | SWP_FRAMECHANGED | SWP_NOACTIVATE,
     );
-    ShowWindow(hwnd, SW_SHOW);
 }
 
 impl FreeRdpSession {
@@ -377,10 +386,18 @@ impl FreeRdpSession {
                     }
 
                     if current_hwnd != 0 && parent_hwnd != 0 {
+                        unsafe {
+                            if IsIconic(parent_hwnd as HWND) != 0 {
+                                continue;
+                            }
+                        }
+
                         let visible = is_visible_clone.load(Ordering::SeqCst);
                         if !visible {
                             unsafe {
-                                ShowWindow(current_hwnd as HWND, SW_HIDE);
+                                if IsWindowVisible(current_hwnd as HWND) != 0 {
+                                    ShowWindow(current_hwnd as HWND, SW_HIDE);
+                                }
                             }
                             continue;
                         }
@@ -398,6 +415,9 @@ impl FreeRdpSession {
                             unsafe { GetClientRect(parent_hwnd as HWND, &mut client_rect) };
                             let parent_w = client_rect.right - client_rect.left;
                             let parent_h = client_rect.bottom - client_rect.top;
+                            if parent_w <= 10 || parent_h <= 10 {
+                                continue;
+                            }
                             let expected_w = w.min(parent_w - x).max(0);
                             let expected_h = h.min(parent_h - y).max(0);
 
@@ -530,10 +550,13 @@ impl FreeRdpSession {
             if hwnd != 0 {
                 unsafe {
                     if visible {
-                        ShowWindow(hwnd as HWND, SW_SHOW);
-                        self.sync_screen_position();
+                        if IsWindowVisible(hwnd as HWND) == 0 {
+                            ShowWindow(hwnd as HWND, SW_SHOWNOACTIVATE);
+                        }
                     } else {
-                        ShowWindow(hwnd as HWND, SW_HIDE);
+                        if IsWindowVisible(hwnd as HWND) != 0 {
+                            ShowWindow(hwnd as HWND, SW_HIDE);
+                        }
                     }
                 }
             }

@@ -41,12 +41,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .on_window_event(|window, event| {
-            if matches!(
-                event,
-                tauri::WindowEvent::Moved(_)
-                    | tauri::WindowEvent::Resized(_)
-                    | tauri::WindowEvent::Focused(_)
-            ) {
+            if matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
                 let _ = window.emit("window-moved", ());
                 let state = window.state::<AppState>();
                 let sessions: Vec<_> = {
