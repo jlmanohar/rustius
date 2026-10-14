@@ -88,11 +88,10 @@ jobs:
         with:
           tagName: ${{ steps.vars.outputs.tag }}
           releaseName: ${{ steps.vars.outputs.release_name }}
+          generateReleaseNotes: true
           releaseBody: |
-            ## ${{ steps.vars.outputs.release_name }}
-
             See the release assets below to download the installer:
-            - **Windows**: `.msi` / `.exe` (NSIS) / `.zip` (Portable)
+            - **Windows**: `.msi` (Installer) / `.exe` (Setup) / `.zip` (Standalone Portable)
             <!-- - **macOS**: `.dmg` / `.app` -->
             <!-- - **Linux**: `.deb` / `.AppImage` -->
           releaseDraft: ${{ steps.vars.outputs.draft == 'true' }}

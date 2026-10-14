@@ -1,0 +1,24 @@
+changelog:
+  categories:
+    - title: "🚀 Features & Enhancements"
+      labels:
+        - "enhancement"
+        - "feature"
+    - title: "🐛 Bug Fixes"
+      labels:
+        - "bug"
+        - "fix"
+    - title: "🎨 UI & Design"
+      labels:
+        - "ui"
+        - "style"
+    - title: "🛡️ Security & Reliability"
+      labels:
+        - "security"
+        - "performance"
+    - title: "🧹 Refactoring & Maintenance"
+      labels:
+        - "refactor"
+        - "chore"
+        - "dependencies"
+        - "documentation"
