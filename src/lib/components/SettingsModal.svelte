@@ -1,6 +1,21 @@
 <script lang="ts">
   import { appState } from '../stores/appState.svelte';
-  import { X, Check, Shield, Sliders, Terminal, ArrowLeftRight } from '@lucide/svelte';
+  import {
+    X,
+    Check,
+    Shield,
+    Sliders,
+    Terminal,
+    ArrowLeftRight,
+    HardDrive,
+    Laptop,
+    Lock,
+    Unlock,
+    KeyRound,
+    AlertCircle,
+    CheckCircle2
+  } from '@lucide/svelte';
+  import type { VaultBackend } from '$lib/types';
 
   type SettingsCategory = 'general' | 'terminal' | 'sftp' | 'security';
 
@@ -12,6 +27,108 @@
   let termType = $state(appState.config.app_settings?.default_terminal_type ?? 'xterm-256color');
   let fontSize = $state(appState.config.app_settings?.font_size ?? 13);
   let fontFamily = $state(appState.config.app_settings?.font_family ?? "'Geist Mono', monospace");
+  let selectedVaultBackend = $state<VaultBackend>(appState.config.app_settings?.vault_backend ?? 'auto');
+  let isMigrating = $state(false);
+  let vaultNotice = $state<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  $effect(() => {
+    if (activeCategory === 'security') {
+      void appState.fetchVaultStatus();
+    }
+  });
+
+  async function handleBackendChange(target: VaultBackend) {
+    if (target === selectedVaultBackend || isMigrating) return;
+    vaultNotice = null;
+    isMigrating = true;
+
+    try {
+      let masterPw: string | undefined = undefined;
+
+      // If switching to master password mode and vault is not yet set up or locked:
+      if (target === 'master_password' || (target === 'auto' && appState.vaultStatus?.is_portable)) {
+        if (!appState.vaultStatus?.has_vault_file) {
+          const pw = await appState.prompt({
+            title: 'Set Master Password',
+            message: 'To protect your credentials in the encrypted vault file, please enter a master password:',
+            placeholder: 'Master password...',
+            inputType: 'password'
+          });
+          if (!pw) {
+            isMigrating = false;
+            return;
+          }
+          masterPw = pw;
+        } else if (!appState.vaultStatus?.is_unlocked) {
+          const pw = await appState.prompt({
+            title: 'Unlock Vault to Migrate',
+            message: 'Please enter your master password to unlock and migrate credentials:',
+            placeholder: 'Master password...',
+            inputType: 'password'
+          });
+          if (!pw) {
+            isMigrating = false;
+            return;
+          }
+          masterPw = pw;
+        }
+      } else if (target === 'keyring' && appState.vaultStatus?.effective_backend === 'master_password') {
+        const ok = await appState.confirm({
+          title: 'Migrate to Native OS Keyring',
+          message: 'All connection and profile passwords in the vault will be migrated to this computer\'s secure credential manager. Continue?'
+        });
+        if (!ok) {
+          isMigrating = false;
+          return;
+        }
+      }
+
+      await appState.changeVaultBackend(target, masterPw);
+      selectedVaultBackend = target;
+      vaultNotice = {
+        type: 'success',
+        text: `Credential storage updated to ${target === 'auto' ? 'Automatic' : target === 'master_password' ? 'Master Password Vault' : 'Native OS Keyring'} and secrets migrated successfully.`
+      };
+    } catch (err: any) {
+      console.error('Failed to change vault backend:', err);
+      vaultNotice = {
+        type: 'error',
+        text: err?.message || String(err) || 'Failed to change credential storage backend.'
+      };
+    } finally {
+      isMigrating = false;
+    }
+  }
+
+  async function handleLockVault() {
+    try {
+      await appState.lockVault();
+      vaultNotice = { type: 'success', text: 'Vault locked. Passwords are now encrypted.' };
+    } catch (err: any) {
+      vaultNotice = { type: 'error', text: err?.message || 'Failed to lock vault.' };
+    }
+  }
+
+  function handleUnlockVault() {
+    appState.isVaultUnlockModalOpen = true;
+  }
+
+  async function handleChangeMasterPassword() {
+    const newPw = await appState.prompt({
+      title: 'Change Master Password',
+      message: 'Enter a new master password for your encrypted vault:',
+      placeholder: 'New master password...',
+      inputType: 'password'
+    });
+    if (!newPw) return;
+
+    try {
+      await appState.setMasterPassword(newPw);
+      vaultNotice = { type: 'success', text: 'Master password updated successfully.' };
+    } catch (err: any) {
+      vaultNotice = { type: 'error', text: err?.message || 'Failed to update master password.' };
+    }
+  }
 
   async function handleSave() {
     const updated = {
@@ -22,6 +139,7 @@
       default_terminal_type: termType.trim() || 'xterm-256color',
       font_size: Number(fontSize) || 13,
       font_family: fontFamily.trim() || "'Geist Mono', monospace",
+      vault_backend: selectedVaultBackend,
     };
 
     await appState.saveAppSettings(updated);
@@ -218,23 +336,198 @@
           </div>
         {:else if activeCategory === 'security'}
           <div class="category-header">
-            <h3 class="category-title">Security & Vault</h3>
-            <p class="category-subtitle">Encryption, credentials storage, and operating system keyring integration.</p>
+            <h3 class="category-title">Security & Credential Storage</h3>
+            <p class="category-subtitle">Configure password storage, encrypted master password vault, and OS keyring integration.</p>
           </div>
 
-          <div class="settings-group">
-            <div class="security-card">
-              <div class="security-card-header">
-                <div class="security-card-title">
-                  <Shield size={14} class="sec-icon" />
-                  <span>Native OS Keyring Vault</span>
-                </div>
-                <span class="sec-status-pill">Active</span>
-              </div>
-              <p class="sec-desc">
-                Passkeys, SSH passphrases, and passwords are automatically secured via the host operating system's Credential Manager. Zero plaintext passwords are saved to disk.
-              </p>
+          {#if vaultNotice}
+            <div class="vault-notice-banner {vaultNotice.type}">
+              {#if vaultNotice.type === 'success'}
+                <CheckCircle2 size={14} />
+              {:else}
+                <AlertCircle size={14} />
+              {/if}
+              <span>{vaultNotice.text}</span>
             </div>
+          {/if}
+
+          <div class="settings-group">
+            <!-- Environment Mode Badge Card -->
+            <div class="env-mode-card">
+              <div class="env-icon-box">
+                {#if appState.vaultStatus?.is_portable}
+                  <HardDrive size={18} class="env-icon" />
+                {:else}
+                  <Laptop size={18} class="env-icon" />
+                {/if}
+              </div>
+              <div class="env-info">
+                <div class="env-title-row">
+                  <span class="env-title">
+                    {appState.vaultStatus?.is_portable ? 'Portable Mode Active' : 'Installed Mode Active'}
+                  </span>
+                  <span class="env-badge {appState.vaultStatus?.is_portable ? 'badge-portable' : 'badge-installed'}">
+                    {appState.vaultStatus?.is_portable ? 'USB / Data Directory' : 'System AppData'}
+                  </span>
+                </div>
+                <p class="env-desc">
+                  {#if appState.vaultStatus?.is_portable}
+                    Rustius detected a portable data folder next to the executable. Storage defaults to an encrypted <code>vault.enc</code> file, ensuring saved passwords travel with your USB drive.
+                  {:else}
+                    Rustius is running from standard system installation directories. Storage defaults to your operating system's native secure keyring (Windows Credential Manager / Keychain).
+                  {/if}
+                </p>
+              </div>
+            </div>
+
+            <!-- Storage Backend Selection -->
+            <div class="storage-section">
+              <div class="section-label-row">
+                <span class="field-label">CREDENTIAL STORAGE BACKEND</span>
+                {#if isMigrating}
+                  <span class="migrating-pill">Migrating secrets...</span>
+                {/if}
+              </div>
+
+              <div class="backend-options-grid">
+                <!-- Option 1: Auto -->
+                <div
+                  class="backend-card {selectedVaultBackend === 'auto' ? 'selected' : ''} {isMigrating ? 'disabled' : ''}"
+                  role="button"
+                  tabindex="0"
+                  onclick={() => { void handleBackendChange('auto'); }}
+                  onkeydown={(e) => e.key === 'Enter' && void handleBackendChange('auto')}
+                >
+                  <div class="backend-card-head">
+                    <div class="radio-indicator">
+                      {#if selectedVaultBackend === 'auto'}
+                        <div class="radio-dot"></div>
+                      {/if}
+                    </div>
+                    <div class="backend-name">
+                      <span>Automatic</span>
+                      <span class="rec-badge">Recommended</span>
+                    </div>
+                  </div>
+                  <p class="backend-desc">
+                    Intelligently adapts: uses <strong>Master Password Vault</strong> in Portable Mode, and <strong>Native OS Keyring</strong> in Installed Mode.
+                  </p>
+                  <div class="backend-footer">
+                    <span class="effective-text">
+                      Currently resolves to:
+                      <strong>{appState.vaultStatus?.effective_backend === 'master_password' ? 'Master Password Vault' : 'Native OS Keyring'}</strong>
+                    </span>
+                  </div>
+                </div>
+
+                <!-- Option 2: Master Password Vault -->
+                <div
+                  class="backend-card {selectedVaultBackend === 'master_password' ? 'selected' : ''} {isMigrating ? 'disabled' : ''}"
+                  role="button"
+                  tabindex="0"
+                  onclick={() => { void handleBackendChange('master_password'); }}
+                  onkeydown={(e) => e.key === 'Enter' && void handleBackendChange('master_password')}
+                >
+                  <div class="backend-card-head">
+                    <div class="radio-indicator">
+                      {#if selectedVaultBackend === 'master_password'}
+                        <div class="radio-dot"></div>
+                      {/if}
+                    </div>
+                    <div class="backend-name">
+                      <Lock size={13} />
+                      <span>Master Password Vault</span>
+                    </div>
+                  </div>
+                  <p class="backend-desc">
+                    Encrypts all passwords into <code>vault.enc</code> using Argon2id and AES-256-GCM. Completely self-contained and portable across machines.
+                  </p>
+                </div>
+
+                <!-- Option 3: OS Keyring -->
+                <div
+                  class="backend-card {selectedVaultBackend === 'keyring' ? 'selected' : ''} {isMigrating ? 'disabled' : ''}"
+                  role="button"
+                  tabindex="0"
+                  onclick={() => { void handleBackendChange('keyring'); }}
+                  onkeydown={(e) => e.key === 'Enter' && void handleBackendChange('keyring')}
+                >
+                  <div class="backend-card-head">
+                    <div class="radio-indicator">
+                      {#if selectedVaultBackend === 'keyring'}
+                        <div class="radio-dot"></div>
+                      {/if}
+                    </div>
+                    <div class="backend-name">
+                      <Shield size={13} />
+                      <span>Native OS Keyring</span>
+                    </div>
+                  </div>
+                  <p class="backend-desc">
+                    Delegates to Windows Credential Manager, macOS Keychain, or Linux Secret Service. Tied to this local user account.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Vault Status & Actions Panel (when effective backend is master_password) -->
+            {#if appState.vaultStatus?.effective_backend === 'master_password'}
+              <div class="vault-management-panel">
+                <div class="vault-panel-header">
+                  <div class="vault-status-indicator">
+                    {#if !appState.vaultStatus.has_vault_file}
+                      <span class="status-dot dot-gray"></span>
+                      <span class="vault-status-label">No Master Password Set</span>
+                    {:else if appState.vaultStatus.is_unlocked}
+                      <span class="status-dot dot-green"></span>
+                      <span class="vault-status-label">Vault Unlocked (Active Session)</span>
+                    {:else}
+                      <span class="status-dot dot-amber"></span>
+                      <span class="vault-status-label">Vault Locked</span>
+                    {/if}
+                  </div>
+
+                  <div class="vault-action-buttons">
+                    {#if !appState.vaultStatus.has_vault_file}
+                      <button
+                        type="button"
+                        class="btn-vault-action"
+                        onclick={() => { void handleChangeMasterPassword(); }}
+                      >
+                        <KeyRound size={12} />
+                        <span>Set Master Password</span>
+                      </button>
+                    {:else if appState.vaultStatus.is_unlocked}
+                      <button
+                        type="button"
+                        class="btn-vault-action"
+                        onclick={() => { void handleChangeMasterPassword(); }}
+                      >
+                        <KeyRound size={12} />
+                        <span>Change Password</span>
+                      </button>
+                      <button
+                        type="button"
+                        class="btn-vault-action btn-lock"
+                        onclick={() => { void handleLockVault(); }}
+                      >
+                        <Lock size={12} />
+                        <span>Lock Vault</span>
+                      </button>
+                    {:else}
+                      <button
+                        type="button"
+                        class="btn-vault-action btn-unlock"
+                        onclick={handleUnlockVault}
+                      >
+                        <Unlock size={12} />
+                        <span>Unlock Vault...</span>
+                      </button>
+                    {/if}
+                  </div>
+                </div>
+              </div>
+            {/if}
           </div>
         {/if}
       </div>
@@ -592,51 +885,332 @@
     background: #ffffff;
   }
 
-  .security-card {
-    background: #080808;
-    border: 1px solid #262626;
-    border-radius: 6px;
-    padding: 12px 14px;
+  /* Vault & Security Management */
+  .vault-notice-banner {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    margin-bottom: 12px;
   }
 
-  .security-card-header {
+  .vault-notice-banner.success {
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    color: #4ade80;
+  }
+
+  .vault-notice-banner.error {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #f87171;
+  }
+
+  .env-mode-card {
+    background: #080808;
+    border: 1px solid #222222;
+    border-radius: 8px;
+    padding: 12px 14px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .env-icon-box {
+    width: 34px;
+    height: 34px;
+    border-radius: 6px;
+    background: #141414;
+    border: 1px solid #2a2a2a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: #ededed;
+  }
+
+  .env-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .env-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
+  .env-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #ffffff;
+  }
+
+  .env-badge {
+    font-size: 9.5px;
+    font-family: var(--font-mono, monospace);
+    padding: 2px 7px;
+    border-radius: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .badge-portable {
+    background: rgba(59, 130, 246, 0.12);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    color: #60a5fa;
+  }
+
+  .badge-installed {
+    background: rgba(168, 85, 247, 0.12);
+    border: 1px solid rgba(168, 85, 247, 0.35);
+    color: #c084fc;
+  }
+
+  .env-desc {
+    margin: 0;
+    font-size: 11px;
+    color: #777777;
+    line-height: 1.45;
+  }
+
+  .env-desc code {
+    background: #141414;
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #ccc;
+    font-size: 10.5px;
+  }
+
+  .storage-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  .section-label-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
   }
 
-  .security-card-title {
+  .migrating-pill {
+    font-size: 10px;
+    font-family: var(--font-mono, monospace);
+    color: #60a5fa;
+    animation: pulse 1.5s infinite;
+  }
+
+  .backend-options-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .backend-card {
+    background: #080808;
+    border: 1px solid #222222;
+    border-radius: 8px;
+    padding: 11px 13px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    outline: none;
+  }
+
+  .backend-card:hover:not(.disabled) {
+    border-color: #3f3f3f;
+    background: #0d0d0d;
+  }
+
+  .backend-card.selected {
+    border-color: #ffffff;
+    background: #121212;
+  }
+
+  .backend-card.disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .backend-card-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 4px;
+  }
+
+  .radio-indicator {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 1px solid #444444;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .backend-card.selected .radio-indicator {
+    border-color: #ffffff;
+  }
+
+  .radio-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #ffffff;
+  }
+
+  .backend-name {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #ededed;
+  }
+
+  .rec-badge {
+    font-size: 9px;
+    font-family: var(--font-mono, monospace);
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid #333333;
+    color: #aaaaaa;
+    padding: 1px 5px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .backend-desc {
+    margin: 0;
+    padding-left: 23px;
+    font-size: 11px;
+    color: #777777;
+    line-height: 1.4;
+  }
+
+  .backend-desc strong {
+    color: #cccccc;
+  }
+
+  .backend-desc code {
+    background: #141414;
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #ccc;
+    font-size: 10.5px;
+  }
+
+  .backend-footer {
+    padding-left: 23px;
+    margin-top: 5px;
+  }
+
+  .effective-text {
+    font-size: 10.5px;
+    color: #888888;
+  }
+
+  .effective-text strong {
+    color: #ffffff;
+  }
+
+  .vault-management-panel {
+    background: #080808;
+    border: 1px solid #222222;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-top: 4px;
+  }
+
+  .vault-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .vault-status-indicator {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 12.5px;
+  }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+
+  .dot-green {
+    background: #22c55e;
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+  }
+
+  .dot-amber {
+    background: #f59e0b;
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+  }
+
+  .dot-gray {
+    background: #6b7280;
+  }
+
+  .vault-status-label {
+    font-size: 11.5px;
     font-weight: 500;
     color: #ededed;
   }
 
-  :global(.sec-icon) {
-    color: #ededed;
+  .vault-action-buttons {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
 
-  .sec-status-pill {
-    font-size: 10px;
-    font-family: var(--font-mono, monospace);
-    color: #ededed;
+  .btn-vault-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     background: #141414;
-    border: 1px solid #262626;
-    padding: 1px 6px;
-    border-radius: 4px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    border: 1px solid #2a2a2a;
+    color: #ededed;
+    padding: 4px 10px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
   }
 
-  .sec-desc {
-    margin: 0;
-    font-size: 11px;
-    color: #707070;
-    line-height: 1.45;
+  .btn-vault-action:hover {
+    background: #202020;
+    border-color: #444444;
+  }
+
+  .btn-lock:hover {
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #f87171;
+  }
+
+  .btn-unlock {
+    background: #ededed;
+    color: #000000;
+    border-color: #ededed;
+  }
+
+  .btn-unlock:hover {
+    background: #ffffff;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
   }
 </style>

@@ -2,9 +2,20 @@ export type ConnectionType = 'ssh' | 'sftp' | 'rdp';
 
 export type SecretRef =
   | { type: 'keyring'; key: string }
+  | { type: 'vault'; key: string }
   | { type: 'plaintext'; value: string }
   | { type: 'ask_on_connect' }
   | { type: 'external'; provider: string; vault_id?: string; item_id: string };
+
+export type VaultBackend = 'auto' | 'master_password' | 'keyring';
+
+export interface VaultStatus {
+  is_portable: boolean;
+  configured_backend: VaultBackend;
+  effective_backend: VaultBackend;
+  has_vault_file: boolean;
+  is_unlocked: boolean;
+}
 
 export type AuthMethod =
   | {
@@ -108,6 +119,7 @@ export interface AppSettings {
   sidebar_width: number;
   close_tab_on_exit?: boolean;
   sftp_follow_terminal_folder?: boolean;
+  vault_backend?: VaultBackend;
 }
 
 export interface RustiusConfig {
@@ -162,4 +174,5 @@ export interface DialogOptions {
   confirmText?: string;
   cancelText?: string;
   isDanger?: boolean;
+  inputType?: 'text' | 'password';
 }

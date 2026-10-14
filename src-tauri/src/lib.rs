@@ -4,7 +4,8 @@ pub mod state;
 use commands::config::{
     add_connection, add_credential, add_folder, delete_credential, get_config,
     get_connection_password, get_credential_password, import_sessions, import_sessions_content,
-    remove_node, save_app_settings, update_credential,
+    remove_node, save_app_settings, update_credential, vault_change_backend, vault_get_status,
+    vault_lock, vault_set_master_password, vault_unlock,
 };
 use commands::rdp::{
     freerdp_connect, freerdp_disconnect, freerdp_set_docked, freerdp_set_visibility,
@@ -103,6 +104,11 @@ pub fn run() {
             delete_credential,
             get_connection_password,
             get_credential_password,
+            vault_get_status,
+            vault_unlock,
+            vault_lock,
+            vault_set_master_password,
+            vault_change_backend,
             import_sessions,
             import_sessions_content,
             pty_spawn,

@@ -12,6 +12,7 @@
   import RdpView from '$lib/components/RdpView.svelte';
   import TitleBar from '$lib/components/TitleBar.svelte';
   import SessionNotesDrawer from '$lib/components/SessionNotesDrawer.svelte';
+  import VaultUnlockModal from '$lib/components/VaultUnlockModal.svelte';
   import {
     Terminal,
     ArrowLeftRight,
@@ -222,6 +223,9 @@
   {#if appState.isImportModalOpen}
     <ImportModal />
   {/if}
+
+  <!-- Master Password Vault Unlock Modal -->
+  <VaultUnlockModal />
 
   <!-- Desktop Native Dialog Modal (Prompt, Confirm, Alert) -->
   <DialogModal />

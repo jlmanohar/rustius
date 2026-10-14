@@ -210,3 +210,67 @@ pub async fn get_credential_password(
         _ => Ok(None),
     }
 }
+
+/// Comprehensive vault and credential backend status.
+#[derive(serde::Serialize)]
+pub struct VaultStatus {
+    pub is_portable: bool,
+    pub configured_backend: rustius_core::connection::VaultBackend,
+    pub effective_backend: rustius_core::connection::VaultBackend,
+    pub has_vault_file: bool,
+    pub is_unlocked: bool,
+}
+
+#[tauri::command]
+pub async fn vault_get_status(state: State<'_, AppState>) -> Result<VaultStatus, String> {
+    let is_portable = state.config_manager.is_portable();
+    let configured_backend = state.config_manager.get_config().await.app_settings.vault_backend;
+    let effective_backend = state.config_manager.effective_vault_backend().await;
+    let has_vault_file = state.config_manager.secret_manager().has_vault_file();
+    let is_unlocked = state.config_manager.secret_manager().is_vault_unlocked();
+
+    Ok(VaultStatus {
+        is_portable,
+        configured_backend,
+        effective_backend,
+        has_vault_file,
+        is_unlocked,
+    })
+}
+
+#[tauri::command]
+pub async fn vault_unlock(password: String, state: State<'_, AppState>) -> Result<bool, String> {
+    state
+        .config_manager
+        .secret_manager()
+        .unlock_vault(&password)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn vault_lock(state: State<'_, AppState>) -> Result<(), String> {
+    state.config_manager.secret_manager().lock_vault();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn vault_set_master_password(password: String, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .config_manager
+        .secret_manager()
+        .set_master_password(&password)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn vault_change_backend(
+    target: rustius_core::connection::VaultBackend,
+    master_password: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .config_manager
+        .migrate_vault_backend(target, master_password)
+        .await
+        .map_err(|e| e.to_string())
+}

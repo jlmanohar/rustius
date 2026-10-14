@@ -405,6 +405,19 @@ pub struct RustiusConfig {
     pub tree: Vec<TreeNode>,
 }
 
+/// The credential storage backend selected by the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VaultBackend {
+    /// Automatically choose: MasterPassword in portable mode, Keyring in installed mode.
+    #[default]
+    Auto,
+    /// Store credentials in the local encrypted vault file (Argon2id + AES-256-GCM).
+    MasterPassword,
+    /// Store credentials in the host operating system keyring (DPAPI/Keychain/SecretService).
+    Keyring,
+}
+
 /// Application-wide settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -420,6 +433,9 @@ pub struct AppSettings {
     /// Mimics MobaXterm's "Follow terminal folder" feature using OSC 7 sequences and terminal title updates.
     #[serde(default = "default_true")]
     pub sftp_follow_terminal_folder: bool,
+    /// Credential storage backend (Auto, MasterPassword, Keyring).
+    #[serde(default)]
+    pub vault_backend: VaultBackend,
 }
 
 impl Default for AppSettings {
@@ -433,6 +449,7 @@ impl Default for AppSettings {
             sidebar_width: 280,
             close_tab_on_exit: false,
             sftp_follow_terminal_folder: true,
+            vault_backend: VaultBackend::default(),
         }
     }
 }

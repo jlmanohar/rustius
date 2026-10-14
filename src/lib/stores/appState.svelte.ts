@@ -8,6 +8,8 @@ import type {
   ImportSummary,
   CredentialProfile,
   DialogOptions,
+  VaultStatus,
+  VaultBackend,
 } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -38,6 +40,8 @@ export class AppStore {
   isImportModalOpen = $state<boolean>(false);
   isCredentialsModalOpen = $state<boolean>(false);
   isNotesDrawerOpen = $state<boolean>(false);
+  isVaultUnlockModalOpen = $state<boolean>(false);
+  vaultStatus = $state<VaultStatus | null>(null);
   editingConnection = $state<Connection | null>(null);
   editingCredential = $state<CredentialProfile | null>(null);
   targetFolderId = $state<string | null>(null);
@@ -96,9 +100,65 @@ export class AppStore {
 
   init(): Promise<void> {
     if (!this._initPromise) {
-      this._initPromise = this.loadConfig();
+      this._initPromise = (async () => {
+        await this.loadConfig();
+        const status = await this.fetchVaultStatus();
+        if (
+          status &&
+          status.effective_backend === 'master_password' &&
+          status.has_vault_file &&
+          !status.is_unlocked
+        ) {
+          this.isVaultUnlockModalOpen = true;
+        }
+      })();
     }
     return this._initPromise;
+  }
+
+  async fetchVaultStatus(): Promise<VaultStatus | null> {
+    try {
+      this.vaultStatus = await invoke<VaultStatus>('vault_get_status');
+      return this.vaultStatus;
+    } catch (e) {
+      console.warn('Failed to fetch vault status:', e);
+      return null;
+    }
+  }
+
+  async unlockVault(password: string): Promise<boolean> {
+    try {
+      const ok = await invoke<boolean>('vault_unlock', { password });
+      if (ok) {
+        await this.fetchVaultStatus();
+        this.isVaultUnlockModalOpen = false;
+        await this.loadConfig();
+      }
+      return ok;
+    } catch (e) {
+      console.error('Failed to unlock vault:', e);
+      return false;
+    }
+  }
+
+  async lockVault(): Promise<void> {
+    try {
+      await invoke('vault_lock');
+      await this.fetchVaultStatus();
+    } catch (e) {
+      console.error('Failed to lock vault:', e);
+    }
+  }
+
+  async setMasterPassword(password: string): Promise<void> {
+    await invoke('vault_set_master_password', { password });
+    await this.fetchVaultStatus();
+  }
+
+  async changeVaultBackend(target: VaultBackend, masterPassword?: string): Promise<void> {
+    await invoke('vault_change_backend', { target, masterPassword: masterPassword || null });
+    await this.fetchVaultStatus();
+    await this.loadConfig();
   }
 
   async loadConfig() {

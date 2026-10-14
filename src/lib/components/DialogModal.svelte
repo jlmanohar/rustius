@@ -116,7 +116,7 @@
           <div class="input-container">
             <input
               bind:this={inputRef}
-              type="text"
+              type={dialog.options.inputType || 'text'}
               class="input-field dialog-input"
               placeholder={dialog.options.placeholder || 'Enter value...'}
               bind:value={inputValue}

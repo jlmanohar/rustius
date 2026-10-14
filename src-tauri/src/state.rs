@@ -110,7 +110,11 @@ impl AppState {
         }
 
         let storage = Box::new(PlaintextStorage);
-        let config_manager = Arc::new(ConfigManager::new(base_dir.clone(), storage)?);
+        let config_manager = Arc::new(ConfigManager::new_with_portable(
+            base_dir.clone(),
+            is_portable,
+            storage,
+        )?);
         let local_terminals = Arc::new(RwLock::new(HashMap::new()));
         let ssh_sessions = Arc::new(RwLock::new(HashMap::new()));
         let sftp_sessions = Arc::new(RwLock::new(HashMap::new()));
