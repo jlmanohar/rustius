@@ -7,6 +7,7 @@ import type {
   AppSettings,
   ImportSummary,
   CredentialProfile,
+  DialogOptions,
 } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -40,6 +41,52 @@ export class AppStore {
   editingConnection = $state<Connection | null>(null);
   editingCredential = $state<CredentialProfile | null>(null);
   targetFolderId = $state<string | null>(null);
+
+  // Desktop Native Dialog State
+  activeDialog = $state<{
+    id: string;
+    options: DialogOptions;
+    resolve: (value: any) => void;
+  } | null>(null);
+
+  prompt(options: Omit<DialogOptions, 'type'>): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.activeDialog = {
+        id: 'dialog-' + Date.now(),
+        options: { ...options, type: 'prompt' },
+        resolve,
+      };
+    });
+  }
+
+  confirm(options: Omit<DialogOptions, 'type'>): Promise<boolean> {
+    return new Promise((resolve) => {
+      this.activeDialog = {
+        id: 'dialog-' + Date.now(),
+        options: { ...options, type: 'confirm' },
+        resolve,
+      };
+    });
+  }
+
+  alert(options: Omit<DialogOptions, 'type'> | string): Promise<void> {
+    const opts = typeof options === 'string' ? { title: 'Notice', message: options } : options;
+    return new Promise((resolve) => {
+      this.activeDialog = {
+        id: 'dialog-' + Date.now(),
+        options: { ...opts, type: 'alert' },
+        resolve: () => resolve(),
+      };
+    });
+  }
+
+  closeDialog(result: any) {
+    if (this.activeDialog) {
+      const resolver = this.activeDialog.resolve;
+      this.activeDialog = null;
+      resolver(result);
+    }
+  }
 
   constructor() {
     this.loadConfig();

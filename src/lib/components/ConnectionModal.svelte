@@ -289,10 +289,18 @@
 
   async function handleSaveAsProfile() {
     if (!username.trim()) {
-      alert('Username is required to save credentials.');
+      await appState.alert({
+        title: 'Missing Username',
+        message: 'Username is required to save credentials.',
+      });
       return;
     }
-    const profileName = prompt('Enter a name for this Saved Credential:', `${name || 'Server'} Credentials`);
+    const profileName = await appState.prompt({
+      title: 'Save Credential Profile',
+      placeholder: 'e.g. Production AD Credentials',
+      initialValue: `${name || 'Server'} Credentials`,
+      confirmText: 'Save Credential',
+    });
     if (!profileName || !profileName.trim()) return;
 
     try {
@@ -323,7 +331,10 @@
       selectedCredentialId = newProf.id;
     } catch (err: any) {
       console.error('Failed to save credential:', err);
-      alert(`Failed to save credential: ${err?.message || err}`);
+      await appState.alert({
+        title: 'Failed to Save Credential',
+        message: err?.message || String(err),
+      });
     }
   }
 
@@ -355,7 +366,10 @@
 
   async function handleSave(connectNow: boolean = false) {
     if (!name.trim() || !host.trim()) {
-      alert('Session Name and Host address are required.');
+      await appState.alert({
+        title: 'Missing Required Fields',
+        message: 'Session Name and Host address are required.',
+      });
       return;
     }
 
@@ -459,7 +473,10 @@
       appState.isConnectionModalOpen = false;
     } catch (err: any) {
       console.error('Failed to save connection:', err);
-      alert(`Failed to save connection: ${err?.message || err}`);
+      await appState.alert({
+        title: 'Failed to Save Connection',
+        message: err?.message || String(err),
+      });
     }
   }
 </script>

@@ -152,3 +152,14 @@ export interface ImportSummary {
 }
 
 export type ImportFormat = 'auto' | 'mremoteng' | 'mobaxterm';
+
+export interface DialogOptions {
+  type: 'prompt' | 'confirm' | 'alert';
+  title: string;
+  message?: string;
+  placeholder?: string;
+  initialValue?: string;
+  confirmText?: string;
+  cancelText?: string;
+  isDanger?: boolean;
+}

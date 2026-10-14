@@ -252,11 +252,17 @@
 
   async function handleSave() {
     if (!formName.trim()) {
-      alert('Profile Name is required.');
+      await appState.alert({
+        title: 'Missing Required Field',
+        message: 'Profile Name is required.',
+      });
       return;
     }
     if (!formUsername.trim()) {
-      alert('Username is required.');
+      await appState.alert({
+        title: 'Missing Required Field',
+        message: 'Username is required.',
+      });
       return;
     }
 
@@ -306,9 +312,16 @@
     const linked = countLinkedConnections(cred.id);
     const msg = linked > 0
       ? `Delete saved credential "${cred.name}"? ${linked} connected server(s) will be detached.`
-      : `Delete saved credential "${cred.name}"?`;
+      : `Are you sure you want to delete saved credential "${cred.name}"?`;
 
-    if (confirm(msg)) {
+    const ok = await appState.confirm({
+      title: 'Delete Saved Credential',
+      message: msg,
+      confirmText: 'Delete Credential',
+      isDanger: true,
+    });
+
+    if (ok) {
       await appState.deleteCredential(cred.id);
     }
   }

@@ -6,6 +6,7 @@
   import CredentialsModal from '$lib/components/CredentialsModal.svelte';
   import SettingsModal from '$lib/components/SettingsModal.svelte';
   import ImportModal from '$lib/components/ImportModal.svelte';
+  import DialogModal from '$lib/components/DialogModal.svelte';
   import TerminalView from '$lib/components/TerminalView.svelte';
   import SftpView from '$lib/components/SftpView.svelte';
   import RdpView from '$lib/components/RdpView.svelte';
@@ -221,6 +222,9 @@
   {#if appState.isImportModalOpen}
     <ImportModal />
   {/if}
+
+  <!-- Desktop Native Dialog Modal (Prompt, Confirm, Alert) -->
+  <DialogModal />
 </div>
 
 <style>

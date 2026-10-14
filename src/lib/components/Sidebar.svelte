@@ -86,10 +86,14 @@
       <button
         class="btn-icon"
         title="Create Folder"
-        onclick={() => {
-          const name = prompt('Folder name:');
+        onclick={async () => {
+          const name = await appState.prompt({
+            title: 'New Folder',
+            placeholder: 'e.g. Production Servers, AWS Clusters',
+            confirmText: 'Create Folder',
+          });
           if (name && name.trim()) {
-            appState.addFolder(name.trim());
+            await appState.addFolder(name.trim());
           }
         }}
       >
@@ -207,10 +211,16 @@
                 <button
                   class="row-action-btn"
                   title="Delete Folder"
-                  onclick={(e) => {
+                  onclick={async (e) => {
                     e.stopPropagation();
-                    if (confirm(`Delete folder "${node.name}"?`)) {
-                      appState.removeNode(node.id);
+                    const ok = await appState.confirm({
+                      title: 'Delete Folder',
+                      message: `Are you sure you want to delete folder "${node.name}" and all of its contents?`,
+                      confirmText: 'Delete Folder',
+                      isDanger: true,
+                    });
+                    if (ok) {
+                      await appState.removeNode(node.id);
                     }
                   }}
                 >
@@ -290,10 +300,16 @@
                 <button
                   class="action-btn"
                   title="Delete"
-                  onclick={(e) => {
+                  onclick={async (e) => {
                     e.stopPropagation();
-                    if (confirm(`Delete "${node.name}"?`)) {
-                      appState.removeNode(node.id);
+                    const ok = await appState.confirm({
+                      title: 'Delete Connection',
+                      message: `Are you sure you want to delete connection "${node.name}"?`,
+                      confirmText: 'Delete Connection',
+                      isDanger: true,
+                    });
+                    if (ok) {
+                      await appState.removeNode(node.id);
                     }
                   }}
                 >
