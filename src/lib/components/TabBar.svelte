@@ -7,12 +7,48 @@
     X,
     Plus,
     XCircle,
-    FileText
+    FileText,
+    ChevronLeft,
+    ChevronRight,
   } from '@lucide/svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { DisposableStore } from '../utils/disposable';
 
   let contextMenu = $state<{ x: number; y: number; tabId: string } | null>(null);
   let activeConn = $derived(appState.getActiveConnection());
   let hasNotes = $derived(Boolean(activeConn?.notes && activeConn.notes.trim()));
+
+  let tabsContainerRef = $state<HTMLDivElement | null>(null);
+  let canScrollLeft = $state(false);
+  let canScrollRight = $state(false);
+  const disposables = new DisposableStore();
+
+  function updateScrollState() {
+    if (!tabsContainerRef) return;
+    canScrollLeft = tabsContainerRef.scrollLeft > 4;
+    canScrollRight =
+      tabsContainerRef.scrollLeft + tabsContainerRef.clientWidth <
+      tabsContainerRef.scrollWidth - 4;
+  }
+
+  function handleWheel(e: WheelEvent) {
+    if (!tabsContainerRef) return;
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      tabsContainerRef.scrollLeft += e.deltaY;
+      updateScrollState();
+      e.preventDefault();
+    }
+  }
+
+  function scrollTabs(direction: 'left' | 'right') {
+    if (!tabsContainerRef) return;
+    const amount = 160;
+    tabsContainerRef.scrollBy({
+      left: direction === 'left' ? -amount : amount,
+      behavior: 'smooth',
+    });
+    setTimeout(updateScrollState, 250);
+  }
 
   function handleClose(e: MouseEvent, id: string) {
     e.stopPropagation();
@@ -27,12 +63,58 @@
   function closeContextMenu() {
     contextMenu = null;
   }
+
+  $effect(() => {
+    const _ = appState.activeTabId;
+    const __ = appState.tabs.length;
+    if (tabsContainerRef) {
+      requestAnimationFrame(() => {
+        const activeEl = tabsContainerRef?.querySelector('.tab-active') as HTMLElement | null;
+        if (activeEl) {
+          activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        }
+        updateScrollState();
+      });
+    }
+  });
+
+  onMount(() => {
+    updateScrollState();
+    if (tabsContainerRef) {
+      disposables.trackEventListener(tabsContainerRef, 'scroll', updateScrollState);
+      if (window.ResizeObserver) {
+        const ro = new ResizeObserver(() => updateScrollState());
+        ro.observe(tabsContainerRef);
+        disposables.add(() => ro.disconnect());
+      }
+    }
+    disposables.trackEventListener(window, 'resize', updateScrollState);
+  });
+
+  onDestroy(() => {
+    disposables.dispose();
+  });
 </script>
 
 <svelte:window onclick={closeContextMenu} />
 
 <div class="tab-strip">
-  <div class="tabs-container">
+  {#if canScrollLeft}
+    <button
+      type="button"
+      class="tab-scroll-btn left"
+      title="Scroll tabs left"
+      onclick={() => scrollTabs('left')}
+    >
+      <ChevronLeft size={13} />
+    </button>
+  {/if}
+
+  <div
+    class="tabs-container"
+    bind:this={tabsContainerRef}
+    onwheel={handleWheel}
+  >
     {#each appState.tabs as tab (tab.id)}
       <div
         class="tab-item {appState.activeTabId === tab.id ? 'tab-active' : ''}"
@@ -105,6 +187,17 @@
     </div>
   </div>
 
+  {#if canScrollRight}
+    <button
+      type="button"
+      class="tab-scroll-btn right"
+      title="Scroll tabs right"
+      onclick={() => scrollTabs('right')}
+    >
+      <ChevronRight size={13} />
+    </button>
+  {/if}
+
   <div class="strip-right-actions">
     {#if activeConn}
       <button
@@ -176,29 +269,43 @@
 <style>
   .tab-strip {
     height: 38px;
+    min-height: 38px;
     background: var(--canvas);
     border-bottom: 1px solid var(--hairline);
     display: flex;
     align-items: center;
     padding: 0 8px;
     user-select: none;
+    min-width: 0;
+    width: 100%;
+    position: relative;
+    overflow: hidden;
+    gap: 4px;
   }
 
   .tabs-container {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
     overflow-x: auto;
+    overflow-y: hidden;
     flex: 1;
+    min-width: 0;
     height: 100%;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .tabs-container::-webkit-scrollbar {
+    display: none;
   }
 
   .tab-item {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     height: 30px;
-    padding: 0 10px;
+    padding: 0 8px 0 10px;
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--mute);
@@ -207,7 +314,13 @@
     cursor: pointer;
     border: 1px solid transparent;
     transition: all 0.12s ease;
+    min-width: 70px;
     max-width: 220px;
+    flex: 0 1 auto;
+    overflow: hidden;
+    box-sizing: border-box;
+    position: relative;
+    user-select: none;
   }
 
   .tab-item:hover {
@@ -219,17 +332,23 @@
     background: var(--canvas-elevated);
     color: var(--ink);
     border-color: var(--hairline);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   }
 
   .tab-icon {
     display: flex;
+    align-items: center;
+    justify-content: center;
     color: inherit;
+    flex-shrink: 0;
   }
 
   .tab-label {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    min-width: 0;
+    flex: 0 1 auto;
   }
 
   .tab-status-dot {
@@ -282,7 +401,9 @@
     border-radius: 3px;
     cursor: pointer;
     transition: all 0.12s ease;
-    margin-left: 2px;
+    margin-left: auto;
+    flex-shrink: 0;
+    padding: 0;
   }
 
   .tab-close:hover {
@@ -302,6 +423,7 @@
     color: var(--mute);
     cursor: pointer;
     transition: all 0.12s ease;
+    flex-shrink: 0;
   }
 
   .add-btn:hover {
@@ -313,6 +435,38 @@
     display: flex;
     align-items: center;
     gap: 2px;
+    margin-left: 2px;
+    flex-shrink: 0;
+  }
+
+  .tab-scroll-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 28px;
+    background: var(--canvas-elevated);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    color: var(--body);
+    cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+    transition: all 0.12s ease;
+    z-index: 2;
+  }
+
+  .tab-scroll-btn:hover {
+    color: var(--ink);
+    background: var(--canvas-hover);
+    border-color: var(--hairline-hover);
+  }
+
+  .tab-scroll-btn.left {
+    margin-right: 2px;
+  }
+
+  .tab-scroll-btn.right {
     margin-left: 2px;
   }
 
