@@ -209,27 +209,27 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--canvas);
+    background: var(--canvas-subtle);
     border: 1px solid var(--hairline);
-    color: var(--ink);
+    color: var(--body);
   }
 
   .icon-box.prompt {
-    color: var(--accent-cyan);
-    border-color: rgba(80, 227, 194, 0.25);
-    background: rgba(80, 227, 194, 0.08);
+    color: var(--ink);
+    border-color: var(--hairline);
+    background: var(--canvas-subtle);
   }
 
   .icon-box.danger {
     color: #ff4d4d;
-    border-color: rgba(255, 77, 77, 0.25);
+    border-color: rgba(255, 77, 77, 0.3);
     background: rgba(255, 77, 77, 0.08);
   }
 
   .icon-box.info {
-    color: var(--accent-blue);
-    border-color: rgba(0, 112, 243, 0.25);
-    background: rgba(0, 112, 243, 0.08);
+    color: var(--ink);
+    border-color: var(--hairline);
+    background: var(--canvas-subtle);
   }
 
   .dialog-title {
