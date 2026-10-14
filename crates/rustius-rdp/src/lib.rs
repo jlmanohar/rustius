@@ -1,3 +1,3 @@
 pub mod freerdp;
 
-pub use freerdp::{FreeRdpConfig, FreeRdpSession};
+pub use freerdp::{FreeRdpConfig, FreeRdpSession, RdpExitDiagnostic};

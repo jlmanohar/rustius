@@ -2,8 +2,9 @@ pub mod commands;
 pub mod state;
 
 use commands::config::{
-    add_connection, add_credential, add_folder, delete_credential, get_config, import_sessions,
-    import_sessions_content, remove_node, save_app_settings, update_credential,
+    add_connection, add_credential, add_folder, delete_credential, get_config,
+    get_connection_password, get_credential_password, import_sessions, import_sessions_content,
+    remove_node, save_app_settings, update_credential,
 };
 use commands::rdp::{
     freerdp_connect, freerdp_disconnect, freerdp_set_docked, freerdp_set_visibility,
@@ -100,6 +101,8 @@ pub fn run() {
             add_credential,
             update_credential,
             delete_credential,
+            get_connection_password,
+            get_credential_password,
             import_sessions,
             import_sessions_content,
             pty_spawn,

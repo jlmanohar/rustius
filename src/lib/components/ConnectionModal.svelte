@@ -1,5 +1,6 @@
 <script lang="ts">
   import { marked } from 'marked';
+  import { invoke } from '@tauri-apps/api/core';
   import { appState } from '../stores/appState.svelte';
   import type { Connection, ConnectionType, TreeNode, SecretRef, CredentialProfile } from '../types';
   import {
@@ -19,6 +20,10 @@
     Code,
     CheckSquare,
     Link as LinkIcon,
+    Eye,
+    EyeOff,
+    Copy,
+    Check,
   } from '@lucide/svelte';
 
   let connType = $state<ConnectionType>('ssh');
@@ -43,6 +48,125 @@
   let existingSecretRef = $state<SecretRef | undefined>(undefined);
   let domain = $state('');
   let selectedCredentialId = $state('');
+
+  // Password visibility & copy state
+  let showPassword = $state(false);
+  let showPassphrase = $state(false);
+  let copiedPassword = $state(false);
+  let copiedPassphrase = $state(false);
+
+  async function toggleShowPassword() {
+    if (showPassword) {
+      showPassword = false;
+      return;
+    }
+    if (!password) {
+      if (appState.editingConnection?.id) {
+        try {
+          const resolved = await invoke<string | null>('get_connection_password', {
+            connectionId: appState.editingConnection.id,
+          });
+          if (resolved) {
+            password = resolved;
+          }
+        } catch (e) {
+          console.error('Failed to retrieve connection password:', e);
+        }
+      } else if (selectedProfile?.id) {
+        try {
+          const resolved = await invoke<string | null>('get_credential_password', {
+            credentialId: selectedProfile.id,
+          });
+          if (resolved) {
+            password = resolved;
+          }
+        } catch (e) {
+          console.error('Failed to retrieve profile password:', e);
+        }
+      }
+    }
+    showPassword = true;
+  }
+
+  async function toggleShowPassphrase() {
+    if (showPassphrase) {
+      showPassphrase = false;
+      return;
+    }
+    if (!passphrase && appState.editingConnection?.id) {
+      try {
+        const resolved = await invoke<string | null>('get_connection_password', {
+          connectionId: appState.editingConnection.id,
+        });
+        if (resolved) {
+          passphrase = resolved;
+        }
+      } catch (e) {
+        console.error('Failed to retrieve connection passphrase:', e);
+      }
+    }
+    showPassphrase = true;
+  }
+
+  async function copyPasswordToClipboard() {
+    let textToCopy = password;
+    if (!textToCopy && appState.editingConnection?.id) {
+      try {
+        const resolved = await invoke<string | null>('get_connection_password', {
+          connectionId: appState.editingConnection.id,
+        });
+        if (resolved) {
+          textToCopy = resolved;
+          password = resolved;
+        }
+      } catch (e) {
+        console.error('Failed to copy password:', e);
+      }
+    } else if (!textToCopy && selectedProfile?.id) {
+      try {
+        const resolved = await invoke<string | null>('get_credential_password', {
+          credentialId: selectedProfile.id,
+        });
+        if (resolved) {
+          textToCopy = resolved;
+          password = resolved;
+        }
+      } catch (e) {
+        console.error('Failed to copy profile password:', e);
+      }
+    }
+    if (textToCopy) {
+      await navigator.clipboard.writeText(textToCopy);
+      copiedPassword = true;
+      setTimeout(() => {
+        copiedPassword = false;
+      }, 2000);
+    }
+  }
+
+  async function copyPassphraseToClipboard() {
+    let textToCopy = passphrase;
+    if (!textToCopy && appState.editingConnection?.id) {
+      try {
+        const resolved = await invoke<string | null>('get_connection_password', {
+          connectionId: appState.editingConnection.id,
+        });
+        if (resolved) {
+          textToCopy = resolved;
+          passphrase = resolved;
+        }
+      } catch (e) {
+        console.error('Failed to copy passphrase:', e);
+      }
+    }
+    if (textToCopy) {
+      await navigator.clipboard.writeText(textToCopy);
+      copiedPassphrase = true;
+      setTimeout(() => {
+        copiedPassphrase = false;
+      }, 2000);
+    }
+  }
 
   let selectedProfile = $derived.by(() => {
     if (!selectedCredentialId) return null;
@@ -583,15 +707,47 @@
 
         {#if authType === 'password'}
           <div class="form-cell {connType === 'rdp' ? 'col-1' : 'col-2'}">
-            <label for="conn-pass">Password</label>
-            <input
-              id="conn-pass"
-              type="password"
-              placeholder={selectedProfile ? 'Inherited from Profile (OS Keyring)' : (existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave empty to keep)' : '••••••••')}
-              bind:value={password}
-              disabled={!!selectedProfile}
-              class="input-field"
-            />
+            <div class="label-row">
+              <label for="conn-pass">Password</label>
+              {#if password || existingSecretRef?.type === 'keyring' || (selectedProfile && selectedProfile.auth.type === 'password')}
+                <button
+                  type="button"
+                  class="field-copy-btn"
+                  title="Copy password to clipboard"
+                  onclick={copyPasswordToClipboard}
+                >
+                  {#if copiedPassword}
+                    <Check size={11} />
+                    <span>Copied</span>
+                  {:else}
+                    <Copy size={11} />
+                    <span>Copy</span>
+                  {/if}
+                </button>
+              {/if}
+            </div>
+            <div class="password-input-wrapper">
+              <input
+                id="conn-pass"
+                type={showPassword ? 'text' : 'password'}
+                placeholder={selectedProfile ? 'Inherited from Profile (OS Keyring)' : (existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave empty to keep)' : '••••••••')}
+                bind:value={password}
+                disabled={!!selectedProfile}
+                class="input-field has-toggle"
+              />
+              <button
+                type="button"
+                class="password-toggle-btn"
+                title={showPassword ? 'Hide password' : 'View saved password'}
+                onclick={toggleShowPassword}
+              >
+                {#if showPassword}
+                  <EyeOff size={14} />
+                {:else}
+                  <Eye size={14} />
+                {/if}
+              </button>
+            </div>
           </div>
         {:else}
           <div class="form-cell col-2">
@@ -610,15 +766,47 @@
 
       {#if authType === 'keyfile'}
         <div class="form-cell">
-          <label for="conn-passphrase">Passphrase (optional)</label>
-          <input
-            id="conn-passphrase"
-            type="password"
-            placeholder={selectedProfile ? 'Inherited from Profile (OS Keyring)' : (existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave empty to keep)' : 'Key passphrase')}
-            bind:value={passphrase}
-            disabled={!!selectedProfile}
-            class="input-field"
-          />
+          <div class="label-row">
+            <label for="conn-passphrase">Passphrase (optional)</label>
+            {#if passphrase || existingSecretRef?.type === 'keyring'}
+              <button
+                type="button"
+                class="field-copy-btn"
+                title="Copy passphrase to clipboard"
+                onclick={copyPassphraseToClipboard}
+              >
+                {#if copiedPassphrase}
+                  <Check size={11} />
+                  <span>Copied</span>
+                {:else}
+                  <Copy size={11} />
+                  <span>Copy</span>
+                {/if}
+              </button>
+            {/if}
+          </div>
+          <div class="password-input-wrapper">
+            <input
+              id="conn-passphrase"
+              type={showPassphrase ? 'text' : 'password'}
+              placeholder={selectedProfile ? 'Inherited from Profile (OS Keyring)' : (existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave empty to keep)' : 'Key passphrase')}
+              bind:value={passphrase}
+              disabled={!!selectedProfile}
+              class="input-field has-toggle"
+            />
+            <button
+              type="button"
+              class="password-toggle-btn"
+              title={showPassphrase ? 'Hide passphrase' : 'View saved passphrase'}
+              onclick={toggleShowPassphrase}
+            >
+              {#if showPassphrase}
+                <EyeOff size={14} />
+              {:else}
+                <Eye size={14} />
+              {/if}
+            </button>
+          </div>
         </div>
       {/if}
 
@@ -1269,5 +1457,67 @@
     padding: clamp(10px, 1.4vh, 14px) 20px;
     border-top: 1px solid var(--hairline);
     background: var(--canvas-subtle);
+  }
+
+  .label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+
+  .label-row label {
+    margin-bottom: 0;
+  }
+
+  .field-copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    border: none;
+    color: var(--mute);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    transition: all 0.12s ease;
+  }
+
+  .field-copy-btn:hover {
+    color: var(--ink);
+    background: var(--surface-hover);
+  }
+
+  .password-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+  }
+
+  .password-input-wrapper input.has-toggle {
+    padding-right: 32px;
+  }
+
+  .password-toggle-btn {
+    position: absolute;
+    right: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: transparent;
+    border: none;
+    color: var(--mute);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    transition: all 0.12s ease;
+  }
+
+  .password-toggle-btn:hover {
+    color: var(--ink);
+    background: rgba(255, 255, 255, 0.08);
   }
 </style>

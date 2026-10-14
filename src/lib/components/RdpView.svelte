@@ -4,7 +4,7 @@
   import { listen } from '@tauri-apps/api/event';
   import { appState } from '../stores/appState.svelte';
   import { DisposableStore } from '../utils/disposable';
-  import type { TabSession } from '../types';
+  import type { TabSession, RdpExitDiagnostic } from '../types';
   import {
     Monitor,
     Maximize2,
@@ -14,6 +14,12 @@
     Zap,
     Power,
     ExternalLink,
+    Lock,
+    Shield,
+    Key,
+    AlertCircle,
+    Copy,
+    Check,
   } from '@lucide/svelte';
 
   let { session = $bindable() }: { session: TabSession } = $props();
@@ -27,6 +33,44 @@
   let disconnectReason = $state('');
   let isFullscreen = $state(false);
   let isDocked = $state(true);
+  let exitInfo = $state<RdpExitDiagnostic | null>(null);
+  let copiedDetails = $state(false);
+
+  function openEditConnection() {
+    if (!session.connectionId) return;
+    const conn = appState.findConnection(session.connectionId);
+    if (conn) {
+      appState.editingConnection = conn;
+      appState.isConnectionModalOpen = true;
+    }
+  }
+
+  async function copyErrorDetails() {
+    if (!exitInfo) return;
+    const lines = [
+      `Rustius RDP Error: ${exitInfo.title}`,
+      `Message: ${exitInfo.message}`,
+      `Exit Code: ${exitInfo.code} (0x${(exitInfo.code >>> 0).toString(16).toUpperCase()})`,
+    ];
+    if (exitInfo.raw_error) {
+      lines.push(`FreeRDP Log: ${exitInfo.raw_error}`);
+    }
+    if (session.connectionId) {
+      const conn = appState.findConnection(session.connectionId);
+      if (conn) {
+        lines.push(`Target: ${conn.host}:${conn.port}`);
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+      copiedDetails = true;
+      setTimeout(() => {
+        copiedDetails = false;
+      }, 2000);
+    } catch (e) {
+      console.warn('Clipboard copy failed:', e);
+    }
+  }
 
   const componentDisposables = new DisposableStore();
   const sessionDisposables = new DisposableStore();
@@ -130,6 +174,7 @@
     isConnected = false;
     isDisconnected = false;
     disconnectReason = '';
+    exitInfo = null;
     session.status = 'connecting';
 
     sessionDisposables.clear();
@@ -140,6 +185,12 @@
       isDisconnected = true;
       session.status = 'error';
       disconnectReason = 'Native FreeRDP acceleration requires the Rustius desktop application.';
+      exitInfo = {
+        code: -1,
+        title: 'Desktop Shell Required',
+        message: disconnectReason,
+        severity: 'error',
+      };
       return;
     }
 
@@ -148,6 +199,12 @@
       isDisconnected = true;
       session.status = 'error';
       disconnectReason = 'No connection ID specified for this RDP session.';
+      exitInfo = {
+        code: -1,
+        title: 'Configuration Error',
+        message: disconnectReason,
+        severity: 'error',
+      };
       return;
     }
 
@@ -164,15 +221,41 @@
       };
 
       // 2. Listen for session exit event
-      const unlistenExit = await listen<number>(`rdp-exit-${session.id}`, (event) => {
+      const unlistenExit = await listen<number | RdpExitDiagnostic>(`rdp-exit-${session.id}`, (event) => {
         if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
         isConnected = false;
         isConnecting = false;
         isDisconnected = true;
         session.status = 'disconnected';
-        disconnectReason = event.payload === 0
-          ? 'FreeRDP session ended by user or server'
-          : `FreeRDP exited with code ${event.payload}`;
+
+        if (typeof event.payload === 'object' && event.payload !== null) {
+          const diag = event.payload;
+          exitInfo = diag;
+          disconnectReason = `${diag.title}: ${diag.message}`;
+          if (diag.code !== 0) {
+            session.status = 'error';
+          }
+        } else {
+          const code = event.payload;
+          if (code === 0) {
+            disconnectReason = 'FreeRDP session ended by user or server';
+            exitInfo = {
+              code: 0,
+              title: 'Session Disconnected',
+              message: disconnectReason,
+              severity: 'info',
+            };
+          } else {
+            disconnectReason = `FreeRDP exited with code ${code}`;
+            exitInfo = {
+              code,
+              title: 'Session Disconnected',
+              message: disconnectReason,
+              severity: 'error',
+            };
+            session.status = 'error';
+          }
+        }
       });
 
       if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
@@ -223,7 +306,14 @@
       isConnecting = false;
       isDisconnected = true;
       session.status = 'error';
-      disconnectReason = err?.message || String(err);
+      const msg = err?.message || String(err);
+      disconnectReason = msg;
+      exitInfo = {
+        code: -1,
+        title: 'Connection Failed',
+        message: msg,
+        severity: 'error',
+      };
     }
   }
 
@@ -238,6 +328,12 @@
     isDisconnected = true;
     session.status = 'disconnected';
     disconnectReason = 'Session disconnected by user';
+    exitInfo = {
+      code: 0,
+      title: 'Session Disconnected',
+      message: 'Session disconnected by user',
+      severity: 'info',
+    };
     await invoke('freerdp_disconnect', { tabId: session.id }).catch(() => {});
   }
 
@@ -369,12 +465,44 @@
 
   <!-- Disconnected / Exit Banner -->
   {#if isDisconnected}
-    <div class="disconnect-bar">
+    <div class="disconnect-bar {exitInfo?.severity || 'info'}">
       <div class="disconnect-left">
-        <span class="status-indicator offline"></span>
-        <span class="disconnect-text">{disconnectReason || 'Remote Desktop session ended'}</span>
+        {#if exitInfo?.severity === 'security'}
+          <span class="disconnect-badge security">
+            <Lock size={12} />
+            <span>SECURITY</span>
+          </span>
+        {:else if exitInfo?.severity === 'auth'}
+          <span class="disconnect-badge auth">
+            <Key size={12} />
+            <span>AUTH</span>
+          </span>
+        {:else if exitInfo?.severity === 'error'}
+          <span class="disconnect-badge error">
+            <AlertCircle size={12} />
+            <span>ERROR</span>
+          </span>
+        {:else}
+          <span class="status-indicator offline"></span>
+        {/if}
+
+        <div class="disconnect-message-group">
+          {#if exitInfo?.title && exitInfo.code !== 0}
+            <span class="disconnect-title">{exitInfo.title}:</span>
+          {/if}
+          <span class="disconnect-text">{exitInfo?.message || disconnectReason || 'Remote Desktop session ended'}</span>
+          {#if exitInfo?.raw_error}
+            <span class="disconnect-raw-code" title={exitInfo.raw_error}>({exitInfo.raw_error})</span>
+          {/if}
+        </div>
       </div>
       <div class="disconnect-right">
+        {#if session.connectionId && (exitInfo?.severity === 'auth' || exitInfo?.severity === 'security')}
+          <button class="action-btn edit-btn" onclick={openEditConnection} title="Edit Connection Credentials">
+            <Key size={12} />
+            <span>Edit Credentials</span>
+          </button>
+        {/if}
         <button class="action-btn reconnect-btn" onclick={reconnect}>
           <RotateCcw size={12} />
           <span>Reconnect</span>
@@ -406,18 +534,90 @@
           <span>Initializing hardware-accelerated FreeRDP session...</span>
         </div>
       {:else if isDisconnected}
-        <div class="native-disconnected-msg">
-          <Monitor size={32} class="placeholder-icon" />
-          <p class="placeholder-title">{session.title || 'Remote Desktop'}</p>
-          <p class="placeholder-desc">{disconnectReason || 'Session disconnected'}</p>
-          <button class="action-btn reconnect-btn" onclick={reconnect}>
-            <RotateCcw size={12} />
-            <span>Reconnect</span>
-          </button>
+        <div class="native-disconnected-card {exitInfo?.severity || 'info'}">
+          <div class="card-icon-container">
+            {#if exitInfo?.severity === 'security'}
+              <Lock size={30} class="card-icon security" />
+            {:else if exitInfo?.severity === 'auth'}
+              <Key size={30} class="card-icon auth" />
+            {:else if exitInfo?.severity === 'error'}
+              <AlertCircle size={30} class="card-icon error" />
+            {:else}
+              <Monitor size={30} class="card-icon info" />
+            {/if}
+          </div>
+
+          <h3 class="card-title">
+            {exitInfo?.title || session.title || 'Remote Desktop Disconnected'}
+          </h3>
+
+          <p class="card-desc">
+            {exitInfo?.message || disconnectReason || 'Remote Desktop session has ended.'}
+          </p>
+
+          {#if exitInfo?.raw_error}
+            <div class="card-error-detail">
+              <span class="detail-label">FreeRDP Diagnostic:</span>
+              <code class="detail-code">{exitInfo.raw_error}</code>
+            </div>
+          {/if}
+
+          <div class="card-actions">
+            {#if session.connectionId && (exitInfo?.severity === 'auth' || exitInfo?.severity === 'security')}
+              <button class="action-btn edit-btn primary" onclick={openEditConnection}>
+                <Key size={13} />
+                <span>Update Credentials</span>
+              </button>
+            {/if}
+            <button class="action-btn reconnect-btn" onclick={reconnect}>
+              <RotateCcw size={13} />
+              <span>Reconnect</span>
+            </button>
+            <button class="action-btn copy-btn" onclick={copyErrorDetails} title="Copy error details">
+              {#if copiedDetails}
+                <Check size={13} />
+                <span>Copied</span>
+              {:else}
+                <Copy size={13} />
+                <span>Copy Details</span>
+              {/if}
+            </button>
+          </div>
         </div>
       {/if}
     </div>
   </div>
+
+  <!-- mRemoteNG-style bottom status bar when an error or lockout occurs -->
+  {#if isDisconnected && exitInfo && exitInfo.code !== 0}
+    <div class="rdp-bottom-status-bar {exitInfo.severity}">
+      <div class="bottom-status-left">
+        {#if exitInfo.severity === 'security'}
+          <Lock size={13} class="bottom-status-icon security" />
+        {:else if exitInfo.severity === 'auth'}
+          <Key size={13} class="bottom-status-icon auth" />
+        {:else}
+          <AlertCircle size={13} class="bottom-status-icon error" />
+        {/if}
+        <span class="bottom-status-title">{exitInfo.title}:</span>
+        <span class="bottom-status-msg">{exitInfo.message}</span>
+        {#if exitInfo.raw_error}
+          <span class="bottom-status-code">[{exitInfo.raw_error}]</span>
+        {/if}
+      </div>
+      <div class="bottom-status-right">
+        <button class="bottom-copy-btn" onclick={copyErrorDetails} title="Copy error to clipboard">
+          {#if copiedDetails}
+            <Check size={11} />
+            <span>Copied</span>
+          {:else}
+            <Copy size={11} />
+            <span>Copy</span>
+          {/if}
+        </button>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -542,6 +742,17 @@
     z-index: 9;
   }
 
+  .disconnect-bar.security,
+  .disconnect-bar.auth {
+    background: rgba(239, 68, 68, 0.08);
+    border-bottom-color: rgba(239, 68, 68, 0.3);
+  }
+
+  .disconnect-bar.error {
+    background: rgba(245, 158, 11, 0.08);
+    border-bottom-color: rgba(245, 158, 11, 0.3);
+  }
+
   @keyframes fadeIn {
     from {
       opacity: 0;
@@ -557,6 +768,46 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    overflow: hidden;
+  }
+
+  .disconnect-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    border-radius: var(--radius-sm);
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+  }
+
+  .disconnect-badge.security,
+  .disconnect-badge.auth {
+    background: rgba(239, 68, 68, 0.18);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+  }
+
+  .disconnect-badge.error {
+    background: rgba(245, 158, 11, 0.18);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+  }
+
+  .disconnect-message-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    overflow: hidden;
+  }
+
+  .disconnect-title {
+    font-weight: 600;
+    color: var(--ink);
   }
 
   .disconnect-text {
@@ -564,10 +815,18 @@
     font-size: 12px;
   }
 
+  .disconnect-raw-code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--mute);
+    opacity: 0.8;
+  }
+
   .disconnect-right {
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-shrink: 0;
   }
 
   .action-btn {
@@ -588,6 +847,19 @@
     background: #222222;
     border-color: #555555;
     color: #ffffff;
+  }
+
+  .action-btn.primary {
+    background: #ffffff;
+    color: #000000;
+    border-color: #ffffff;
+    font-weight: 500;
+  }
+
+  .action-btn.primary:hover {
+    background: #e5e5e5;
+    border-color: #e5e5e5;
+    color: #000000;
   }
 
   .reconnect-btn:hover {
@@ -686,13 +958,198 @@
     text-align: center;
   }
 
-  .native-disconnected-msg {
+  /* Central Disconnected Alert Card */
+  .native-disconnected-card {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
-    padding: 24px;
+    gap: 10px;
+    padding: 32px 28px;
     text-align: center;
+    max-width: 480px;
+    background: rgba(18, 18, 18, 0.75);
+    border: 1px solid #262626;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(12px);
+    animation: fadeIn 0.18s ease-out;
+  }
+
+  .native-disconnected-card.security,
+  .native-disconnected-card.auth {
+    border-color: rgba(239, 68, 68, 0.35);
+    background: radial-gradient(circle at top, rgba(239, 68, 68, 0.12) 0%, rgba(18, 18, 18, 0.85) 70%);
+  }
+
+  .native-disconnected-card.error {
+    border-color: rgba(245, 158, 11, 0.35);
+    background: radial-gradient(circle at top, rgba(245, 158, 11, 0.12) 0%, rgba(18, 18, 18, 0.85) 70%);
+  }
+
+  .card-icon-container {
+    width: 52px;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-full);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--hairline);
+    margin-bottom: 2px;
+  }
+
+  .card-icon.security,
+  .card-icon.auth {
+    color: #f87171;
+  }
+
+  .card-icon.error {
+    color: #fbbf24;
+  }
+
+  .card-icon.info {
+    color: var(--mute);
+  }
+
+  .card-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ink);
+    margin: 0;
+  }
+
+  .card-desc {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--body);
+    margin: 0;
+  }
+
+  .card-error-detail {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid #2a2a2a;
+    margin-top: 4px;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .detail-label {
+    color: var(--mute);
+    flex-shrink: 0;
+  }
+
+  .detail-code {
+    font-family: var(--font-mono);
+    color: #f87171;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .card-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  /* mRemoteNG-style Bottom Status Bar */
+  .rdp-bottom-status-bar {
+    height: 30px;
+    min-height: 30px;
+    padding: 0 14px;
+    background: #0d0d0d;
+    border-top: 1px solid #222222;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    z-index: 10;
+    user-select: text;
+  }
+
+  .rdp-bottom-status-bar.security,
+  .rdp-bottom-status-bar.auth {
+    background: #180a0a;
+    border-top-color: rgba(239, 68, 68, 0.4);
+  }
+
+  .rdp-bottom-status-bar.error {
+    background: #18120a;
+    border-top-color: rgba(245, 158, 11, 0.4);
+  }
+
+  .bottom-status-left {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .bottom-status-icon.security,
+  .bottom-status-icon.auth {
+    color: #f87171;
+    flex-shrink: 0;
+  }
+
+  .bottom-status-icon.error {
+    color: #fbbf24;
+    flex-shrink: 0;
+  }
+
+  .bottom-status-title {
+    font-weight: 600;
+    color: #ffffff;
+    flex-shrink: 0;
+  }
+
+  .bottom-status-msg {
+    color: var(--body);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .bottom-status-code {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--mute);
+    flex-shrink: 0;
+  }
+
+  .bottom-status-right {
+    flex-shrink: 0;
+    margin-left: 12px;
+  }
+
+  .bottom-copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid #333333;
+    color: #cccccc;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+
+  .bottom-copy-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    border-color: #555555;
   }
 
   .placeholder-title {

@@ -160,3 +160,53 @@ pub async fn import_sessions_content(
         .await
         .map_err(|e| format!("Failed to save imported sessions: {e}"))
 }
+
+#[tauri::command]
+pub async fn get_connection_password(
+    connection_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let uuid = rustius_core::connection::parse_uuid_or_fallback(&connection_id);
+    let conn = state
+        .config_manager
+        .get_connection(uuid)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let resolved = state
+        .config_manager
+        .resolve_connection(&conn)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    match resolved.auth {
+        rustius_core::connection::AuthMethod::Password { password, .. } => Ok(password),
+        rustius_core::connection::AuthMethod::KeyFile { passphrase, .. } => Ok(passphrase),
+        _ => Ok(None),
+    }
+}
+
+#[tauri::command]
+pub async fn get_credential_password(
+    credential_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let uuid = rustius_core::connection::parse_uuid_or_fallback(&credential_id);
+    let config = state.config_manager.get_config().await;
+    let cred = config
+        .credentials
+        .iter()
+        .find(|c| c.id == uuid)
+        .ok_or_else(|| format!("Credential profile not found: {}", credential_id))?;
+
+    let resolved = state
+        .config_manager
+        .resolve_credential(cred)
+        .map_err(|e| e.to_string())?;
+
+    match resolved.auth {
+        rustius_core::connection::AuthMethod::Password { password, .. } => Ok(password),
+        rustius_core::connection::AuthMethod::KeyFile { passphrase, .. } => Ok(passphrase),
+        _ => Ok(None),
+    }
+}

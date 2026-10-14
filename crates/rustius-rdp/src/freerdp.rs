@@ -4,10 +4,12 @@
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tracing::info;
 
@@ -25,13 +27,36 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME, WS_VISIBLE,
 };
 
-/// File-based diagnostics helper for FreeRDP embedding
+/// Diagnostic information explaining why a FreeRDP session ended or failed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RdpExitDiagnostic {
+    pub code: i32,
+    pub title: String,
+    pub message: String,
+    pub severity: String, // "security", "auth", "error", "info"
+    pub raw_error: Option<String>,
+}
+
+/// File-based and console diagnostics helper for FreeRDP embedding
 pub fn log_freerdp(msg: &str) {
-    tracing::info!("{}", msg);
+    if msg.contains("[ERROR]") {
+        tracing::error!(target: "rustius_rdp", "{}", msg);
+    } else if msg.contains("[WARN]") {
+        tracing::warn!(target: "rustius_rdp", "{}", msg);
+    } else {
+        tracing::info!(target: "rustius_rdp", "{}", msg);
+    }
+
     let log_path = std::env::temp_dir().join("rustius_freerdp.log");
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_path) {
         use std::io::Write;
         let _ = writeln!(f, "[FreeRDP] {}", msg);
+    }
+
+    let proc_log_path = std::env::temp_dir().join("freerdp_process.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(proc_log_path) {
+        use std::io::Write;
+        let _ = writeln!(f, "{}", msg);
     }
 }
 
@@ -68,6 +93,7 @@ pub struct FreeRdpSession {
     is_docked: Arc<AtomicBool>,
     pub is_visible: Arc<AtomicBool>,
     child_process: parking_lot::Mutex<Option<Child>>,
+    recent_logs: Arc<parking_lot::Mutex<VecDeque<String>>>,
 }
 
 #[cfg(windows)]
@@ -340,19 +366,9 @@ impl FreeRdpSession {
             .arg("/bpp:32")
             .arg("/log-level:INFO");
 
-        // Pipe FreeRDP process output to temporary debug log
-        let freerdp_log_path = std::env::temp_dir().join("freerdp_process.log");
-        if let Ok(file) = std::fs::File::create(&freerdp_log_path) {
-            if let Ok(file_err) = file.try_clone() {
-                cmd.stdout(Stdio::from(file));
-                cmd.stderr(Stdio::from(file_err));
-            } else {
-                cmd.stdout(Stdio::null()).stderr(Stdio::null());
-            }
-        } else {
-            cmd.stdout(Stdio::null()).stderr(Stdio::null());
-        }
-        cmd.stdin(Stdio::null());
+        cmd.stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .stdin(Stdio::null());
 
         #[cfg(windows)]
         {
@@ -360,9 +376,43 @@ impl FreeRdpSession {
             cmd.creation_flags(0x08000000);
         }
 
-        let child = cmd.spawn().context("Failed to spawn FreeRDP process")?;
+        let mut child = cmd.spawn().context("Failed to spawn FreeRDP process")?;
         let child_pid = child.id().unwrap_or(0);
         log_freerdp(&format!("FreeRDP session started with PID: {}", child_pid));
+
+        let recent_logs = Arc::new(parking_lot::Mutex::new(VecDeque::with_capacity(100)));
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+
+        if let Some(stdout) = stdout {
+            let recent = recent_logs.clone();
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    log_freerdp(&line);
+                    let mut buf = recent.lock();
+                    if buf.len() >= 100 {
+                        buf.pop_front();
+                    }
+                    buf.push_back(line);
+                }
+            });
+        }
+
+        if let Some(stderr) = stderr {
+            let recent = recent_logs.clone();
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    log_freerdp(&line);
+                    let mut buf = recent.lock();
+                    if buf.len() >= 100 {
+                        buf.pop_front();
+                    }
+                    buf.push_back(line);
+                }
+            });
+        }
 
         let child_hwnd = Arc::new(parking_lot::Mutex::new(0));
         let last_bounds = Arc::new(parking_lot::Mutex::new((config.x, config.y, config.width, config.height)));
@@ -470,6 +520,7 @@ impl FreeRdpSession {
             is_docked,
             is_visible,
             child_process: parking_lot::Mutex::new(Some(child)),
+            recent_logs,
         })
     }
 
@@ -608,6 +659,275 @@ impl FreeRdpSession {
         }
         Ok(None)
     }
+
+    /// Analyze the exit status and buffered process output to produce a user-facing diagnostic.
+    pub fn get_exit_diagnostic(&self, code: i32) -> RdpExitDiagnostic {
+        let logs: Vec<String> = self.recent_logs.lock().iter().cloned().collect();
+        describe_freerdp_exit(code, &logs)
+    }
+}
+
+/// Translate FreeRDP exit code and captured process stderr/stdout into a friendly diagnostic.
+pub fn describe_freerdp_exit(code: i32, logs: &[String]) -> RdpExitDiagnostic {
+    if code == 0 {
+        return RdpExitDiagnostic {
+            code: 0,
+            title: "Session Disconnected".to_string(),
+            message: "Remote Desktop session ended normally by user or server.".to_string(),
+            severity: "info".to_string(),
+            raw_error: None,
+        };
+    }
+
+    // Extract the most descriptive error line from recent logs
+    let raw_error = logs.iter().rev().find(|l| {
+        l.contains("[ERROR]")
+            || l.contains("ERRCONNECT_")
+            || l.contains("STATUS_")
+            || l.contains("failure")
+            || l.contains("denied")
+            || l.contains("rejected")
+    }).map(|s| s.trim().to_string());
+
+    let logs_joined = logs.iter().rev().take(40).cloned().collect::<Vec<_>>().join("\n").to_lowercase();
+    let ucode = code as u32;
+
+    // 1. Account Locked Out
+    if ucode == 0x00020017
+        || code == 131095
+        || logs_joined.contains("status_account_locked_out")
+        || logs_joined.contains("0xc0000234")
+        || logs_joined.contains("errconnect_account_locked_out")
+        || logs_joined.contains("account locked out")
+        || logs_joined.contains("locked out for security")
+        || logs_joined.contains("account is locked")
+    {
+        return RdpExitDiagnostic {
+            code,
+            title: "Account Locked Out".to_string(),
+            message: "The user account is locked out for security reasons and cannot log in. Please contact your system administrator to unlock it.".to_string(),
+            severity: "security".to_string(),
+            raw_error,
+        };
+    }
+
+    // 2. Logon Failure / Bad Credentials
+    if ucode == 0x00020014
+        || code == 131092
+        || logs_joined.contains("status_logon_failure")
+        || logs_joined.contains("0xc000006a")
+        || logs_joined.contains("errconnect_logon_failure")
+        || logs_joined.contains("authentication failure, check credentials")
+        || logs_joined.contains("logon failure")
+    {
+        return RdpExitDiagnostic {
+            code,
+            title: "Logon Failed (Invalid Credentials)".to_string(),
+            message: "Incorrect username or password. Please verify your credentials and domain, then try again.".to_string(),
+            severity: "auth".to_string(),
+            raw_error,
+        };
+    }
+
+    // 3. Password Expired
+    if ucode == 0x00020015
+        || code == 131093
+        || logs_joined.contains("status_password_expired")
+        || logs_joined.contains("0xc0000071")
+        || logs_joined.contains("errconnect_password_expired")
+        || logs_joined.contains("password has expired")
+    {
+        return RdpExitDiagnostic {
+            code,
+            title: "Password Expired".to_string(),
+            message: "The user account password has expired and must be updated before connecting.".to_string(),
+            severity: "auth".to_string(),
+            raw_error,
+        };
+    }
+
+    // 4. Password Must Change
+    if ucode == 0x00020018
+        || code == 131096
+        || logs_joined.contains("status_password_must_change")
+        || logs_joined.contains("0xc0000224")
+        || logs_joined.contains("errconnect_password_must_change")
+        || logs_joined.contains("must change password")
+    {
+        return RdpExitDiagnostic {
+            code,
+            title: "Password Must Be Changed".to_string(),
+            message: "The user is required to change their password at next logon before establishing a session.".to_string(),
+            severity: "auth".to_string(),
+            raw_error,
+        };
+    }
+
+    // 5. Account Disabled
+    if ucode == 0x00020016
+        || code == 131094
+        || logs_joined.contains("status_account_disabled")
+        || logs_joined.contains("0xc0000072")
+        || logs_joined.contains("errconnect_account_disabled")
+        || logs_joined.contains("account is disabled")
+    {
+        return RdpExitDiagnostic {
+            code,
+            title: "Account Disabled".to_string(),
+            message: "The user account is currently disabled on the remote host or domain.".to_string(),
+            severity: "security".to_string(),
+            raw_error,
+        };
+    }
+
+    // 6. Logon Type Not Granted (Remote Desktop Users membership)
+    if ucode == 0x0002001B
+        || code == 131099
+        || logs_joined.contains("status_logon_type_not_granted")
+        || logs_joined.contains("0xc000015b")
+        || logs_joined.contains("errconnect_logon_type_not_granted")
+        || logs_joined.contains("logon type not granted")
+    {
+        return RdpExitDiagnostic {
+            code,
+            title: "Remote Logon Not Granted".to_string(),
+            message: "The user account is not permitted to log on remotely. Ensure the user belongs to the 'Remote Desktop Users' or 'Administrators' group.".to_string(),
+            severity: "security".to_string(),
+            raw_error,
+        };
+    }
+
+    // 7. Account Restriction (Hours / Workstation)
+    if ucode == 0x00020019
+        || code == 131097
+        || logs_joined.contains("status_account_restriction")
+        || logs_joined.contains("0xc000006e")
+        || logs_joined.contains("errconnect_account_restriction")
+    {
+        return RdpExitDiagnostic {
+            code,
+            title: "Account Restricted".to_string(),
+            message: "Logon rejected due to user account policy restrictions (such as unauthorized logon hours or restricted workstation).".to_string(),
+            severity: "security".to_string(),
+            raw_error,
+        };
+    }
+
+    // 8. Account Expired
+    if ucode == 0x0002001A
+        || code == 131098
+        || logs_joined.contains("status_account_expired")
+        || logs_joined.contains("0xc0000193")
+        || logs_joined.contains("errconnect_account_expired")
+    {
+        return RdpExitDiagnostic {
+            code,
+            title: "Account Expired".to_string(),
+            message: "The user account has reached its expiration date and cannot be used.".to_string(),
+            severity: "security".to_string(),
+            raw_error,
+        };
+    }
+
+    // 9. Access Denied
+    if ucode == 0x00020020
+        || code == 131104
+        || logs_joined.contains("status_access_denied")
+        || logs_joined.contains("0xc0000022")
+        || logs_joined.contains("errconnect_access_denied")
+    {
+        return RdpExitDiagnostic {
+            code,
+            title: "Access Denied".to_string(),
+            message: "Access was denied by the remote computer or network policy.".to_string(),
+            severity: "security".to_string(),
+            raw_error,
+        };
+    }
+
+    // 10. Security Negotiation / NLA Failure
+    if ucode == 0x0002000D
+        || ucode == 0x0002000C
+        || code == 131085
+        || code == 131084
+        || logs_joined.contains("errconnect_security_nego_connect_failed")
+        || logs_joined.contains("security negotiation failure")
+        || logs_joined.contains("security negotiation failed")
+    {
+        return RdpExitDiagnostic {
+            code,
+            title: "Security Negotiation Failed".to_string(),
+            message: "Failed to negotiate security with remote host. Network Level Authentication (NLA) or TLS negotiation was rejected.".to_string(),
+            severity: "error".to_string(),
+            raw_error,
+        };
+    }
+
+    // 11. TLS / SSL Handshake Failure
+    if ucode == 0x00020006
+        || ucode == 0x0002000F
+        || code == 131078
+        || code == 131087
+        || logs_joined.contains("tls_connect_failed")
+        || logs_joined.contains("ssl_do_handshake")
+    {
+        return RdpExitDiagnostic {
+            code,
+            title: "TLS Connection Failed".to_string(),
+            message: "Failed to establish an encrypted TLS/SSL session with the remote host.".to_string(),
+            severity: "error".to_string(),
+            raw_error,
+        };
+    }
+
+    // 12. Host Unreachable / DNS / Connection Refused / Timeout
+    if ucode == 0x00020004
+        || ucode == 0x00020009
+        || ucode == 0x0002000A
+        || ucode == 0x00020002
+        || ucode == 0x00020003
+        || code == 131081
+        || code == 131082
+        || code == 131076
+        || logs_joined.contains("getaddrinfo")
+        || logs_joined.contains("host not found")
+        || logs_joined.contains("connection refused")
+        || logs_joined.contains("wsaeconnrefused")
+        || logs_joined.contains("wsaetimedout")
+        || logs_joined.contains("timed out")
+        || logs_joined.contains("connect_transport_failed")
+    {
+        return RdpExitDiagnostic {
+            code,
+            title: "Connection Failed".to_string(),
+            message: "Could not connect to remote host. Verify the hostname/IP is correct, port 3389 is open, and Remote Desktop is enabled on the server.".to_string(),
+            severity: "error".to_string(),
+            raw_error,
+        };
+    }
+
+    // 13. Licensing
+    if ucode == 0x0002001C
+        || code == 131100
+        || logs_joined.contains("errconnect_no_or_revoked_license")
+    {
+        return RdpExitDiagnostic {
+            code,
+            title: "Licensing Error".to_string(),
+            message: "Remote Desktop Services licensing error (no client access license or license was revoked).".to_string(),
+            severity: "error".to_string(),
+            raw_error,
+        };
+    }
+
+    // 14. Fallback
+    RdpExitDiagnostic {
+        code,
+        title: "Remote Desktop Error".to_string(),
+        message: format!("FreeRDP exited with code {} (0x{:08X}).", code, ucode),
+        severity: "error".to_string(),
+        raw_error,
+    }
 }
 
 impl Drop for FreeRdpSession {
@@ -615,3 +935,55 @@ impl Drop for FreeRdpSession {
         self.disconnect();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_describe_freerdp_clean_exit() {
+        let diag = describe_freerdp_exit(0, &[]);
+        assert_eq!(diag.code, 0);
+        assert_eq!(diag.severity, "info");
+    }
+
+    #[test]
+    fn test_describe_freerdp_account_locked_by_code() {
+        let diag = describe_freerdp_exit(131095, &[]);
+        assert_eq!(diag.title, "Account Locked Out");
+        assert_eq!(diag.severity, "security");
+        assert!(diag.message.contains("locked out for security"));
+    }
+
+    #[test]
+    fn test_describe_freerdp_account_locked_by_log() {
+        let logs = vec![
+            "[ERROR][com.freerdp.core.nego] - Security Negotiation failed (NTSTATUS 0xc0000234 - STATUS_ACCOUNT_LOCKED_OUT)".to_string(),
+        ];
+        let diag = describe_freerdp_exit(1, &logs);
+        assert_eq!(diag.title, "Account Locked Out");
+        assert_eq!(diag.severity, "security");
+        assert_eq!(diag.raw_error, Some(logs[0].clone()));
+    }
+
+    #[test]
+    fn test_describe_freerdp_logon_failure() {
+        let logs = vec![
+            "[ERROR][com.freerdp.core] - freerdp_set_last_error_ex: ERRCONNECT_LOGON_FAILURE [0x00020014]".to_string(),
+        ];
+        let diag = describe_freerdp_exit(131092, &logs);
+        assert_eq!(diag.title, "Logon Failed (Invalid Credentials)");
+        assert_eq!(diag.severity, "auth");
+    }
+
+    #[test]
+    fn test_describe_freerdp_connection_refused() {
+        let logs = vec![
+            "[ERROR][com.freerdp.core] - connect: connection refused to 192.168.1.100:3389".to_string(),
+        ];
+        let diag = describe_freerdp_exit(131081, &logs);
+        assert_eq!(diag.title, "Connection Failed");
+        assert_eq!(diag.severity, "error");
+    }
+}
+

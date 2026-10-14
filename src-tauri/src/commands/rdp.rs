@@ -128,12 +128,25 @@ pub async fn freerdp_connect(
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
             match session_clone.try_wait_child() {
                 Ok(Some(status)) => {
-                    info!(
-                        "FreeRDP session exited with status {:?} for tab: {}",
-                        status, tab_id_clone
-                    );
                     let code = status.code().unwrap_or(0);
-                    let _ = app_clone.emit(&exit_event, code);
+                    let diag = session_clone.get_exit_diagnostic(code);
+                    if code == 0 {
+                        info!(
+                            "FreeRDP session ended normally for tab: {}",
+                            tab_id_clone
+                        );
+                    } else {
+                        tracing::error!(
+                            target: "rustius_rdp",
+                            "FreeRDP exited for tab {}: [{}] {} (code: {}, raw: {:?})",
+                            tab_id_clone,
+                            diag.title,
+                            diag.message,
+                            code,
+                            diag.raw_error
+                        );
+                    }
+                    let _ = app_clone.emit(&exit_event, &diag);
                     break;
                 }
                 Ok(None) => {}

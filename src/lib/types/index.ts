@@ -50,6 +50,14 @@ export interface RdpConfig {
   scale_factor?: number;
 }
 
+export interface RdpExitDiagnostic {
+  code: number;
+  title: string;
+  message: string;
+  severity: 'security' | 'auth' | 'error' | 'info';
+  raw_error?: string;
+}
+
 export interface CredentialProfile {
   id: string;
   name: string;

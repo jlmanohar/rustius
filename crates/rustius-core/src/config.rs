@@ -149,6 +149,36 @@ impl ConfigManager {
         &self.secret_manager
     }
 
+    /// Resolve a credential profile with its secret hydrated from the OS keyring or secret manager.
+    pub fn resolve_credential(&self, cred: &CredentialProfile) -> Result<CredentialProfile> {
+        let mut resolved = cred.clone();
+        match &cred.auth {
+            AuthMethod::Password { username, .. } => {
+                let pass = cred.auth.resolve_password(&self.secret_manager)?;
+                resolved.auth = AuthMethod::Password {
+                    username: username.clone(),
+                    password: pass,
+                    secret_ref: None,
+                };
+            }
+            AuthMethod::KeyFile {
+                username,
+                key_path,
+                ..
+            } => {
+                let passphrase = cred.auth.resolve_passphrase(&self.secret_manager)?;
+                resolved.auth = AuthMethod::KeyFile {
+                    username: username.clone(),
+                    key_path: key_path.clone(),
+                    passphrase,
+                    secret_ref: None,
+                };
+            }
+            _ => {}
+        }
+        Ok(resolved)
+    }
+
     /// Resolve all credentials in a connection into an in-memory copy with secrets hydrated.
     /// If the connection is linked to a reusable `CredentialProfile`, authentication and
     /// domain are inherited and hydrated from the profile.
@@ -159,30 +189,8 @@ impl ConfigManager {
         if let Some(cred_id) = conn.credential_id {
             let config = self.config.read().await;
             if let Some(profile) = config.credentials.iter().find(|c| c.id == cred_id) {
-                let mut profile_auth = profile.auth.clone();
-                match &profile.auth {
-                    AuthMethod::Password { username, .. } => {
-                        let pass = profile.auth.resolve_password(&self.secret_manager)?;
-                        profile_auth = AuthMethod::Password {
-                            username: username.clone(),
-                            password: pass,
-                            secret_ref: None,
-                        };
-                    }
-                    AuthMethod::KeyFile {
-                        username, key_path, ..
-                    } => {
-                        let passphrase = profile.auth.resolve_passphrase(&self.secret_manager)?;
-                        profile_auth = AuthMethod::KeyFile {
-                            username: username.clone(),
-                            key_path: key_path.clone(),
-                            passphrase,
-                            secret_ref: None,
-                        };
-                    }
-                    _ => {}
-                }
-                resolved.auth = profile_auth;
+                let resolved_profile = self.resolve_credential(profile)?;
+                resolved.auth = resolved_profile.auth;
 
                 // For RDP, if the profile defines a domain and connection does not explicitly override it, inherit domain
                 if resolved.connection_type == crate::connection::ConnectionType::Rdp {

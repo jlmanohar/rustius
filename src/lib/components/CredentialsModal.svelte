@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { invoke } from '@tauri-apps/api/core';
   import { appState } from '../stores/appState.svelte';
   import type { CredentialProfile, TreeNode } from '../types';
   import {
@@ -13,6 +14,9 @@
     Search,
     Check,
     Layers,
+    Eye,
+    EyeOff,
+    Copy,
   } from '@lucide/svelte';
 
   // State
@@ -29,6 +33,149 @@
   let formKeyPath = $state('');
   let formPassphrase = $state('');
   let existingSecretRef = $state<any>(undefined);
+
+  // Password visibility & copying
+  let revealedPasswords = $state<Record<string, string>>({});
+  let copiedId = $state<string | null>(null);
+  let showFormPassword = $state(false);
+  let showFormPassphrase = $state(false);
+  let copiedFormPassword = $state(false);
+  let copiedFormPassphrase = $state(false);
+
+  async function toggleRevealProfilePassword(cred: CredentialProfile) {
+    if (revealedPasswords[cred.id]) {
+      const copy = { ...revealedPasswords };
+      delete copy[cred.id];
+      revealedPasswords = copy;
+      return;
+    }
+
+    try {
+      const resolved = await invoke<string | null>('get_credential_password', {
+        credentialId: cred.id,
+      });
+      if (resolved) {
+        revealedPasswords = { ...revealedPasswords, [cred.id]: resolved };
+      } else {
+        revealedPasswords = { ...revealedPasswords, [cred.id]: '(No password saved)' };
+      }
+    } catch (e) {
+      console.error('Failed to get credential password:', e);
+    }
+  }
+
+  async function copyProfilePassword(e: MouseEvent, cred: CredentialProfile) {
+    e.stopPropagation();
+    let val = revealedPasswords[cred.id];
+    if (!val) {
+      try {
+        const resolved = await invoke<string | null>('get_credential_password', {
+          credentialId: cred.id,
+        });
+        if (resolved) {
+          val = resolved;
+          revealedPasswords = { ...revealedPasswords, [cred.id]: resolved };
+        }
+      } catch (err) {
+        console.error('Failed to fetch password for copy:', err);
+      }
+    }
+    if (val && val !== '(No password saved)') {
+      await navigator.clipboard.writeText(val);
+      copiedId = cred.id;
+      setTimeout(() => {
+        copiedId = null;
+      }, 2000);
+    }
+  }
+
+  async function toggleFormPassword() {
+    if (showFormPassword) {
+      showFormPassword = false;
+      return;
+    }
+    if (!formPassword && editingId) {
+      try {
+        const resolved = await invoke<string | null>('get_credential_password', {
+          credentialId: editingId,
+        });
+        if (resolved) {
+          formPassword = resolved;
+        }
+      } catch (e) {
+        console.error('Failed to retrieve credential password:', e);
+      }
+    }
+    showFormPassword = true;
+  }
+
+  async function toggleFormPassphrase() {
+    if (showFormPassphrase) {
+      showFormPassphrase = false;
+      return;
+    }
+    if (!formPassphrase && editingId) {
+      try {
+        const resolved = await invoke<string | null>('get_credential_password', {
+          credentialId: editingId,
+        });
+        if (resolved) {
+          formPassphrase = resolved;
+        }
+      } catch (e) {
+        console.error('Failed to retrieve credential passphrase:', e);
+      }
+    }
+    showFormPassphrase = true;
+  }
+
+  async function copyFormPassword() {
+    let text = formPassword;
+    if (!text && editingId) {
+      try {
+        const resolved = await invoke<string | null>('get_credential_password', {
+          credentialId: editingId,
+        });
+        if (resolved) {
+          text = resolved;
+          formPassword = resolved;
+        }
+      } catch (e) {
+        console.error('Failed to copy form password:', e);
+      }
+    }
+    if (text) {
+      await navigator.clipboard.writeText(text);
+      copiedFormPassword = true;
+      setTimeout(() => {
+        copiedFormPassword = false;
+      }, 2000);
+    }
+  }
+
+  async function copyFormPassphrase() {
+    let text = formPassphrase;
+    if (!text && editingId) {
+      try {
+        const resolved = await invoke<string | null>('get_credential_password', {
+          credentialId: editingId,
+        });
+        if (resolved) {
+          text = resolved;
+          formPassphrase = resolved;
+        }
+      } catch (e) {
+        console.error('Failed to copy form passphrase:', e);
+      }
+    }
+    if (text) {
+      await navigator.clipboard.writeText(text);
+      copiedFormPassphrase = true;
+      setTimeout(() => {
+        copiedFormPassphrase = false;
+      }, 2000);
+    }
+  }
 
   function countLinkedConnections(id: string): number {
     let count = 0;
@@ -68,6 +215,8 @@
     formKeyPath = '';
     formPassphrase = '';
     existingSecretRef = undefined;
+    showFormPassword = false;
+    showFormPassphrase = false;
   }
 
   function startEdit(cred: CredentialProfile) {
@@ -76,6 +225,8 @@
     formName = cred.name;
     formDomain = cred.domain || '';
     existingSecretRef = 'secret_ref' in cred.auth ? cred.auth.secret_ref : undefined;
+    showFormPassword = false;
+    showFormPassphrase = false;
 
     if (cred.auth.type === 'keyfile') {
       formType = 'keyfile';
@@ -95,6 +246,8 @@
   function cancelEdit() {
     isEditing = false;
     editingId = null;
+    showFormPassword = false;
+    showFormPassphrase = false;
   }
 
   async function handleSave() {
@@ -266,10 +419,50 @@
                     <Layers size={11} />
                     <span>{linkedCount} {linkedCount === 1 ? 'server' : 'servers'} linked</span>
                   </span>
+                  {#if revealedPasswords[cred.id]}
+                    <div class="revealed-secret-pill" title="Saved secret value">
+                      <span class="secret-label">Secret:</span>
+                      <span class="secret-value">{revealedPasswords[cred.id]}</span>
+                      <button
+                        type="button"
+                        class="copy-secret-btn"
+                        title="Copy to clipboard"
+                        onclick={(e) => copyProfilePassword(e, cred)}
+                      >
+                        {#if copiedId === cred.id}
+                          <Check size={11} />
+                        {:else}
+                          <Copy size={11} />
+                        {/if}
+                      </button>
+                    </div>
+                  {/if}
                 </div>
               </div>
 
               <div class="profile-actions-col">
+                <button
+                  class="action-btn"
+                  title={revealedPasswords[cred.id] ? 'Hide Secret' : 'View Saved Password'}
+                  onclick={() => toggleRevealProfilePassword(cred)}
+                >
+                  {#if revealedPasswords[cred.id]}
+                    <EyeOff size={13} />
+                  {:else}
+                    <Eye size={13} />
+                  {/if}
+                </button>
+                <button
+                  class="action-btn"
+                  title="Copy Password"
+                  onclick={(e) => copyProfilePassword(e, cred)}
+                >
+                  {#if copiedId === cred.id}
+                    <Check size={13} />
+                  {:else}
+                    <Copy size={13} />
+                  {/if}
+                </button>
                 <button
                   class="action-btn"
                   title="Edit Profile"
@@ -359,14 +552,46 @@
               />
             </div>
             <div class="form-cell col-2">
-              <label for="cred-pass">Domain Password</label>
-              <input
-                id="cred-pass"
-                type="password"
-                placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave blank to keep)' : '••••••••'}
-                bind:value={formPassword}
-                class="input-field"
-              />
+              <div class="field-label-row">
+                <label for="cred-pass">Domain Password</label>
+                {#if formPassword || editingId}
+                  <button
+                    type="button"
+                    class="field-copy-btn"
+                    title="Copy Password"
+                    onclick={copyFormPassword}
+                  >
+                    {#if copiedFormPassword}
+                      <Check size={11} />
+                      <span>Copied</span>
+                    {:else}
+                      <Copy size={11} />
+                      <span>Copy</span>
+                    {/if}
+                  </button>
+                {/if}
+              </div>
+              <div class="password-input-wrapper">
+                <input
+                  id="cred-pass"
+                  type={showFormPassword ? 'text' : 'password'}
+                  placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave blank to keep)' : '••••••••'}
+                  bind:value={formPassword}
+                  class="input-field has-toggle"
+                />
+                <button
+                  type="button"
+                  class="password-toggle-btn"
+                  title={showFormPassword ? 'Hide password' : 'View saved password'}
+                  onclick={toggleFormPassword}
+                >
+                  {#if showFormPassword}
+                    <EyeOff size={14} />
+                  {:else}
+                    <Eye size={14} />
+                  {/if}
+                </button>
+              </div>
             </div>
           {:else if formType === 'password'}
             <div class="form-cell col-1">
@@ -380,14 +605,46 @@
               />
             </div>
             <div class="form-cell col-1">
-              <label for="cred-pass">Password</label>
-              <input
-                id="cred-pass"
-                type="password"
-                placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave blank to keep)' : '••••••••'}
-                bind:value={formPassword}
-                class="input-field"
-              />
+              <div class="field-label-row">
+                <label for="cred-pass">Password</label>
+                {#if formPassword || editingId}
+                  <button
+                    type="button"
+                    class="field-copy-btn"
+                    title="Copy Password"
+                    onclick={copyFormPassword}
+                  >
+                    {#if copiedFormPassword}
+                      <Check size={11} />
+                      <span>Copied</span>
+                    {:else}
+                      <Copy size={11} />
+                      <span>Copy</span>
+                    {/if}
+                  </button>
+                {/if}
+              </div>
+              <div class="password-input-wrapper">
+                <input
+                  id="cred-pass"
+                  type={showFormPassword ? 'text' : 'password'}
+                  placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave blank to keep)' : '••••••••'}
+                  bind:value={formPassword}
+                  class="input-field has-toggle"
+                />
+                <button
+                  type="button"
+                  class="password-toggle-btn"
+                  title={showFormPassword ? 'Hide password' : 'View saved password'}
+                  onclick={toggleFormPassword}
+                >
+                  {#if showFormPassword}
+                    <EyeOff size={14} />
+                  {:else}
+                    <Eye size={14} />
+                  {/if}
+                </button>
+              </div>
             </div>
           {:else}
             <div class="form-cell col-1">
@@ -411,14 +668,46 @@
               />
             </div>
             <div class="form-cell col-2">
-              <label for="cred-passphrase">Passphrase (optional)</label>
-              <input
-                id="cred-passphrase"
-                type="password"
-                placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave blank to keep)' : 'Key passphrase'}
-                bind:value={formPassphrase}
-                class="input-field"
-              />
+              <div class="field-label-row">
+                <label for="cred-passphrase">Passphrase (optional)</label>
+                {#if formPassphrase || editingId}
+                  <button
+                    type="button"
+                    class="field-copy-btn"
+                    title="Copy Passphrase"
+                    onclick={copyFormPassphrase}
+                  >
+                    {#if copiedFormPassphrase}
+                      <Check size={11} />
+                      <span>Copied</span>
+                    {:else}
+                      <Copy size={11} />
+                      <span>Copy</span>
+                    {/if}
+                  </button>
+                {/if}
+              </div>
+              <div class="password-input-wrapper">
+                <input
+                  id="cred-passphrase"
+                  type={showFormPassphrase ? 'text' : 'password'}
+                  placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave blank to keep)' : 'Key passphrase'}
+                  bind:value={formPassphrase}
+                  class="input-field has-toggle"
+                />
+                <button
+                  type="button"
+                  class="password-toggle-btn"
+                  title={showFormPassphrase ? 'Hide passphrase' : 'View saved passphrase'}
+                  onclick={toggleFormPassphrase}
+                >
+                  {#if showFormPassphrase}
+                    <EyeOff size={14} />
+                  {:else}
+                    <Eye size={14} />
+                  {/if}
+                </button>
+              </div>
             </div>
           {/if}
         </div>
@@ -878,5 +1167,102 @@
     font-size: 11px;
     color: var(--mute);
     line-height: 1.4;
+  }
+
+  .field-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .field-copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: transparent;
+    border: none;
+    color: var(--mute);
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 1px 4px;
+    border-radius: var(--radius-sm);
+    transition: all 0.12s ease;
+  }
+
+  .field-copy-btn:hover {
+    color: var(--ink);
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .password-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+  }
+
+  .password-input-wrapper input.has-toggle {
+    padding-right: 32px;
+  }
+
+  .password-toggle-btn {
+    position: absolute;
+    right: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: transparent;
+    border: none;
+    color: var(--mute);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    transition: all 0.12s ease;
+  }
+
+  .password-toggle-btn:hover {
+    color: var(--ink);
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .revealed-secret-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(251, 191, 36, 0.1);
+    border: 1px solid rgba(251, 191, 36, 0.25);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-family: var(--font-mono);
+  }
+
+  .revealed-secret-pill .secret-label {
+    color: #fbbf24;
+    font-weight: 600;
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+
+  .revealed-secret-pill .secret-value {
+    color: #fde68a;
+  }
+
+  .copy-secret-btn {
+    background: transparent;
+    border: none;
+    color: #fbbf24;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: opacity 0.12s ease;
+  }
+
+  .copy-secret-btn:hover {
+    opacity: 0.8;
   }
 </style>
