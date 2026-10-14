@@ -311,8 +311,18 @@ export class AppStore {
   }
 
   openTab(session: Omit<TabSession, 'id'>) {
+    let title = session.title?.trim() || '';
+    if (session.connectionId) {
+      const conn = this.findConnection(session.connectionId);
+      if (conn) {
+        title = (conn.name && conn.name.trim()) ? conn.name.trim() : conn.host;
+      }
+    }
+    if (!title) {
+      title = session.type === 'local_terminal' ? 'Local Shell' : 'Session';
+    }
     const id = 'tab-' + Date.now();
-    const newTab: TabSession = { id, ...session };
+    const newTab: TabSession = { ...session, id, title };
     this.tabs.push(newTab);
     this.activeTabId = id;
   }

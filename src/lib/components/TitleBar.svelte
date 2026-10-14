@@ -79,8 +79,8 @@
       <div class="titlebar-active-pill" data-tauri-drag-region>
         <span class="session-indicator {activeSession.status}"></span>
         <span class="session-name">{activeSession.title}</span>
-        {#if activeSession.badge}
-          <span class="session-badge">{activeSession.badge}</span>
+        {#if activeSession.type}
+          <span class="session-badge">{activeSession.type === 'local_terminal' ? 'SHELL' : activeSession.type.toUpperCase()}</span>
         {/if}
       </div>
     {/if}
@@ -155,7 +155,8 @@
     width: 138px;
     height: 100%;
     pointer-events: none;
-    flex-shrink: 0;
+    flex-shrink: 1;
+    min-width: 0;
   }
 
   .titlebar-center {
@@ -165,7 +166,8 @@
     justify-content: center;
     height: 100%;
     overflow: hidden;
-    padding: 0 16px;
+    padding: 0 8px;
+    min-width: 0;
   }
 
   .titlebar-active-pill {
@@ -183,6 +185,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     pointer-events: none;
+    min-width: 0;
   }
 
   .session-indicator {

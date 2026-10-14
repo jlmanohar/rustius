@@ -123,6 +123,7 @@
         onclick={() => (appState.activeTabId = tab.id)}
         onkeydown={(e) => e.key === 'Enter' && (appState.activeTabId = tab.id)}
         oncontextmenu={(e) => handleTabContextMenu(e, tab.id)}
+        title={tab.badge && tab.badge !== tab.title ? `${tab.title} (${tab.badge})` : tab.title}
       >
         <span class="tab-icon">
           {#if tab.type === 'ssh'}
@@ -144,13 +145,10 @@
           <span class="tab-status-dot disconnected" title={tab.status === 'error' ? 'Connection lost' : 'Disconnected'}></span>
         {/if}
 
-        {#if tab.badge}
-          <span class="tab-mono-badge">{tab.badge}</span>
-        {/if}
-
         <button
+          type="button"
           class="tab-close"
-          title="Close"
+          title="Close tab"
           onclick={(e) => handleClose(e, tab.id)}
         >
           <X size={12} />
@@ -379,15 +377,6 @@
     }
   }
 
-  .tab-mono-badge {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--mute);
-    background: var(--canvas-subtle);
-    border: 1px solid var(--hairline);
-    padding: 1px 5px;
-    border-radius: 3px;
-  }
 
   .tab-close {
     background: transparent;

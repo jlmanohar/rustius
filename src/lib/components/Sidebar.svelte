@@ -59,12 +59,13 @@
 
   function handleConnect(conn: Connection) {
     const cType = conn.connection_type || conn.conn_type || 'ssh';
+    const title = (conn.name && conn.name.trim()) ? conn.name.trim() : conn.host;
     appState.openTab({
-      title: conn.name,
+      title,
       type: cType,
       connectionId: conn.id,
       status: 'connecting',
-      badge: `${cType.toUpperCase()} · ${conn.host}`,
+      badge: conn.host,
     });
   }
 

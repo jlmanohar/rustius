@@ -460,12 +460,13 @@
       await appState.addConnection(newConnection, parentFolderId || null);
 
       if (connectNow) {
+        const title = (newConnection.name && newConnection.name.trim()) ? newConnection.name.trim() : newConnection.host;
         appState.openTab({
-          title: newConnection.name,
+          title,
           type: newConnection.conn_type,
           connectionId: newConnection.id,
           status: 'connecting',
-          badge: `${newConnection.conn_type.toUpperCase()} · ${newConnection.host}`,
+          badge: newConnection.host,
         });
       }
 
