@@ -258,10 +258,7 @@
 
               <div class="node-details">
                 <div class="node-name-row">
-                  <span class="node-title">{node.name}</span>
-                  {#if node.environment}
-                    <span class="env-pill">{node.environment}</span>
-                  {/if}
+                  <span class="node-title" title={node.name}>{node.name}</span>
                   {#if node.notes}
                     <span class="notes-indicator" title="Has documentation/notes">
                       <FileText size={10} />
@@ -269,6 +266,9 @@
                   {/if}
                 </div>
                 <div class="node-sub">
+                  {#if node.environment}
+                    <span class="env-pill">{node.environment}</span>
+                  {/if}
                   <span class="node-endpoint">{node.host}:{node.port}</span>
                   {#if node.description}
                     <span class="node-desc" title={node.description}>· {node.description}</span>
@@ -350,7 +350,7 @@
 
 <style>
   .sidebar {
-    width: clamp(230px, 18vw, 270px);
+    width: clamp(250px, 19vw, 300px);
     height: 100%;
     background: var(--canvas);
     border-right: 1px solid var(--hairline);
@@ -571,15 +571,17 @@
   }
 
   .connection-row {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 36px;
+    height: 38px;
     padding: 0 8px;
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition: background 0.12s ease;
     margin-bottom: 1px;
+    overflow: hidden;
   }
 
   .connection-row:hover {
@@ -602,12 +604,14 @@
     display: flex;
     flex-direction: column;
     justify-content: center;
+    gap: 1px;
   }
 
   .node-name-row {
     display: flex;
     align-items: center;
     gap: 6px;
+    min-width: 0;
   }
 
   .node-title {
@@ -617,6 +621,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    min-width: 0;
+    flex: 1;
   }
 
   .env-pill {
@@ -627,6 +633,8 @@
     background: var(--canvas-elevated);
     border: 1px solid var(--hairline);
     color: var(--mute);
+    flex-shrink: 0;
+    line-height: 13px;
   }
 
   .notes-indicator {
@@ -634,6 +642,7 @@
     align-items: center;
     color: var(--mute);
     margin-left: 2px;
+    flex-shrink: 0;
   }
 
   .node-sub {
@@ -646,6 +655,7 @@
     display: flex;
     align-items: center;
     gap: 4px;
+    min-width: 0;
   }
 
   .node-endpoint {
@@ -663,15 +673,25 @@
   }
 
   .node-actions {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
     display: flex;
     align-items: center;
     gap: 2px;
     opacity: 0;
+    pointer-events: none;
+    background: var(--canvas-hover);
+    padding: 2px 4px 2px 8px;
+    border-radius: var(--radius-sm);
+    box-shadow: -10px 0 12px var(--canvas-hover);
     transition: opacity 0.12s ease;
   }
 
   .connection-row:hover .node-actions {
     opacity: 1;
+    pointer-events: auto;
   }
 
   .action-btn {
