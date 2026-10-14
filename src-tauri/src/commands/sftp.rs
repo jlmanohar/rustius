@@ -312,18 +312,19 @@ pub async fn local_get_home_dir() -> Result<String, String> {
 #[tauri::command]
 pub async fn local_list_dir(path: String) -> Result<Vec<FileEntry>, String> {
     let p = Path::new(&path);
-    if !p.exists() {
+    if !tokio::fs::try_exists(p).await.unwrap_or(false) {
         return Err(format!("Local path does not exist: {path}"));
     }
 
-    let read_dir = std::fs::read_dir(p)
+    let mut read_dir = tokio::fs::read_dir(p)
+        .await
         .map_err(|e| format!("Failed to read local directory '{path}': {e}"))?;
 
     let mut results = Vec::new();
-    for entry in read_dir.flatten() {
+    while let Ok(Some(entry)) = read_dir.next_entry().await {
         let name = entry.file_name().to_string_lossy().to_string();
         let full_path = entry.path().to_string_lossy().to_string();
-        let meta = entry.metadata().ok();
+        let meta = entry.metadata().await.ok();
 
         let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
         let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
@@ -358,7 +359,8 @@ pub async fn local_list_dir(path: String) -> Result<Vec<FileEntry>, String> {
 /// Used when organizing local files or preparing a destination folder before SFTP downloads.
 #[tauri::command]
 pub async fn local_mkdir(path: String) -> Result<(), String> {
-    std::fs::create_dir_all(&path)
+    tokio::fs::create_dir_all(&path)
+        .await
         .map_err(|e| format!("Failed to create local directory '{path}': {e}"))
 }
 
@@ -368,9 +370,9 @@ pub async fn local_mkdir(path: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn local_remove(path: String, is_dir: bool) -> Result<(), String> {
     if is_dir {
-        std::fs::remove_dir_all(&path)
+        tokio::fs::remove_dir_all(&path).await
     } else {
-        std::fs::remove_file(&path)
+        tokio::fs::remove_file(&path).await
     }
     .map_err(|e| format!("Failed to delete local path '{path}': {e}"))
 }
@@ -380,6 +382,7 @@ pub async fn local_remove(path: String, is_dir: bool) -> Result<(), String> {
 /// Allows in-place renaming of files in the local pane of the dual-pane SFTP manager.
 #[tauri::command]
 pub async fn local_rename(from: String, to: String) -> Result<(), String> {
-    std::fs::rename(&from, &to)
+    tokio::fs::rename(&from, &to)
+        .await
         .map_err(|e| format!("Failed to rename local path '{from}' to '{to}': {e}"))
 }

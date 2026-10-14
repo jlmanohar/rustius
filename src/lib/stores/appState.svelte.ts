@@ -88,8 +88,17 @@ export class AppStore {
     }
   }
 
+  private _initPromise: Promise<void> | null = null;
+
   constructor() {
-    this.loadConfig();
+    // Intentionally empty. Asynchronous config loading happens via init()
+  }
+
+  init(): Promise<void> {
+    if (!this._initPromise) {
+      this._initPromise = this.loadConfig();
+    }
+    return this._initPromise;
   }
 
   async loadConfig() {
