@@ -4145,7 +4145,7 @@ dependencies = [
 
 [[package]]
 name = "rustius"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4166,7 +4166,7 @@ dependencies = [
 
 [[package]]
 name = "rustius-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm 0.10.3",
@@ -4194,7 +4194,7 @@ dependencies = [
 
 [[package]]
 name = "rustius-rdp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4210,7 +4210,7 @@ dependencies = [
 
 [[package]]
 name = "rustius-ssh"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4226,7 +4226,7 @@ dependencies = [
 
 [[package]]
 name = "rustius-terminal"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "portable-pty",

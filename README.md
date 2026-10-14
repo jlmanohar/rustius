@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://rustius.app/"><img src="https://img.shields.io/badge/website-rustius.app-171717.svg?style=flat-square" alt="Website" /></a>
-  <a href="https://github.com/jlmanohar/rustius/releases"><img src="https://img.shields.io/badge/version-0.1.0-blue.svg?style=flat-square" alt="Version 0.1.0" /></a>
+  <a href="https://github.com/jlmanohar/rustius/releases"><img src="https://img.shields.io/badge/version-0.1.1-blue.svg?style=flat-square" alt="Version 0.1.1" /></a>
   <a href="https://tauri.app/"><img src="https://img.shields.io/badge/Tauri-v2-24C8D8.svg?style=flat-square&logo=tauri&logoColor=white" alt="Tauri v2" /></a>
   <a href="https://svelte.dev/"><img src="https://img.shields.io/badge/Svelte-5-FF3E00.svg?style=flat-square&logo=svelte&logoColor=white" alt="Svelte 5" /></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-2021-DEA584.svg?style=flat-square&logo=rust&logoColor=black" alt="Rust 2021" /></a>
