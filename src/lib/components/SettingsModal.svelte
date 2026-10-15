@@ -26,10 +26,10 @@
   let showSidebar = $state(appState.config.app_settings?.show_sidebar ?? true);
   let sftpFollowTerminal = $state(appState.config.app_settings?.sftp_follow_terminal_folder ?? true);
   let termType = $state(appState.config.app_settings?.default_terminal_type ?? 'xterm-256color');
-  let fontSize = $state(appState.config.app_settings?.font_size ?? 14);
+  let fontSize = $state(appState.config.app_settings?.font_size ?? 13);
   const MONOSPACE_FONTS = [
-    { label: 'Geist Mono (Default)', value: 'Geist Mono' },
-    { label: 'JetBrains Mono', value: 'JetBrains Mono' },
+    { label: 'JetBrains Mono (Default)', value: 'JetBrains Mono' },
+    { label: 'Geist Mono', value: 'Geist Mono' },
     { label: 'Fira Code', value: 'Fira Code' },
     { label: 'Cascadia Mono', value: 'Cascadia Mono' },
     { label: 'Cascadia Code', value: 'Cascadia Code' },
@@ -89,7 +89,7 @@
     }
   });
 
-  const initialFont = appState.config.app_settings?.font_family?.replace(/['"]/g, '').trim() || 'Geist Mono';
+  const initialFont = appState.config.app_settings?.font_family?.replace(/['"]/g, '').trim() || 'JetBrains Mono';
   let fontFamily = $state(initialFont);
   let customFontFamily = $state(initialFont);
   let selectedFontPreset = $state<string>('custom');
@@ -110,7 +110,7 @@
     if (val !== 'custom') {
       fontFamily = val;
     } else {
-      fontFamily = customFontFamily.trim() || 'Geist Mono';
+      fontFamily = customFontFamily.trim() || 'JetBrains Mono';
     }
   }
   let selectedVaultBackend = $state<VaultBackend>(appState.config.app_settings?.vault_backend ?? 'auto');
@@ -223,8 +223,8 @@
       show_sidebar: showSidebar,
       sftp_follow_terminal_folder: sftpFollowTerminal,
       default_terminal_type: termType.trim() || 'xterm-256color',
-      font_size: Number(fontSize) || 14,
-      font_family: fontFamily.replace(/['"]/g, '').trim() || 'Geist Mono',
+      font_size: Number(fontSize) || 13,
+      font_family: fontFamily.replace(/['"]/g, '').trim() || 'JetBrains Mono',
       vault_backend: selectedVaultBackend,
     };
 
@@ -244,10 +244,10 @@
     showSidebar = true;
     sftpFollowTerminal = true;
     termType = 'xterm-256color';
-    fontSize = 14;
-    selectedFontPreset = 'Geist Mono';
+    fontSize = 13;
+    selectedFontPreset = 'JetBrains Mono';
     customFontFamily = '';
-    fontFamily = 'Geist Mono';
+    fontFamily = 'JetBrains Mono';
     selectedVaultBackend = 'auto';
 
     const updated = {
@@ -256,8 +256,8 @@
       show_sidebar: true,
       sftp_follow_terminal_folder: true,
       default_terminal_type: 'xterm-256color',
-      font_size: 14,
-      font_family: 'Geist Mono',
+      font_size: 13,
+      font_family: 'JetBrains Mono',
       vault_backend: 'auto' as VaultBackend,
     };
 

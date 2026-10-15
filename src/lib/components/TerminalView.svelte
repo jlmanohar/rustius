@@ -185,8 +185,6 @@
         }
       } else if (session.type === 'ssh' && session.connectionId) {
         try {
-          term?.write(`\x1b[90mConnecting to remote SSH host...\x1b[0m\r`);
-
           const unlisten = await listen<number[]>(`terminal-data-${session.id}`, (event) => {
             if (term && event.payload) {
               term.write(new Uint8Array(event.payload));
@@ -209,14 +207,19 @@
             return;
           }
 
-          // Clear connecting line so remote prompt/banner begins cleanly
-          term?.write('\x1b[2K\r');
           session.status = 'connected';
           isTauriLive = true;
           setTimeout(() => {
             try {
               fitAddon?.fit();
               term?.focus();
+              if (term && term.cols >= 10 && term.rows >= 2) {
+                invoke('ssh_resize', {
+                  tabId: session.id,
+                  cols: term.cols,
+                  rows: term.rows,
+                }).catch(() => {});
+              }
             } catch {}
           }, 30);
 
@@ -295,14 +298,14 @@
         fonts.push(`'${part}'`);
       }
     }
-    fonts.push("'Geist Mono'", "'Cascadia Mono'", "'Consolas'", "'JetBrains Mono'", "'Menlo'", "monospace");
+    fonts.push("'JetBrains Mono'", "'Geist Mono'", "'Cascadia Mono'", "'Consolas'", "'Menlo'", "monospace");
     return Array.from(new Set(fonts)).join(', ');
   }
 
   // Dynamically synchronize terminal font family and size with application preferences
   $effect(() => {
     const resolvedFont = getTerminalFontStack(appState.config.app_settings?.font_family);
-    const userFontSize = Number(appState.config.app_settings?.font_size) || 14;
+    const userFontSize = Number(appState.config.app_settings?.font_size) || 13;
 
     if (term) {
       let changed = false;
@@ -326,7 +329,7 @@
     if (!terminalContainer) return;
 
     const resolvedFont = getTerminalFontStack(appState.config.app_settings?.font_family);
-    const userFontSize = Number(appState.config.app_settings?.font_size) || 14;
+    const userFontSize = Number(appState.config.app_settings?.font_size) || 13;
 
     term = new Terminal({
       cursorBlink: true,
@@ -342,7 +345,7 @@
         selectionBackground: 'rgba(255, 255, 255, 0.25)',
         black: '#000000',
         red: '#ee0000',
-        green: '#0070f3',
+        green: '#10b981',
         yellow: '#f5a623',
         blue: '#0070f3',
         magenta: '#7928ca',

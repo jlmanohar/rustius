@@ -512,8 +512,8 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             theme: "dark".into(),
-            font_family: "Geist Mono".into(),
-            font_size: 14,
+            font_family: "JetBrains Mono".into(),
+            font_size: 13,
             default_terminal_type: "xterm-256color".into(),
             show_sidebar: true,
             sidebar_width: 280,
@@ -708,7 +708,7 @@ mod tests {
         let config = RustiusConfig::default();
         assert_eq!(config.version, "1.0.0");
         assert_eq!(config.app_settings.theme, "dark");
-        assert_eq!(config.app_settings.font_size, 14);
+        assert_eq!(config.app_settings.font_size, 13);
         assert!(config.app_settings.sftp_follow_terminal_folder);
         assert!(config.tree.is_empty());
     }

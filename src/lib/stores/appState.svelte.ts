@@ -18,8 +18,8 @@ export class AppStore {
     version: '1.0.0',
     app_settings: {
       theme: 'dark',
-      font_family: 'Geist Mono',
-      font_size: 14,
+      font_family: 'JetBrains Mono',
+      font_size: 13,
       default_terminal_type: 'xterm-256color',
       show_sidebar: true,
       sidebar_width: 280,
