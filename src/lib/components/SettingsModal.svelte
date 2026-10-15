@@ -27,7 +27,37 @@
   let sftpFollowTerminal = $state(appState.config.app_settings?.sftp_follow_terminal_folder ?? true);
   let termType = $state(appState.config.app_settings?.default_terminal_type ?? 'xterm-256color');
   let fontSize = $state(appState.config.app_settings?.font_size ?? 14);
-  let fontFamily = $state(appState.config.app_settings?.font_family?.replace(/['"]/g, '').trim() || 'Geist Mono');
+  const MONOSPACE_FONTS = [
+    { label: 'Geist Mono (Default)', value: 'Geist Mono' },
+    { label: 'JetBrains Mono', value: 'JetBrains Mono' },
+    { label: 'Fira Code', value: 'Fira Code' },
+    { label: 'Cascadia Mono', value: 'Cascadia Mono' },
+    { label: 'Cascadia Code', value: 'Cascadia Code' },
+    { label: 'Consolas', value: 'Consolas' },
+    { label: 'Source Code Pro', value: 'Source Code Pro' },
+    { label: 'SF Mono', value: 'SF Mono' },
+    { label: 'Menlo', value: 'Menlo' },
+    { label: 'Ubuntu Mono', value: 'Ubuntu Mono' },
+    { label: 'DejaVu Sans Mono', value: 'DejaVu Sans Mono' },
+    { label: 'Courier New', value: 'Courier New' },
+  ];
+
+  const initialFont = appState.config.app_settings?.font_family?.replace(/['"]/g, '').trim() || 'Geist Mono';
+  const isPresetFont = MONOSPACE_FONTS.some((f) => f.value.toLowerCase() === initialFont.toLowerCase());
+  const matchedPreset = MONOSPACE_FONTS.find((f) => f.value.toLowerCase() === initialFont.toLowerCase())?.value || 'custom';
+
+  let selectedFontPreset = $state<string>(isPresetFont ? matchedPreset : 'custom');
+  let customFontFamily = $state<string>(isPresetFont ? '' : initialFont);
+  let fontFamily = $state(initialFont);
+
+  function handleFontPresetSelect(val: string) {
+    selectedFontPreset = val;
+    if (val !== 'custom') {
+      fontFamily = val;
+    } else {
+      fontFamily = customFontFamily.trim() || 'Geist Mono';
+    }
+  }
   let selectedVaultBackend = $state<VaultBackend>(appState.config.app_settings?.vault_backend ?? 'auto');
   let isMigrating = $state(false);
   let vaultNotice = $state<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -160,6 +190,8 @@
     sftpFollowTerminal = true;
     termType = 'xterm-256color';
     fontSize = 14;
+    selectedFontPreset = 'Geist Mono';
+    customFontFamily = '';
     fontFamily = 'Geist Mono';
     selectedVaultBackend = 'auto';
 
@@ -329,14 +361,38 @@
             </div>
 
             <div class="setting-field">
-              <label for="font-family-input" class="field-label">FONT FAMILY</label>
-              <input
-                id="font-family-input"
-                class="geist-input"
-                type="text"
-                bind:value={fontFamily}
-                placeholder="Geist Mono"
-              />
+              <label for="font-family-select" class="field-label">FONT FAMILY</label>
+              <select
+                id="font-family-select"
+                class="geist-select"
+                value={selectedFontPreset}
+                onchange={(e) => handleFontPresetSelect(e.currentTarget.value)}
+              >
+                {#each MONOSPACE_FONTS as font}
+                  <option value={font.value} style="font-family: '{font.value}', monospace;">
+                    {font.label}
+                  </option>
+                {/each}
+                <option value="custom">Custom Font Name...</option>
+              </select>
+              <span class="field-hint">Select a curated monospace font for terminal sessions.</span>
+
+              {#if selectedFontPreset === 'custom'}
+                <div class="custom-font-box">
+                  <label for="font-family-custom-input" class="field-label sub-label">CUSTOM FONT FAMILY NAME</label>
+                  <input
+                    id="font-family-custom-input"
+                    class="geist-input"
+                    type="text"
+                    bind:value={customFontFamily}
+                    oninput={() => {
+                      fontFamily = customFontFamily.trim() || 'Geist Mono';
+                    }}
+                    placeholder="e.g. Inconsolata, Hack, Monaco"
+                  />
+                  <span class="field-hint">Enter the exact name of a font installed on your system.</span>
+                </div>
+              {/if}
             </div>
           </div>
         {:else if activeCategory === 'sftp'}
@@ -822,7 +878,8 @@
     line-height: 1.35;
   }
 
-  .geist-input {
+  .geist-input,
+  .geist-select {
     background: #0a0a0a;
     border: 1px solid #262626;
     border-radius: 6px;
@@ -834,8 +891,40 @@
     transition: border-color 0.15s ease;
   }
 
-  .geist-input:focus {
+  .geist-select {
+    appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 12px;
+    padding-right: 28px;
+    cursor: pointer;
+  }
+
+  .geist-select option {
+    background: #111111;
+    color: #ededed;
+    padding: 6px 10px;
+  }
+
+  .geist-input:focus,
+  .geist-select:focus {
     border-color: #ededed;
+  }
+
+  .custom-font-box {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    animation: fadeIn 0.15s ease-out;
+  }
+
+  .sub-label {
+    font-size: 9.5px;
+    color: #777777;
+    margin-top: 4px;
+    letter-spacing: 0.04em;
   }
 
   /* Toggle Switch */
