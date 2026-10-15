@@ -285,14 +285,42 @@
     await startSession();
   }
 
+  // Dynamically synchronize terminal font family and size with application preferences
+  $effect(() => {
+    const userFont = appState.config.app_settings?.font_family?.trim();
+    const resolvedFont = userFont ? `${userFont}, 'Geist Mono', monospace` : "'Geist Mono', monospace";
+    const userFontSize = Number(appState.config.app_settings?.font_size) || 14;
+
+    if (term) {
+      let changed = false;
+      if (term.options.fontSize !== userFontSize) {
+        term.options.fontSize = userFontSize;
+        changed = true;
+      }
+      if (term.options.fontFamily !== resolvedFont) {
+        term.options.fontFamily = resolvedFont;
+        changed = true;
+      }
+      if (changed) {
+        try {
+          fitAddon?.fit();
+        } catch {}
+      }
+    }
+  });
+
   onMount(async () => {
     if (!terminalContainer) return;
+
+    const userFont = appState.config.app_settings?.font_family?.trim();
+    const resolvedFont = userFont ? `${userFont}, 'Geist Mono', monospace` : "'Geist Mono', monospace";
+    const userFontSize = Number(appState.config.app_settings?.font_size) || 14;
 
     term = new Terminal({
       cursorBlink: true,
       cursorStyle: 'bar',
-      fontSize: 13,
-      fontFamily: "'Geist Mono', 'JetBrains Mono', monospace",
+      fontSize: userFontSize,
+      fontFamily: resolvedFont,
       lineHeight: 1.25,
       theme: {
         background: '#000000',

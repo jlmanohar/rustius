@@ -512,7 +512,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             theme: "dark".into(),
-            font_family: "JetBrains Mono".into(),
+            font_family: "Geist Mono".into(),
             font_size: 14,
             default_terminal_type: "xterm-256color".into(),
             show_sidebar: true,

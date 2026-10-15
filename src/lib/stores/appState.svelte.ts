@@ -18,7 +18,7 @@ export class AppStore {
     version: '1.0.0',
     app_settings: {
       theme: 'dark',
-      font_family: 'JetBrains Mono',
+      font_family: 'Geist Mono',
       font_size: 14,
       default_terminal_type: 'xterm-256color',
       show_sidebar: true,

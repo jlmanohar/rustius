@@ -13,7 +13,8 @@
     Unlock,
     KeyRound,
     AlertCircle,
-    CheckCircle2
+    CheckCircle2,
+    RotateCcw
   } from '@lucide/svelte';
   import type { VaultBackend } from '$lib/types';
 
@@ -25,7 +26,7 @@
   let showSidebar = $state(appState.config.app_settings?.show_sidebar ?? true);
   let sftpFollowTerminal = $state(appState.config.app_settings?.sftp_follow_terminal_folder ?? true);
   let termType = $state(appState.config.app_settings?.default_terminal_type ?? 'xterm-256color');
-  let fontSize = $state(appState.config.app_settings?.font_size ?? 13);
+  let fontSize = $state(appState.config.app_settings?.font_size ?? 14);
   let fontFamily = $state(appState.config.app_settings?.font_family ?? "'Geist Mono', monospace");
   let selectedVaultBackend = $state<VaultBackend>(appState.config.app_settings?.vault_backend ?? 'auto');
   let isMigrating = $state(false);
@@ -137,13 +138,43 @@
       show_sidebar: showSidebar,
       sftp_follow_terminal_folder: sftpFollowTerminal,
       default_terminal_type: termType.trim() || 'xterm-256color',
-      font_size: Number(fontSize) || 13,
+      font_size: Number(fontSize) || 14,
       font_family: fontFamily.trim() || "'Geist Mono', monospace",
       vault_backend: selectedVaultBackend,
     };
 
     await appState.saveAppSettings(updated);
     appState.isSettingsModalOpen = false;
+  }
+
+  async function handleRestoreDefaults() {
+    const confirmed = await appState.confirm({
+      title: 'Restore Default Settings',
+      message: 'Are you sure you want to restore all application preferences (theme, fonts, terminal, SFTP) to factory defaults?',
+      confirmText: 'Restore Defaults',
+    });
+    if (!confirmed) return;
+
+    autoClose = false;
+    showSidebar = true;
+    sftpFollowTerminal = true;
+    termType = 'xterm-256color';
+    fontSize = 14;
+    fontFamily = "'Geist Mono', monospace";
+    selectedVaultBackend = 'auto';
+
+    const updated = {
+      ...appState.config.app_settings,
+      close_tab_on_exit: false,
+      show_sidebar: true,
+      sftp_follow_terminal_folder: true,
+      default_terminal_type: 'xterm-256color',
+      font_size: 14,
+      font_family: "'Geist Mono', monospace",
+      vault_backend: 'auto' as VaultBackend,
+    };
+
+    await appState.saveAppSettings(updated);
   }
 </script>
 
@@ -537,15 +568,27 @@
     <div class="modal-actions">
       <button
         type="button"
-        class="btn btn-secondary"
-        onclick={() => (appState.isSettingsModalOpen = false)}
+        class="btn btn-subtle"
+        title="Reset all settings to factory defaults"
+        onclick={handleRestoreDefaults}
       >
-        Cancel
+        <RotateCcw size={13} />
+        <span>Restore Defaults</span>
       </button>
-      <button type="button" class="btn btn-primary" onclick={handleSave}>
-        <Check size={13} />
-        <span>Save Preferences</span>
-      </button>
+
+      <div class="modal-actions-right">
+        <button
+          type="button"
+          class="btn btn-secondary"
+          onclick={() => (appState.isSettingsModalOpen = false)}
+        >
+          Cancel
+        </button>
+        <button type="button" class="btn btn-primary" onclick={handleSave}>
+          <Check size={13} />
+          <span>Save Preferences</span>
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -843,11 +886,30 @@
   .modal-actions {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: space-between;
     gap: 10px;
     padding: 12px 18px;
     background: #050505;
     border-top: 1px solid #262626;
+  }
+
+  .modal-actions-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .btn-subtle {
+    background: transparent;
+    color: #707070;
+    border: 1px solid transparent;
+    padding: 6px 10px;
+  }
+
+  .btn-subtle:hover {
+    color: #ededed;
+    background: #141414;
+    border-color: #262626;
   }
 
   .btn {
