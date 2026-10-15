@@ -30,7 +30,7 @@
 
   /* Geist Typography */
   --font-sans: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: 'Geist Mono', 'Cascadia Mono', 'Consolas', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* Radius Scale */
   --radius-none: 0px;

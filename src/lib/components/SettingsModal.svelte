@@ -27,7 +27,7 @@
   let sftpFollowTerminal = $state(appState.config.app_settings?.sftp_follow_terminal_folder ?? true);
   let termType = $state(appState.config.app_settings?.default_terminal_type ?? 'xterm-256color');
   let fontSize = $state(appState.config.app_settings?.font_size ?? 14);
-  let fontFamily = $state(appState.config.app_settings?.font_family ?? "'Geist Mono', monospace");
+  let fontFamily = $state(appState.config.app_settings?.font_family?.replace(/['"]/g, '').trim() || 'Geist Mono');
   let selectedVaultBackend = $state<VaultBackend>(appState.config.app_settings?.vault_backend ?? 'auto');
   let isMigrating = $state(false);
   let vaultNotice = $state<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -139,7 +139,7 @@
       sftp_follow_terminal_folder: sftpFollowTerminal,
       default_terminal_type: termType.trim() || 'xterm-256color',
       font_size: Number(fontSize) || 14,
-      font_family: fontFamily.trim() || "'Geist Mono', monospace",
+      font_family: fontFamily.replace(/['"]/g, '').trim() || 'Geist Mono',
       vault_backend: selectedVaultBackend,
     };
 
@@ -160,7 +160,7 @@
     sftpFollowTerminal = true;
     termType = 'xterm-256color';
     fontSize = 14;
-    fontFamily = "'Geist Mono', monospace";
+    fontFamily = 'Geist Mono';
     selectedVaultBackend = 'auto';
 
     const updated = {
@@ -170,7 +170,7 @@
       sftp_follow_terminal_folder: true,
       default_terminal_type: 'xterm-256color',
       font_size: 14,
-      font_family: "'Geist Mono', monospace",
+      font_family: 'Geist Mono',
       vault_backend: 'auto' as VaultBackend,
     };
 
@@ -335,7 +335,7 @@
                 class="geist-input"
                 type="text"
                 bind:value={fontFamily}
-                placeholder="'Geist Mono', monospace"
+                placeholder="Geist Mono"
               />
             </div>
           </div>

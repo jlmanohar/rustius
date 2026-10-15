@@ -285,10 +285,23 @@
     await startSession();
   }
 
+  function getTerminalFontStack(userFont?: string): string {
+    const cleanFont = userFont?.replace(/['"]/g, '').trim();
+    const fonts: string[] = [];
+    if (cleanFont && cleanFont.toLowerCase() !== 'monospace') {
+      const parts = cleanFont.split(',').map((s) => s.trim()).filter(Boolean);
+      for (const part of parts) {
+        if (part.toLowerCase() === 'monospace') continue;
+        fonts.push(`'${part}'`);
+      }
+    }
+    fonts.push("'Geist Mono'", "'Cascadia Mono'", "'Consolas'", "'JetBrains Mono'", "'Menlo'", "monospace");
+    return Array.from(new Set(fonts)).join(', ');
+  }
+
   // Dynamically synchronize terminal font family and size with application preferences
   $effect(() => {
-    const userFont = appState.config.app_settings?.font_family?.trim();
-    const resolvedFont = userFont ? `${userFont}, 'Geist Mono', monospace` : "'Geist Mono', monospace";
+    const resolvedFont = getTerminalFontStack(appState.config.app_settings?.font_family);
     const userFontSize = Number(appState.config.app_settings?.font_size) || 14;
 
     if (term) {
@@ -312,8 +325,7 @@
   onMount(async () => {
     if (!terminalContainer) return;
 
-    const userFont = appState.config.app_settings?.font_family?.trim();
-    const resolvedFont = userFont ? `${userFont}, 'Geist Mono', monospace` : "'Geist Mono', monospace";
+    const resolvedFont = getTerminalFontStack(appState.config.app_settings?.font_family);
     const userFontSize = Number(appState.config.app_settings?.font_size) || 14;
 
     term = new Terminal({
@@ -356,6 +368,17 @@
 
     term.open(terminalContainer);
     fitAddon.fit();
+
+    if (typeof document !== 'undefined' && 'fonts' in document) {
+      document.fonts.ready.then(() => {
+        if (!term || componentDisposables.isDisposed) return;
+        try {
+          term.refresh(0, term.rows - 1);
+          fitAddon?.fit();
+        } catch {}
+      });
+    }
+
     setTimeout(() => {
       try {
         term?.focus();
@@ -665,6 +688,7 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    font-family: var(--font-mono, monospace);
   }
 
   .terminal-topbar {
@@ -859,6 +883,7 @@
     padding: 10px 14px;
     background: #000000;
     user-select: text !important;
+    font-family: var(--font-mono, monospace);
   }
 
   :global(.xterm) {
