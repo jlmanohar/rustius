@@ -91,4 +91,4 @@ lto = "thin"             # High-performance ThinLTO with multi-threaded codegen
 codegen-units = 16       # 16 parallel LLVM code generation units (utilizes multi-core CPUs)
 panic = "abort"          # Remove unwinding tables for smaller binary and faster execution
 strip = true             # Strip all debug symbols for a clean portable single executable
-overflow-checks = false  # Optimize hot path arithmetic in production
+overflow-checks = true   # Ensure integer overflow safety in production

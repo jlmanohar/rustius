@@ -164,6 +164,24 @@ impl SecretManager {
         Ok(())
     }
 
+    /// Store multiple secrets into the encrypted vault in a single atomic operation,
+    /// running the Argon2id key derivation and file encryption only once.
+    pub fn set_vault_secrets_batch(&self, entries: &[(&str, &str)]) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let mut guard = self.vault_state.write().map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
+        if !guard.is_unlocked {
+            bail!("Vault is locked. Unlock vault before storing credentials.");
+        }
+        for (key, secret) in entries {
+            guard.secrets.insert(key.to_string(), secret.to_string());
+        }
+        self.save_vault_locked(&guard)?;
+        debug!("Batch stored {} secrets in encrypted vault", entries.len());
+        Ok(())
+    }
+
     /// Retrieve a secret string from the encrypted vault for the given key/account.
     pub fn get_vault_secret(&self, key: &str) -> Result<Option<String>> {
         let guard = self.vault_state.read().map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
@@ -322,6 +340,12 @@ mod tests {
         assert!(manager.unlock_vault(master).unwrap());
         assert!(manager.is_vault_unlocked());
         assert_eq!(manager.get_vault_secret("conn:1").unwrap().as_deref(), Some("pass123"));
+
+        // Test batch insertion
+        let batch = [("conn:2", "pass2"), ("conn:3", "pass3")];
+        manager.set_vault_secrets_batch(&batch).unwrap();
+        assert_eq!(manager.get_vault_secret("conn:2").unwrap().as_deref(), Some("pass2"));
+        assert_eq!(manager.get_vault_secret("conn:3").unwrap().as_deref(), Some("pass3"));
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);

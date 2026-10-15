@@ -35,15 +35,13 @@ impl LocalTerminal {
         // Determine default shell for the OS
         let shell = if cfg!(windows) {
             // Check if powershell is available, else cmd.exe
-            "powershell.exe"
+            "powershell.exe".to_string()
         } else {
-            std::env::var("SHELL")
-                .unwrap_or_else(|_| "/bin/bash".into())
-                .leak()
+            std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into())
         };
 
         info!("Spawning local shell: {}", shell);
-        let mut cmd = CommandBuilder::new(shell);
+        let mut cmd = CommandBuilder::new(&shell);
 
         // Inherit current working directory
         if let Ok(cwd) = std::env::current_dir() {

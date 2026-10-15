@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tracing::info;
 
@@ -333,10 +333,10 @@ impl FreeRdpSession {
         if !config.username.is_empty() {
             cmd.arg(format!("/u:{}", config.username));
         }
-        if let Some(ref pass) = config.password {
-            if !pass.is_empty() {
-                cmd.arg(format!("/p:{}", pass));
-            }
+        let pass_to_pipe = config.password.clone().filter(|p| !p.is_empty());
+        if pass_to_pipe.is_some() {
+            // Read password from stdin so it never appears on the process command-line
+            cmd.arg("/from-stdin:force");
         }
         if let Some(ref dom) = config.domain {
             if !dom.is_empty() {
@@ -367,8 +367,13 @@ impl FreeRdpSession {
             .arg("/log-level:INFO");
 
         cmd.stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(Stdio::null());
+            .stderr(Stdio::piped());
+
+        if pass_to_pipe.is_some() {
+            cmd.stdin(Stdio::piped());
+        } else {
+            cmd.stdin(Stdio::null());
+        }
 
         #[cfg(windows)]
         {
@@ -379,6 +384,15 @@ impl FreeRdpSession {
         let mut child = cmd.spawn().context("Failed to spawn FreeRDP process")?;
         let child_pid = child.id().unwrap_or(0);
         log_freerdp(&format!("FreeRDP session started with PID: {}", child_pid));
+
+        if let Some(pass) = pass_to_pipe {
+            if let Some(mut stdin) = child.stdin.take() {
+                tokio::spawn(async move {
+                    let _ = stdin.write_all(format!("{}\n", pass).as_bytes()).await;
+                    let _ = stdin.flush().await;
+                });
+            }
+        }
 
         let recent_logs = Arc::new(parking_lot::Mutex::new(VecDeque::with_capacity(100)));
         let stdout = child.stdout.take();
