@@ -42,13 +42,68 @@
     { label: 'Courier New', value: 'Courier New' },
   ];
 
-  const initialFont = appState.config.app_settings?.font_family?.replace(/['"]/g, '').trim() || 'Geist Mono';
-  const isPresetFont = MONOSPACE_FONTS.some((f) => f.value.toLowerCase() === initialFont.toLowerCase());
-  const matchedPreset = MONOSPACE_FONTS.find((f) => f.value.toLowerCase() === initialFont.toLowerCase())?.value || 'custom';
+  function isFontAvailable(fontName: string): boolean {
+    if (typeof document === 'undefined') return true;
 
-  let selectedFontPreset = $state<string>(isPresetFont ? matchedPreset : 'custom');
-  let customFontFamily = $state<string>(isPresetFont ? '' : initialFont);
+    try {
+      if (document.fonts?.check?.(`16px "${fontName}"`)) {
+        return true;
+      }
+    } catch {}
+
+    try {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return true;
+
+      const testString = 'mmmmmmmmmmlli!@#$%^&*()1234567890';
+      const baseFonts = ['monospace', 'sans-serif', 'serif'];
+
+      for (const base of baseFonts) {
+        ctx.font = `72px ${base}`;
+        const baseWidth = ctx.measureText(testString).width;
+
+        ctx.font = `72px "${fontName}", ${base}`;
+        const testWidth = ctx.measureText(testString).width;
+
+        if (Math.abs(baseWidth - testWidth) > 0.1) {
+          return true;
+        }
+      }
+    } catch {}
+
+    return false;
+  }
+
+  function detectAvailableFonts() {
+    return MONOSPACE_FONTS.filter((f) => f.value === 'Geist Mono' || isFontAvailable(f.value));
+  }
+
+  let availableFonts = $state(detectAvailableFonts());
+
+  $effect(() => {
+    if (typeof document !== 'undefined' && 'fonts' in document) {
+      document.fonts.ready.then(() => {
+        availableFonts = detectAvailableFonts();
+      });
+    }
+  });
+
+  const initialFont = appState.config.app_settings?.font_family?.replace(/['"]/g, '').trim() || 'Geist Mono';
   let fontFamily = $state(initialFont);
+  let customFontFamily = $state(initialFont);
+  let selectedFontPreset = $state<string>('custom');
+
+  $effect(() => {
+    const isPreset = availableFonts.some((f) => f.value.toLowerCase() === fontFamily.toLowerCase());
+    const matched = availableFonts.find((f) => f.value.toLowerCase() === fontFamily.toLowerCase())?.value;
+    if (isPreset && matched) {
+      selectedFontPreset = matched;
+    } else {
+      selectedFontPreset = 'custom';
+      customFontFamily = fontFamily;
+    }
+  });
 
   function handleFontPresetSelect(val: string) {
     selectedFontPreset = val;
@@ -368,7 +423,7 @@
                 value={selectedFontPreset}
                 onchange={(e) => handleFontPresetSelect(e.currentTarget.value)}
               >
-                {#each MONOSPACE_FONTS as font}
+                {#each availableFonts as font}
                   <option value={font.value} style="font-family: '{font.value}', monospace;">
                     {font.label}
                   </option>
