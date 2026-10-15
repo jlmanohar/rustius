@@ -247,11 +247,11 @@
               onkeydown={(e) => e.key === 'Enter' && handleConnect(node)}
             >
               <div class="node-icon">
-                {#if (node.conn_type || (node as any).connection_type) === 'ssh'}
+                {#if (node.connection_type || node.conn_type) === 'ssh'}
                   <Terminal size={13} />
-                {:else if (node.conn_type || (node as any).connection_type) === 'sftp'}
+                {:else if (node.connection_type || node.conn_type) === 'sftp'}
                   <ArrowLeftRight size={13} />
-                {:else if (node.conn_type || (node as any).connection_type) === 'rdp'}
+                {:else if (node.connection_type || node.conn_type) === 'rdp'}
                   <Monitor size={13} />
                 {/if}
               </div>

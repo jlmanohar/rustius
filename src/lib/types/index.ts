@@ -81,8 +81,8 @@ export interface CredentialProfile {
 export interface Connection {
   id: string;
   name: string;
-  conn_type: ConnectionType;
-  connection_type?: ConnectionType;
+  connection_type: ConnectionType;
+  conn_type?: ConnectionType;
   host: string;
   port: number;
   auth: AuthMethod;
@@ -108,7 +108,7 @@ export interface Folder {
 
 export type TreeNode =
   | { node_type: 'folder'; id: string; name: string; parent_id?: string; children: TreeNode[]; expanded: boolean }
-  | { node_type: 'connection'; id: string; name: string; conn_type: ConnectionType; host: string; port: number; auth: AuthMethod; environment?: string; description?: string; tags: string[]; notes?: string; ssh_config?: SshConfig; rdp_config?: RdpConfig; credential_id?: string; created_at: string; last_connected?: string };
+  | { node_type: 'connection'; id: string; name: string; connection_type: ConnectionType; conn_type?: ConnectionType; host: string; port: number; auth: AuthMethod; environment?: string; description?: string; tags: string[]; notes?: string; ssh_config?: SshConfig; rdp_config?: RdpConfig; credential_id?: string; created_at: string; last_connected?: string };
 
 export interface AppSettings {
   theme: string;

@@ -463,7 +463,7 @@
         const title = (newConnection.name && newConnection.name.trim()) ? newConnection.name.trim() : newConnection.host;
         appState.openTab({
           title,
-          type: newConnection.conn_type,
+          type: newConnection.connection_type,
           connectionId: newConnection.id,
           status: 'connecting',
           badge: newConnection.host,
