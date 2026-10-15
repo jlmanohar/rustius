@@ -107,6 +107,76 @@ impl AuthMethod {
     }
 }
 
+/// Helper to retrieve the current user's home directory across platforms.
+pub fn get_user_home_dir() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(profile) = std::env::var("USERPROFILE") {
+            if !profile.trim().is_empty() {
+                return Some(std::path::PathBuf::from(profile));
+            }
+        }
+        if let (Ok(drive), Ok(path)) = (std::env::var("HOMEDRIVE"), std::env::var("HOMEPATH")) {
+            let combined = format!("{}{}", drive, path);
+            if !combined.trim().is_empty() {
+                return Some(std::path::PathBuf::from(combined));
+            }
+        }
+    }
+
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.trim().is_empty() {
+            return Some(std::path::PathBuf::from(home));
+        }
+    }
+
+    None
+}
+
+/// Resolves an SSH private key path:
+/// 1. Expands `~`, `~/...`, or `~\...` into the current user's home directory.
+/// 2. If the path is relative and `base_dir` is provided, resolves relative to `base_dir`
+///    (or `base_dir`'s parent if the file exists there).
+/// 3. Preserves absolute paths as-is.
+pub fn resolve_key_path(raw_path: &str, base_dir: Option<&std::path::Path>) -> std::path::PathBuf {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return std::path::PathBuf::new();
+    }
+
+    let candidate = if trimmed == "~" {
+        get_user_home_dir().unwrap_or_else(|| std::path::PathBuf::from(trimmed))
+    } else if let Some(rest) = trimmed.strip_prefix("~/").or_else(|| trimmed.strip_prefix("~\\")) {
+        if let Some(home) = get_user_home_dir() {
+            home.join(rest)
+        } else {
+            std::path::PathBuf::from(trimmed)
+        }
+    } else {
+        std::path::PathBuf::from(trimmed)
+    };
+
+    if candidate.is_absolute() {
+        return candidate;
+    }
+
+    if let Some(base) = base_dir {
+        let direct = base.join(&candidate);
+        if direct.exists() {
+            return direct;
+        }
+        if let Some(parent) = base.parent() {
+            let parent_joined = parent.join(&candidate);
+            if parent_joined.exists() {
+                return parent_joined;
+            }
+        }
+        direct
+    } else {
+        candidate
+    }
+}
+
 pub fn parse_uuid_or_fallback(s: &str) -> Uuid {
     let trimmed = s.trim();
     Uuid::parse_str(trimmed)
@@ -776,5 +846,45 @@ mod tests {
         let conn_parsed: Connection =
             serde_json::from_str(&conn_json).expect("Should deserialize connection");
         assert_eq!(conn_parsed.credential_id, Some(cred.id));
+    }
+
+    #[test]
+    fn test_resolve_key_path_tilde() {
+        if let Some(home) = get_user_home_dir() {
+            let res = resolve_key_path("~/.ssh/id_ed25519", None);
+            assert_eq!(res, home.join(".ssh").join("id_ed25519"));
+
+            let res_win = resolve_key_path(r"~\.ssh\id_rsa", None);
+            assert_eq!(res_win, home.join(".ssh").join("id_rsa"));
+        }
+    }
+
+    #[test]
+    fn test_resolve_key_path_relative_with_base_dir() {
+        let temp_base = std::env::temp_dir().join(format!("rustius-key-test-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_base);
+
+        let res = resolve_key_path("keys/id_ed25519", Some(&temp_base));
+        assert_eq!(res, temp_base.join("keys/id_ed25519"));
+
+        let _ = std::fs::remove_dir_all(&temp_base);
+    }
+
+    #[test]
+    fn test_resolve_key_path_empty_and_absolute() {
+        assert_eq!(resolve_key_path("", None), std::path::PathBuf::new());
+        assert_eq!(resolve_key_path("   ", None), std::path::PathBuf::new());
+
+        #[cfg(target_os = "windows")]
+        {
+            let abs = r"C:\Windows\System32\drivers\etc\hosts";
+            assert_eq!(resolve_key_path(abs, None), std::path::PathBuf::from(abs));
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let abs = "/etc/hosts";
+            assert_eq!(resolve_key_path(abs, None), std::path::PathBuf::from(abs));
+        }
     }
 }

@@ -1,30 +1,14 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use russh::client::{self, Handler};
-use russh::keys::PublicKeyOrCertificate;
+use russh::client;
 use tokio::sync::mpsc;
 use tracing::info;
 
-use rustius_core::connection::{AuthMethod, Connection};
+use rustius_core::connection::Connection;
 
-/// Client handler implementation for russh callbacks.
-///
-/// In russh, protocol-level negotiation (such as TOFU host key verification)
-/// is dispatched through this trait implementation. Channel-level data and flow control
-/// are consumed directly from the channel read half to prevent backpressure stalls.
-pub struct SshClientHandler;
-
-impl Handler for SshClientHandler {
-    type Error = anyhow::Error;
-
-    async fn check_server_key(
-        &mut self,
-        _server_public_key: &PublicKeyOrCertificate,
-    ) -> Result<bool, Self::Error> {
-        Ok(true)
-    }
-}
+use crate::auth::authenticate;
+use crate::handler::RustiusSshHandler;
 
 /// Active SSH pseudo-terminal session.
 ///
@@ -33,7 +17,7 @@ impl Handler for SshClientHandler {
 /// that drains the channel's internal packet queue, preventing backpressure deadlocks.
 pub struct SshSession {
     write_half: russh::ChannelWriteHalf<client::Msg>,
-    _handle: client::Handle<SshClientHandler>,
+    _handle: client::Handle<RustiusSshHandler>,
 }
 
 impl SshSession {
@@ -43,21 +27,35 @@ impl SshSession {
     /// - `exit_tx`: Sender signaling remote process exit or channel EOF with the exit code.
     pub async fn connect(
         connection: &Connection,
+        known_hosts_path: Option<std::path::PathBuf>,
         output_tx: mpsc::UnboundedSender<Vec<u8>>,
         exit_tx: mpsc::Sender<u32>,
     ) -> Result<Self> {
+        let keepalive_secs = connection
+            .ssh_config
+            .as_ref()
+            .and_then(|c| c.keepalive_interval)
+            .unwrap_or(5);
+        let timeout_secs = connection
+            .ssh_config
+            .as_ref()
+            .and_then(|c| c.connect_timeout_secs)
+            .unwrap_or(12);
+
         let config = Arc::new(russh::client::Config {
-            // Send keepalive probes every 5 seconds; after 3 consecutive unanswered probes (15s total),
-            // the client cleanly terminates the dead connection.
-            keepalive_interval: Some(std::time::Duration::from_secs(5)),
+            keepalive_interval: Some(std::time::Duration::from_secs(keepalive_secs)),
             keepalive_max: 3,
             inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
             ..Default::default()
         });
-        let handler = SshClientHandler;
+        let handler = RustiusSshHandler::with_known_hosts_path(
+            &connection.host,
+            connection.port,
+            known_hosts_path,
+        );
 
         let addr = format!("{}:{}", connection.host, connection.port);
-        info!("Connecting SSH to {}", addr);
+        info!("Connecting SSH to {} (keepalive: {}s, timeout: {}s)", addr, keepalive_secs, timeout_secs);
 
         let connect_fut = async {
             let mut handle = russh::client::connect(
@@ -68,44 +66,15 @@ impl SshSession {
             .await
             .context(format!("Failed to connect to {}", addr))?;
 
-            // Authenticate
-            match &connection.auth {
-                AuthMethod::Password { username, password, .. } => {
-                    let pass = password.as_deref().unwrap_or("");
-                    let res = handle.authenticate_password(username, pass).await?;
-                    if !matches!(res, russh::client::AuthResult::Success) {
-                        anyhow::bail!("Password authentication failed for user {}", username);
-                    }
-                }
-                AuthMethod::KeyFile {
-                    username,
-                    key_path,
-                    passphrase,
-                    ..
-                } => {
-                    let key = russh::keys::load_secret_key(key_path, passphrase.as_deref())
-                        .context(format!("Failed to load key from {}", key_path))?;
-                    let key_with_alg =
-                        russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None);
-                    let res = handle
-                        .authenticate_publickey(username, key_with_alg)
-                        .await?;
-                    if !matches!(res, russh::client::AuthResult::Success) {
-                        anyhow::bail!("Public key authentication failed for user {}", username);
-                    }
-                }
-                AuthMethod::Agent { .. } => {
-                    anyhow::bail!("SSH agent authentication not yet implemented");
-                }
-            }
+            // Authenticate using shared helper
+            authenticate(&mut handle, &connection.auth).await?;
 
-            Ok(handle)
+            Ok::<_, anyhow::Error>(handle)
         };
 
-        // 12-second connect/auth timeout prevents infinite hangs if remote host is shut down or unreachable
-        let handle = tokio::time::timeout(std::time::Duration::from_secs(12), connect_fut)
+        let handle = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), connect_fut)
             .await
-            .map_err(|_| anyhow::anyhow!("Connection to {} timed out after 12 seconds (host unreachable or offline)", addr))?
+            .map_err(|_| anyhow::anyhow!("Connection to {} timed out after {} seconds (host unreachable or offline)", addr, timeout_secs))?
             .context(format!("Failed to connect to {}", addr))?;
 
         // Open channel and request PTY + shell with 5-second timeout

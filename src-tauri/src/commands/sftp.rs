@@ -38,7 +38,8 @@ pub async fn sftp_connect(
         .await
         .map_err(|e| format!("Failed to resolve credentials: {e}"))?;
 
-    let client = SftpClient::connect(&connection)
+    let known_hosts_path = state.known_hosts_path();
+    let client = SftpClient::connect(&connection, known_hosts_path)
         .await
         .map_err(|e| format!("Failed to connect SFTP: {e}"))?;
 

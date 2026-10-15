@@ -130,6 +130,19 @@ impl AppState {
             is_portable,
         })
     }
+
+    /// Returns the active `known_hosts` file path.
+    ///
+    /// In PORTABLE mode, maintains a private `known_hosts` file within the portable data
+    /// directory so that host keys travel with the USB drive and no traces are left on the host PC.
+    /// In INSTALLED mode, returns `None` so russh falls back to standard `~/.ssh/known_hosts`.
+    pub fn known_hosts_path(&self) -> Option<PathBuf> {
+        if self.is_portable {
+            Some(self.data_dir.join("known_hosts"))
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]

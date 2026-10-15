@@ -44,7 +44,8 @@ pub async fn ssh_connect(
     let (output_tx, mut output_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let (exit_tx, mut exit_rx) = mpsc::channel::<u32>(1);
 
-    let session = SshSession::connect(&connection, output_tx, exit_tx)
+    let known_hosts_path = state.known_hosts_path();
+    let session = SshSession::connect(&connection, known_hosts_path, output_tx, exit_tx)
         .await
         .map_err(|e| e.to_string())?;
     let session = Arc::new(session);

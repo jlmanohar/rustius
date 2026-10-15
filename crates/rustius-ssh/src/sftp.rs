@@ -3,13 +3,12 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use chrono::DateTime;
 use russh::client;
-use russh::keys::PublicKeyOrCertificate;
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
-use rustius_core::connection::{AuthMethod, Connection};
+use rustius_core::connection::Connection;
 
 /// Represents a file or directory entry from an SFTP server or local filesystem.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,41 +21,48 @@ pub struct FileEntry {
     pub permissions: Option<String>,
 }
 
-/// Minimal SSH client handler for the dedicated SFTP subsystem session.
-///
-/// Unlike the terminal SSH session, SFTP operates as an independent SSH subsystem channel
-/// whose wire frames are managed by `russh_sftp::client::SftpSession`.
-struct SftpClientHandler;
+use crate::auth::authenticate;
+use crate::handler::RustiusSshHandler;
 
-impl client::Handler for SftpClientHandler {
-    type Error = anyhow::Error;
-
-    async fn check_server_key(
-        &mut self,
-        _server_public_key: &PublicKeyOrCertificate,
-    ) -> Result<bool, Self::Error> {
-        Ok(true)
-    }
-}
+/// Maximum payload size allowed for in-memory buffer transfer (50 MB).
+pub const MAX_IN_MEMORY_FILE_BYTES: u64 = 50 * 1024 * 1024;
 
 /// SFTP client for file operations over an SSH channel.
 pub struct SftpClient {
     session: SftpSession,
-    _handle: client::Handle<SftpClientHandler>,
+    _handle: client::Handle<RustiusSshHandler>,
 }
 
 impl SftpClient {
     /// Connect to remote host and initialize SFTP subsystem.
-    pub async fn connect(connection: &Connection) -> Result<Self> {
+    pub async fn connect(
+        connection: &Connection,
+        known_hosts_path: Option<std::path::PathBuf>,
+    ) -> Result<Self> {
+        let keepalive_secs = connection
+            .ssh_config
+            .as_ref()
+            .and_then(|c| c.keepalive_interval)
+            .unwrap_or(5);
+        let timeout_secs = connection
+            .ssh_config
+            .as_ref()
+            .and_then(|c| c.connect_timeout_secs)
+            .unwrap_or(12);
+
         let config = Arc::new(russh::client::Config {
-            keepalive_interval: Some(std::time::Duration::from_secs(5)),
+            keepalive_interval: Some(std::time::Duration::from_secs(keepalive_secs)),
             keepalive_max: 3,
             inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
             ..Default::default()
         });
-        let handler = SftpClientHandler;
+        let handler = RustiusSshHandler::with_known_hosts_path(
+            &connection.host,
+            connection.port,
+            known_hosts_path,
+        );
         let addr = format!("{}:{}", connection.host, connection.port);
-        info!("Connecting SFTP subsystem to {}", addr);
+        info!("Connecting SFTP subsystem to {} (keepalive: {}s, timeout: {}s)", addr, keepalive_secs, timeout_secs);
 
         let connect_fut = async {
             let mut handle = russh::client::connect(
@@ -67,36 +73,8 @@ impl SftpClient {
             .await
             .context(format!("Failed to connect to {}", addr))?;
 
-            // Authenticate
-            match &connection.auth {
-                AuthMethod::Password { username, password, .. } => {
-                    let pass = password.as_deref().unwrap_or("");
-                    let res = handle.authenticate_password(username, pass).await?;
-                    if !matches!(res, russh::client::AuthResult::Success) {
-                        anyhow::bail!("Password authentication failed for user {}", username);
-                    }
-                }
-                AuthMethod::KeyFile {
-                    username,
-                    key_path,
-                    passphrase,
-                    ..
-                } => {
-                    let key = russh::keys::load_secret_key(key_path, passphrase.as_deref())
-                        .context(format!("Failed to load key from {}", key_path))?;
-                    let key_with_alg =
-                        russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None);
-                    let res = handle
-                        .authenticate_publickey(username, key_with_alg)
-                        .await?;
-                    if !matches!(res, russh::client::AuthResult::Success) {
-                        anyhow::bail!("Public key authentication failed for user {}", username);
-                    }
-                }
-                AuthMethod::Agent { .. } => {
-                    anyhow::bail!("SSH agent authentication not yet implemented");
-                }
-            }
+            // Authenticate using shared helper
+            authenticate(&mut handle, &connection.auth).await?;
 
             let channel = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
@@ -116,9 +94,9 @@ impl SftpClient {
             })
         };
 
-        tokio::time::timeout(std::time::Duration::from_secs(12), connect_fut)
+        tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), connect_fut)
             .await
-            .map_err(|_| anyhow::anyhow!("SFTP connection to {} timed out after 12 seconds", addr))?
+            .map_err(|_| anyhow::anyhow!("SFTP connection to {} timed out after {} seconds", addr, timeout_secs))?
     }
 
     /// Disconnect and terminate the SFTP session.
@@ -178,11 +156,7 @@ impl SftpClient {
         }
 
         // Sort directories first, then alphabetical by name
-        results.sort_by(|a, b| {
-            b.is_dir
-                .cmp(&a.is_dir)
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        });
+        sort_file_entries(&mut results);
 
         Ok(results)
     }
@@ -207,8 +181,20 @@ impl SftpClient {
     ///
     /// Used by frontend drag-and-drop / viewer operations where data is passed directly
     /// over Tauri IPC without writing to an intermediate local staging file.
+    /// Enforces a 50MB safety limit to prevent OOM crashes on large files.
     pub async fn download_bytes(&self, remote_path: &str) -> Result<Vec<u8>> {
         let mut remote_file = self.session.open(remote_path).await?;
+        if let Ok(meta) = remote_file.metadata().await {
+            if let Some(size) = meta.size {
+                if size > MAX_IN_MEMORY_FILE_BYTES {
+                    let size_mb = size as f64 / (1024.0 * 1024.0);
+                    anyhow::bail!(
+                        "File is too large ({:.1} MB) for in-memory preview. Maximum allowed is 50 MB. Please download to disk instead.",
+                        size_mb
+                    );
+                }
+            }
+        }
         let mut buffer = Vec::new();
         tokio::io::copy(&mut remote_file, &mut buffer).await?;
         Ok(buffer)
@@ -227,7 +213,15 @@ impl SftpClient {
     ///
     /// Enables direct upload of files dropped onto the SFTP sidebar from the browser webview,
     /// streaming the in-memory payload without requiring pre-saving to disk.
+    /// Enforces a 50MB safety limit to protect against IPC buffer exhaustion.
     pub async fn upload_bytes(&self, data: &[u8], remote_path: &str) -> Result<()> {
+        if data.len() as u64 > MAX_IN_MEMORY_FILE_BYTES {
+            let size_mb = data.len() as f64 / (1024.0 * 1024.0);
+            anyhow::bail!(
+                "Payload is too large ({:.1} MB) for in-memory upload. Maximum allowed is 50 MB. Please upload from disk instead.",
+                size_mb
+            );
+        }
         let mut remote_file = self.session.create(remote_path).await?;
         let mut cursor = std::io::Cursor::new(data);
         tokio::io::copy(&mut cursor, &mut remote_file).await?;
@@ -257,5 +251,69 @@ impl SftpClient {
     pub async fn rename(&self, from: &str, to: &str) -> Result<()> {
         self.session.rename(from, to).await?;
         Ok(())
+    }
+}
+
+/// Sort directory entries: directories first, then alphabetically case-insensitive.
+pub fn sort_file_entries(entries: &mut [FileEntry]) {
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sort_file_entries() {
+        let mut entries = vec![
+            FileEntry {
+                name: "zebra.txt".into(),
+                path: "/zebra.txt".into(),
+                is_dir: false,
+                size: 100,
+                modified: None,
+                permissions: None,
+            },
+            FileEntry {
+                name: "alpha".into(),
+                path: "/alpha".into(),
+                is_dir: true,
+                size: 4096,
+                modified: None,
+                permissions: None,
+            },
+            FileEntry {
+                name: "beta.txt".into(),
+                path: "/beta.txt".into(),
+                is_dir: false,
+                size: 200,
+                modified: None,
+                permissions: None,
+            },
+            FileEntry {
+                name: "Gamma".into(),
+                path: "/Gamma".into(),
+                is_dir: true,
+                size: 4096,
+                modified: None,
+                permissions: None,
+            },
+        ];
+
+        sort_file_entries(&mut entries);
+
+        // Folders first (case-insensitive: alpha, Gamma), then files (beta.txt, zebra.txt)
+        assert_eq!(entries[0].name, "alpha");
+        assert!(entries[0].is_dir);
+        assert_eq!(entries[1].name, "Gamma");
+        assert!(entries[1].is_dir);
+        assert_eq!(entries[2].name, "beta.txt");
+        assert!(!entries[2].is_dir);
+        assert_eq!(entries[3].name, "zebra.txt");
+        assert!(!entries[3].is_dir);
     }
 }

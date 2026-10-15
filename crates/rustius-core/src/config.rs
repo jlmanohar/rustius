@@ -219,9 +219,10 @@ impl ConfigManager {
                 ..
             } => {
                 let passphrase = cred.auth.resolve_passphrase(&self.secret_manager)?;
+                let resolved_path = crate::connection::resolve_key_path(key_path, Some(&self.config_dir));
                 resolved.auth = AuthMethod::KeyFile {
                     username: username.clone(),
-                    key_path: key_path.clone(),
+                    key_path: resolved_path.to_string_lossy().into_owned(),
                     passphrase,
                     secret_ref: None,
                 };
@@ -287,9 +288,10 @@ impl ConfigManager {
                 username, key_path, ..
             } => {
                 let passphrase = conn.auth.resolve_passphrase(&self.secret_manager)?;
+                let resolved_path = crate::connection::resolve_key_path(key_path, Some(&self.config_dir));
                 resolved.auth = AuthMethod::KeyFile {
                     username: username.clone(),
-                    key_path: key_path.clone(),
+                    key_path: resolved_path.to_string_lossy().into_owned(),
                     passphrase,
                     secret_ref: None,
                 };
@@ -299,136 +301,59 @@ impl ConfigManager {
         Ok(resolved)
     }
 
-    /// Secure a connection before writing to disk:
-    /// Moves plaintext passwords and passphrases into either the native OS keyring or encrypted vault,
-    /// setting `secret_ref = Keyring` or `Vault` and wiping plaintext fields so secrets
-    /// never hit `connections.json` unencrypted.
+    /// Helper: extracts mutable reference to the secret_ref in Password or KeyFile variants.
+    fn get_auth_secret_ref_mut(auth: &mut AuthMethod) -> Option<&mut Option<SecretRef>> {
+        match auth {
+            AuthMethod::Password { secret_ref, .. } => Some(secret_ref),
+            AuthMethod::KeyFile { secret_ref, .. } => Some(secret_ref),
+            _ => None,
+        }
+    }
+
+    /// Helper: extracts plaintext passwords/passphrases from an AuthMethod, stores them
+    /// into the active secret backend under `key`, and points `secret_ref` to the storage.
+    pub fn secure_auth_method(&self, auth: &mut AuthMethod, key: &str, entity_type: &str) {
+        let backend = self.effective_vault_backend_sync();
+        let (secret_opt, target_ref) = match auth {
+            AuthMethod::Password { password, secret_ref, .. } => (password, secret_ref),
+            AuthMethod::KeyFile { passphrase, secret_ref, .. } => (passphrase, secret_ref),
+            _ => return,
+        };
+
+        if let Some(p) = secret_opt.take() {
+            if !p.is_empty() {
+                match backend {
+                    VaultBackend::MasterPassword => {
+                        if let Err(e) = self.secret_manager.set_vault_secret(key, &p) {
+                            warn!("Failed to store {} secret in vault for {}: {}", entity_type, key, e);
+                            *secret_opt = Some(p);
+                        } else {
+                            *target_ref = Some(SecretRef::Vault { key: key.to_string() });
+                        }
+                    }
+                    _ => {
+                        if let Err(e) = self.secret_manager.set_secret(key, &p) {
+                            warn!("Failed to store {} secret in OS keyring for {}: {}", entity_type, key, e);
+                            *secret_opt = Some(p);
+                        } else {
+                            *target_ref = Some(SecretRef::Keyring { key: key.to_string() });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn secure_connection(&self, conn: &mut Connection) {
         let key = format!("connection:{}", conn.id);
-        let backend = self.effective_vault_backend_sync();
-        match &mut conn.auth {
-            AuthMethod::Password {
-                username: _,
-                password,
-                secret_ref,
-            } => {
-                if let Some(p) = password.take() {
-                    if !p.is_empty() {
-                        match backend {
-                            VaultBackend::MasterPassword => {
-                                if let Err(e) = self.secret_manager.set_vault_secret(&key, &p) {
-                                    warn!("Failed to store connection password in vault for {}: {}", key, e);
-                                    *password = Some(p);
-                                } else {
-                                    *secret_ref = Some(SecretRef::Vault { key });
-                                }
-                            }
-                            _ => {
-                                if let Err(e) = self.secret_manager.set_secret(&key, &p) {
-                                    warn!("Failed to store connection password in OS keyring for {}: {}", key, e);
-                                } else {
-                                    *secret_ref = Some(SecretRef::Keyring { key });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            AuthMethod::KeyFile {
-                username: _,
-                key_path: _,
-                passphrase,
-                secret_ref,
-            } => {
-                if let Some(p) = passphrase.take() {
-                    if !p.is_empty() {
-                        match backend {
-                            VaultBackend::MasterPassword => {
-                                if let Err(e) = self.secret_manager.set_vault_secret(&key, &p) {
-                                    warn!("Failed to store connection passphrase in vault for {}: {}", key, e);
-                                    *passphrase = Some(p);
-                                } else {
-                                    *secret_ref = Some(SecretRef::Vault { key });
-                                }
-                            }
-                            _ => {
-                                if let Err(e) = self.secret_manager.set_secret(&key, &p) {
-                                    warn!("Failed to store connection passphrase in OS keyring for {}: {}", key, e);
-                                } else {
-                                    *secret_ref = Some(SecretRef::Keyring { key });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
+        self.secure_auth_method(&mut conn.auth, &key, "connection");
     }
 
     /// Secure a credential profile before writing to disk:
     /// Moves plaintext passwords and passphrases into the active secret backend under "credential:<id>".
     pub fn secure_credential(&self, cred: &mut CredentialProfile) {
         let key = format!("credential:{}", cred.id);
-        let backend = self.effective_vault_backend_sync();
-        match &mut cred.auth {
-            AuthMethod::Password {
-                username: _,
-                password,
-                secret_ref,
-            } => {
-                if let Some(p) = password.take() {
-                    if !p.is_empty() {
-                        match backend {
-                            VaultBackend::MasterPassword => {
-                                if let Err(e) = self.secret_manager.set_vault_secret(&key, &p) {
-                                    warn!("Failed to store profile password in vault for {}: {}", key, e);
-                                    *password = Some(p);
-                                } else {
-                                    *secret_ref = Some(SecretRef::Vault { key });
-                                }
-                            }
-                            _ => {
-                                if let Err(e) = self.secret_manager.set_secret(&key, &p) {
-                                    warn!("Failed to store profile password in OS keyring for {}: {}", key, e);
-                                } else {
-                                    *secret_ref = Some(SecretRef::Keyring { key });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            AuthMethod::KeyFile {
-                username: _,
-                key_path: _,
-                passphrase,
-                secret_ref,
-            } => {
-                if let Some(p) = passphrase.take() {
-                    if !p.is_empty() {
-                        match backend {
-                            VaultBackend::MasterPassword => {
-                                if let Err(e) = self.secret_manager.set_vault_secret(&key, &p) {
-                                    warn!("Failed to store profile passphrase in vault for {}: {}", key, e);
-                                    *passphrase = Some(p);
-                                } else {
-                                    *secret_ref = Some(SecretRef::Vault { key });
-                                }
-                            }
-                            _ => {
-                                if let Err(e) = self.secret_manager.set_secret(&key, &p) {
-                                    warn!("Failed to store profile passphrase in OS keyring for {}: {}", key, e);
-                                } else {
-                                    *secret_ref = Some(SecretRef::Keyring { key });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
+        self.secure_auth_method(&mut cred.auth, &key, "profile");
     }
 
     /// Add a credential profile to configuration and secure its secrets.
@@ -707,121 +632,80 @@ impl ConfigManager {
             }
 
             self.update_config(|config| {
+                let mut vault_batch = Vec::new();
+                let mut keyring_keys_to_delete = Vec::new();
+
+                fn collect_node_secrets_for_vault(
+                    nodes: &mut [TreeNode],
+                    sm: &SecretManager,
+                    batch: &mut Vec<(String, String)>,
+                    to_delete: &mut Vec<String>,
+                ) {
+                    for node in nodes {
+                        match node {
+                            TreeNode::Connection(c) => {
+                                if let Some(secret_ref) = ConfigManager::get_auth_secret_ref_mut(&mut c.auth) {
+                                    if let Some(SecretRef::Keyring { key }) = secret_ref.as_ref() {
+                                        let key = key.clone();
+                                        if let Ok(Some(secret)) = sm.get_secret(&key) {
+                                            batch.push((key.clone(), secret));
+                                            to_delete.push(key.clone());
+                                            *secret_ref = Some(SecretRef::Vault { key });
+                                        }
+                                    }
+                                }
+                            }
+                            TreeNode::Folder(f) => {
+                                collect_node_secrets_for_vault(&mut f.children, sm, batch, to_delete);
+                            }
+                        }
+                    }
+                }
+
                 // 1. Reusable credentials
                 for cred in &mut config.credentials {
-                    match &mut cred.auth {
-                        AuthMethod::Password { secret_ref, .. } => {
-                            if let Some(SecretRef::Keyring { key }) = secret_ref {
-                                if let Ok(Some(secret)) = self.secret_manager.get_secret(key) {
-                                    let _ = self.secret_manager.set_vault_secret(key, &secret);
-                                    let _ = self.secret_manager.delete_secret(key);
-                                    *secret_ref = Some(SecretRef::Vault { key: key.clone() });
-                                }
+                    if let Some(secret_ref) = ConfigManager::get_auth_secret_ref_mut(&mut cred.auth) {
+                        if let Some(SecretRef::Keyring { key }) = secret_ref.as_ref() {
+                            let key = key.clone();
+                            if let Ok(Some(secret)) = self.secret_manager.get_secret(&key) {
+                                vault_batch.push((key.clone(), secret));
+                                keyring_keys_to_delete.push(key.clone());
+                                *secret_ref = Some(SecretRef::Vault { key });
                             }
                         }
-                        AuthMethod::KeyFile { secret_ref, .. } => {
-                            if let Some(SecretRef::Keyring { key }) = secret_ref {
-                                if let Ok(Some(secret)) = self.secret_manager.get_secret(key) {
-                                    let _ = self.secret_manager.set_vault_secret(key, &secret);
-                                    let _ = self.secret_manager.delete_secret(key);
-                                    *secret_ref = Some(SecretRef::Vault { key: key.clone() });
-                                }
-                            }
-                        }
-                        _ => {}
                     }
                 }
 
                 // 2. Tree connections
-                fn migrate_tree_to_vault(nodes: &mut [TreeNode], sm: &SecretManager) {
-                    for node in nodes {
-                        match node {
-                            TreeNode::Connection(c) => {
-                                match &mut c.auth {
-                                    AuthMethod::Password { secret_ref, .. } => {
-                                        if let Some(SecretRef::Keyring { key }) = secret_ref {
-                                            if let Ok(Some(secret)) = sm.get_secret(key) {
-                                                let _ = sm.set_vault_secret(key, &secret);
-                                                let _ = sm.delete_secret(key);
-                                                *secret_ref = Some(SecretRef::Vault { key: key.clone() });
-                                            }
-                                        }
-                                    }
-                                    AuthMethod::KeyFile { secret_ref, .. } => {
-                                        if let Some(SecretRef::Keyring { key }) = secret_ref {
-                                            if let Ok(Some(secret)) = sm.get_secret(key) {
-                                                let _ = sm.set_vault_secret(key, &secret);
-                                                let _ = sm.delete_secret(key);
-                                                *secret_ref = Some(SecretRef::Vault { key: key.clone() });
-                                            }
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            TreeNode::Folder(f) => {
-                                migrate_tree_to_vault(&mut f.children, sm);
-                            }
-                        }
-                    }
+                collect_node_secrets_for_vault(&mut config.tree, &self.secret_manager, &mut vault_batch, &mut keyring_keys_to_delete);
+
+                let batch_refs: Vec<(&str, &str)> = vault_batch.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+                if let Err(e) = self.secret_manager.set_vault_secrets_batch(&batch_refs) {
+                    warn!("Failed to batch write secrets to vault during migration: {}", e);
                 }
-                migrate_tree_to_vault(&mut config.tree, &self.secret_manager);
+                for k in keyring_keys_to_delete {
+                    let _ = self.secret_manager.delete_secret(&k);
+                }
+
                 config.app_settings.vault_backend = target_backend;
             })
             .await?;
         } else {
             // Migrating to Keyring
             self.update_config(|config| {
-                // 1. Reusable credentials
-                for cred in &mut config.credentials {
-                    match &mut cred.auth {
-                        AuthMethod::Password { secret_ref, .. } => {
-                            if let Some(SecretRef::Vault { key }) = secret_ref {
-                                if let Ok(Some(secret)) = self.secret_manager.get_vault_secret(key) {
-                                    let _ = self.secret_manager.set_secret(key, &secret);
-                                    let _ = self.secret_manager.delete_vault_secret(key);
-                                    *secret_ref = Some(SecretRef::Keyring { key: key.clone() });
-                                }
-                            }
-                        }
-                        AuthMethod::KeyFile { secret_ref, .. } => {
-                            if let Some(SecretRef::Vault { key }) = secret_ref {
-                                if let Ok(Some(secret)) = self.secret_manager.get_vault_secret(key) {
-                                    let _ = self.secret_manager.set_secret(key, &secret);
-                                    let _ = self.secret_manager.delete_vault_secret(key);
-                                    *secret_ref = Some(SecretRef::Keyring { key: key.clone() });
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                // 2. Tree connections
                 fn migrate_tree_to_keyring(nodes: &mut [TreeNode], sm: &SecretManager) {
                     for node in nodes {
                         match node {
                             TreeNode::Connection(c) => {
-                                match &mut c.auth {
-                                    AuthMethod::Password { secret_ref, .. } => {
-                                        if let Some(SecretRef::Vault { key }) = secret_ref {
-                                            if let Ok(Some(secret)) = sm.get_vault_secret(key) {
-                                                let _ = sm.set_secret(key, &secret);
-                                                let _ = sm.delete_vault_secret(key);
-                                                *secret_ref = Some(SecretRef::Keyring { key: key.clone() });
-                                            }
+                                if let Some(secret_ref) = ConfigManager::get_auth_secret_ref_mut(&mut c.auth) {
+                                    if let Some(SecretRef::Vault { key }) = secret_ref.as_ref() {
+                                        let key = key.clone();
+                                        if let Ok(Some(secret)) = sm.get_vault_secret(&key) {
+                                            let _ = sm.set_secret(&key, &secret);
+                                            let _ = sm.delete_vault_secret(&key);
+                                            *secret_ref = Some(SecretRef::Keyring { key });
                                         }
                                     }
-                                    AuthMethod::KeyFile { secret_ref, .. } => {
-                                        if let Some(SecretRef::Vault { key }) = secret_ref {
-                                            if let Ok(Some(secret)) = sm.get_vault_secret(key) {
-                                                let _ = sm.set_secret(key, &secret);
-                                                let _ = sm.delete_vault_secret(key);
-                                                *secret_ref = Some(SecretRef::Keyring { key: key.clone() });
-                                            }
-                                        }
-                                    }
-                                    _ => {}
                                 }
                             }
                             TreeNode::Folder(f) => {
@@ -830,6 +714,22 @@ impl ConfigManager {
                         }
                     }
                 }
+
+                // 1. Reusable credentials
+                for cred in &mut config.credentials {
+                    if let Some(secret_ref) = ConfigManager::get_auth_secret_ref_mut(&mut cred.auth) {
+                        if let Some(SecretRef::Vault { key }) = secret_ref.as_ref() {
+                            let key = key.clone();
+                            if let Ok(Some(secret)) = self.secret_manager.get_vault_secret(&key) {
+                                let _ = self.secret_manager.set_secret(&key, &secret);
+                                let _ = self.secret_manager.delete_vault_secret(&key);
+                                *secret_ref = Some(SecretRef::Keyring { key });
+                            }
+                        }
+                    }
+                }
+
+                // 2. Tree connections
                 migrate_tree_to_keyring(&mut config.tree, &self.secret_manager);
                 config.app_settings.vault_backend = target_backend;
             })
