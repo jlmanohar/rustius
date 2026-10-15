@@ -194,7 +194,7 @@
               </div>
               <div class="spec-node">
                 <Layers size={13} />
-                <span>~3MB Executable · Native WebView</span>
+                <span>~11MB Executable · Native WebView</span>
               </div>
             </div>
           </div>

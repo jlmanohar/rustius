@@ -75,8 +75,11 @@
     return false;
   }
 
+  // Bundled fonts embedded inside the binary (100% offline ready)
+  const BUNDLED_FONTS = new Set(['Geist Mono', 'JetBrains Mono', 'Fira Code', 'Source Code Pro']);
+
   function detectAvailableFonts() {
-    return MONOSPACE_FONTS.filter((f) => f.value === 'Geist Mono' || isFontAvailable(f.value));
+    return MONOSPACE_FONTS.filter((f) => BUNDLED_FONTS.has(f.value) || isFontAvailable(f.value));
   }
 
   let availableFonts = $state(detectAvailableFonts());
@@ -89,7 +92,7 @@
     }
   });
 
-  const initialFont = appState.config.app_settings?.font_family?.replace(/['"]/g, '').trim() || 'JetBrains Mono';
+  const initialFont = appState.config.app_settings?.font_family?.replace(/['"]/g, '').trim() || 'Geist Mono';
   let fontFamily = $state(initialFont);
   let customFontFamily = $state(initialFont);
   let selectedFontPreset = $state<string>('custom');
@@ -110,7 +113,7 @@
     if (val !== 'custom') {
       fontFamily = val;
     } else {
-      fontFamily = customFontFamily.trim() || 'JetBrains Mono';
+      fontFamily = customFontFamily.trim() || 'Geist Mono';
     }
   }
   let selectedVaultBackend = $state<VaultBackend>(appState.config.app_settings?.vault_backend ?? 'auto');
@@ -224,7 +227,7 @@
       sftp_follow_terminal_folder: sftpFollowTerminal,
       default_terminal_type: termType.trim() || 'xterm-256color',
       font_size: Number(fontSize) || 13,
-      font_family: fontFamily.replace(/['"]/g, '').trim() || 'JetBrains Mono',
+      font_family: fontFamily.replace(/['"]/g, '').trim() || 'Geist Mono',
       vault_backend: selectedVaultBackend,
     };
 
@@ -245,9 +248,9 @@
     sftpFollowTerminal = true;
     termType = 'xterm-256color';
     fontSize = 13;
-    selectedFontPreset = 'JetBrains Mono';
+    selectedFontPreset = 'Geist Mono';
     customFontFamily = '';
-    fontFamily = 'JetBrains Mono';
+    fontFamily = 'Geist Mono';
     selectedVaultBackend = 'auto';
 
     const updated = {
@@ -257,7 +260,7 @@
       sftp_follow_terminal_folder: true,
       default_terminal_type: 'xterm-256color',
       font_size: 13,
-      font_family: 'JetBrains Mono',
+      font_family: 'Geist Mono',
       vault_backend: 'auto' as VaultBackend,
     };
 

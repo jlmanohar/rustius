@@ -298,7 +298,8 @@
         fonts.push(`'${part}'`);
       }
     }
-    fonts.push("'Geist Mono'", "'JetBrains Mono'", "'Cascadia Mono'", "'Consolas'", "'Menlo'", "monospace");
+    // Generic system monospace fallbacks
+    fonts.push('ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', "'Liberation Mono'", "'Courier New'", 'monospace');
     return Array.from(new Set(fonts)).join(', ');
   }
 
@@ -319,7 +320,12 @@
       }
       if (changed) {
         try {
+          // In xterm.js, changing fontFamily/fontSize requires clearing character cache and re-fitting
+          if (term.element) {
+            term.element.style.fontFamily = resolvedFont;
+          }
           fitAddon?.fit();
+          term.refresh(0, term.rows - 1);
         } catch {}
       }
     }
@@ -691,7 +697,6 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    font-family: var(--font-mono, monospace);
   }
 
   .terminal-topbar {
@@ -886,7 +891,6 @@
     padding: 10px 14px;
     background: #000000;
     user-select: text !important;
-    font-family: var(--font-mono, monospace);
   }
 
   :global(.xterm) {

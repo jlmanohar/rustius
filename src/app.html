@@ -5,12 +5,8 @@
     <link rel="icon" type="image/svg+xml" href="%sveltekit.assets%/rustius_icon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Rustius</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Bundled Local Typography (100% Offline / Zero External Requests) -->
+    <link rel="stylesheet" href="%sveltekit.assets%/fonts/fonts.css" />
     %sveltekit.head%
     <style>
       html, body {
@@ -26,7 +22,6 @@
       }
       .terminal-shell, .terminal-shell * {
         user-select: text !important;
-        font-family: var(--font-mono, monospace);
       }
     </style>
   </head>
