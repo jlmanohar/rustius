@@ -28,8 +28,8 @@
   let termType = $state(appState.config.app_settings?.default_terminal_type ?? 'xterm-256color');
   let fontSize = $state(appState.config.app_settings?.font_size ?? 13);
   const MONOSPACE_FONTS = [
-    { label: 'JetBrains Mono (Default)', value: 'JetBrains Mono' },
-    { label: 'Geist Mono', value: 'Geist Mono' },
+    { label: 'Geist Mono (Default)', value: 'Geist Mono' },
+    { label: 'JetBrains Mono', value: 'JetBrains Mono' },
     { label: 'Fira Code', value: 'Fira Code' },
     { label: 'Cascadia Mono', value: 'Cascadia Mono' },
     { label: 'Cascadia Code', value: 'Cascadia Code' },

@@ -298,7 +298,7 @@
         fonts.push(`'${part}'`);
       }
     }
-    fonts.push("'JetBrains Mono'", "'Geist Mono'", "'Cascadia Mono'", "'Consolas'", "'Menlo'", "monospace");
+    fonts.push("'Geist Mono'", "'JetBrains Mono'", "'Cascadia Mono'", "'Consolas'", "'Menlo'", "monospace");
     return Array.from(new Set(fonts)).join(', ');
   }
 
@@ -345,7 +345,7 @@
         selectionBackground: 'rgba(255, 255, 255, 0.25)',
         black: '#000000',
         red: '#ee0000',
-        green: '#10b981',
+        green: '#0070f3',
         yellow: '#f5a623',
         blue: '#0070f3',
         magenta: '#7928ca',
