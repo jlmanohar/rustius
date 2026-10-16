@@ -64,6 +64,86 @@
     contextMenu = null;
   }
 
+  // Drag and drop state for tabs
+  let draggedTabId = $state<string | null>(null);
+  let dropTargetTabId = $state<string | null>(null);
+  let dropPosition = $state<'before' | 'after' | null>(null);
+
+  function handleTabDragStart(e: DragEvent, tabId: string) {
+    draggedTabId = tabId;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', tabId);
+    }
+  }
+
+  function handleTabDragEnd() {
+    draggedTabId = null;
+    dropTargetTabId = null;
+    dropPosition = null;
+  }
+
+  function handleTabDragOver(e: DragEvent, tabId: string) {
+    if (!draggedTabId || draggedTabId === tabId) return;
+
+    e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'move';
+    }
+
+    const currentTarget = e.currentTarget as HTMLElement;
+    const rect = currentTarget.getBoundingClientRect();
+    const relativeX = e.clientX - rect.left;
+    const width = rect.width;
+
+    dropTargetTabId = tabId;
+    dropPosition = relativeX < width * 0.5 ? 'before' : 'after';
+  }
+
+  function handleTabDragLeave(e: DragEvent, tabId: string) {
+    const currentTarget = e.currentTarget as HTMLElement;
+    if (!currentTarget.contains(e.relatedTarget as Node)) {
+      if (dropTargetTabId === tabId) {
+        dropTargetTabId = null;
+        dropPosition = null;
+      }
+    }
+  }
+
+  function handleTabDrop(e: DragEvent, tabId: string) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const movingId = draggedTabId;
+    const pos = dropPosition;
+    handleTabDragEnd();
+
+    if (!movingId || !pos || movingId === tabId) return;
+    appState.moveTab(movingId, tabId, pos);
+  }
+
+  function handleContainerDragOver(e: DragEvent) {
+    if (!draggedTabId) return;
+    e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'move';
+    }
+  }
+
+  function handleContainerDrop(e: DragEvent) {
+    if (!draggedTabId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const movingId = draggedTabId;
+    handleTabDragEnd();
+    if (appState.tabs.length > 0) {
+      const lastTab = appState.tabs[appState.tabs.length - 1];
+      if (lastTab.id !== movingId) {
+        appState.moveTab(movingId, lastTab.id, 'after');
+      }
+    }
+  }
+
   $effect(() => {
     const _ = appState.activeTabId;
     const __ = appState.tabs.length;
@@ -112,19 +192,33 @@
 
   <div
     class="tabs-container"
+    role="tablist"
+    tabindex="-1"
     bind:this={tabsContainerRef}
     onwheel={handleWheel}
+    ondragover={handleContainerDragOver}
+    ondrop={handleContainerDrop}
   >
     {#each appState.tabs as tab (tab.id)}
       <div
-        class="tab-item {appState.activeTabId === tab.id ? 'tab-active' : ''}"
+        class="tab-item {appState.activeTabId === tab.id ? 'tab-active' : ''} {draggedTabId === tab.id ? 'is-dragging' : ''}"
         role="button"
         tabindex="0"
+        draggable="true"
+        ondragstart={(e) => handleTabDragStart(e, tab.id)}
+        ondragend={handleTabDragEnd}
+        ondragover={(e) => handleTabDragOver(e, tab.id)}
+        ondragleave={(e) => handleTabDragLeave(e, tab.id)}
+        ondrop={(e) => handleTabDrop(e, tab.id)}
         onclick={() => (appState.activeTabId = tab.id)}
         onkeydown={(e) => e.key === 'Enter' && (appState.activeTabId = tab.id)}
         oncontextmenu={(e) => handleTabContextMenu(e, tab.id)}
         title={tab.badge && tab.badge !== tab.title ? `${tab.title} (${tab.badge})` : tab.title}
       >
+        {#if dropTargetTabId === tab.id && dropPosition === 'before'}
+          <div class="tab-drop-line tab-drop-line-left"></div>
+        {/if}
+
         <span class="tab-icon">
           {#if tab.type === 'ssh'}
             <Terminal size={13} />
@@ -149,15 +243,28 @@
           type="button"
           class="tab-close"
           title="Close tab"
+          draggable="false"
+          onmousedown={(e) => e.stopPropagation()}
           onclick={(e) => handleClose(e, tab.id)}
         >
           <X size={12} />
         </button>
+
+        {#if dropTargetTabId === tab.id && dropPosition === 'after'}
+          <div class="tab-drop-line tab-drop-line-right"></div>
+        {/if}
       </div>
     {/each}
 
     <!-- Tab Actions -->
-    <div class="tab-actions">
+    <div
+      class="tab-actions"
+      role="toolbar"
+      aria-label="Tab actions"
+      tabindex="-1"
+      ondragover={handleContainerDragOver}
+      ondrop={handleContainerDrop}
+    >
       <button
         class="add-btn"
         title="New Local Shell"
@@ -315,10 +422,52 @@
     min-width: 70px;
     max-width: 220px;
     flex: 0 1 auto;
-    overflow: hidden;
+    overflow: visible;
     box-sizing: border-box;
     position: relative;
     user-select: none;
+  }
+
+  .tab-item.is-dragging {
+    opacity: 0.35 !important;
+    background: var(--canvas-hover) !important;
+    cursor: grabbing !important;
+  }
+
+  .tab-item.is-dragging * {
+    pointer-events: none;
+  }
+
+  .tab-drop-line {
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    width: 2px;
+    background: #ffffff;
+    border-radius: 2px;
+    z-index: 50;
+    pointer-events: none;
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.6), 0 0 2px rgba(255, 255, 255, 0.9);
+  }
+
+  .tab-drop-line::before {
+    content: '';
+    position: absolute;
+    top: -3px;
+    left: -3px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.7);
+  }
+
+  .tab-drop-line-left {
+    left: -3px;
+  }
+
+  .tab-drop-line-right {
+    right: -3px;
   }
 
   .tab-item:hover {
@@ -339,6 +488,7 @@
     justify-content: center;
     color: inherit;
     flex-shrink: 0;
+    pointer-events: none;
   }
 
   .tab-label {
@@ -347,6 +497,7 @@
     white-space: nowrap;
     min-width: 0;
     flex: 0 1 auto;
+    pointer-events: none;
   }
 
   .tab-status-dot {
@@ -354,6 +505,7 @@
     height: 6px;
     border-radius: 50%;
     flex-shrink: 0;
+    pointer-events: none;
   }
 
   .tab-status-dot.connecting {

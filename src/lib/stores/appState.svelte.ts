@@ -448,6 +448,22 @@ export class AppStore {
     this.activeTabId = id;
   }
 
+  moveTab(sourceTabId: string, targetTabId: string, position: 'before' | 'after') {
+    if (sourceTabId === targetTabId) return;
+    const sourceIdx = this.tabs.findIndex((t) => t.id === sourceTabId);
+    if (sourceIdx === -1) return;
+
+    const [tab] = this.tabs.splice(sourceIdx, 1);
+    const targetIdx = this.tabs.findIndex((t) => t.id === targetTabId);
+    if (targetIdx === -1) {
+      this.tabs.splice(sourceIdx, 0, tab);
+      return;
+    }
+
+    const insertIdx = position === 'before' ? targetIdx : targetIdx + 1;
+    this.tabs.splice(insertIdx, 0, tab);
+  }
+
   closeTab(tabId: string) {
     const idx = this.tabs.findIndex((t) => t.id === tabId);
     if (idx !== -1) {
