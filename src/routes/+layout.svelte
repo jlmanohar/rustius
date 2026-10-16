@@ -10,4 +10,13 @@
   });
 </script>
 
+<svelte:window
+  oncontextmenu={(e) => e.preventDefault()}
+  onkeydown={(e) => {
+    if (e.key === 'F5' || ((e.ctrlKey || e.metaKey) && (e.key === 'r' || e.key === 'R'))) {
+      e.preventDefault();
+    }
+  }}
+/>
+
 {@render children?.()}

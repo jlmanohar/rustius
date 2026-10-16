@@ -26,6 +26,10 @@
     </style>
   </head>
   <body data-sveltekit-preload-data="hover">
+    <script>
+      // Disable default browser context menu globally for native desktop app feel
+      window.addEventListener('contextmenu', (e) => e.preventDefault());
+    </script>
     <div style="display: contents">%sveltekit.body%</div>
   </body>
 </html>
