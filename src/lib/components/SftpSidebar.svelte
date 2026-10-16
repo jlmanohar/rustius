@@ -25,7 +25,9 @@
     FileArchive,
     FileImage,
     PanelLeftClose,
-    FolderSync
+    FolderSync,
+    RotateCcw,
+    Unplug
   } from '@lucide/svelte';
   import { appState } from '../stores/appState.svelte';
 
@@ -33,12 +35,16 @@
     tabId,
     connectionId,
     terminalCwd = null,
+    isTerminalDisconnected = false,
+    onreconnect,
     onclose,
     onresize
   }: {
     tabId: string;
     connectionId: string;
     terminalCwd?: string | null;
+    isTerminalDisconnected?: boolean;
+    onreconnect?: () => void;
     onclose: () => void;
     onresize?: () => void;
   } = $props();
@@ -94,8 +100,26 @@
   let searchQuery = $state<string>('');
   let isLoading = $state<boolean>(false);
   let isConnected = $state<boolean>(false);
+  let wasDisconnected = $state<boolean>(false);
   let errorMessage = $state<string | null>(null);
   let selectedFile = $state<FileEntry | null>(null);
+
+  $effect(() => {
+    if (isTerminalDisconnected) {
+      isConnected = false;
+      wasDisconnected = true;
+    } else if (wasDisconnected) {
+      wasDisconnected = false;
+      initSession();
+    }
+  });
+
+  async function handleReconnect() {
+    if (onreconnect && isTerminalDisconnected) {
+      onreconnect();
+    }
+    await initSession();
+  }
 
   // Transfer notification toast
   let transferToast = $state<{
@@ -207,7 +231,7 @@
 
   function refresh() {
     if (!isConnected) {
-      initSession();
+      handleReconnect();
       return;
     }
     if (currentPath) {
@@ -365,7 +389,12 @@
   }
 
   onMount(() => {
-    initSession();
+    if (!isTerminalDisconnected) {
+      initSession();
+    } else {
+      isConnected = false;
+      wasDisconnected = true;
+    }
   });
 
   onDestroy(() => {
@@ -511,7 +540,17 @@
 
   <!-- File List Area -->
   <div class="file-list-container">
-    {#if isLoading && files.length === 0}
+    {#if isTerminalDisconnected || (!isConnected && !isLoading && !errorMessage)}
+      <div class="state-msg disconnected">
+        <Unplug size={24} class="disconnected-icon" />
+        <span class="disconnected-title">SFTP Disconnected</span>
+        <span class="disconnected-subtitle">The session is disconnected.</span>
+        <button class="sftp-reconnect-btn" onclick={handleReconnect}>
+          <RotateCcw size={12} />
+          <span>Reconnect</span>
+        </button>
+      </div>
+    {:else if isLoading && files.length === 0}
       <div class="state-msg">
         <Loader2 size={16} class="spinning" />
         <span>Connecting to SFTP subsystem...</span>
@@ -520,7 +559,7 @@
       <div class="state-msg error">
         <AlertCircle size={16} />
         <span>{errorMessage}</span>
-        <button class="retry-btn" onclick={refresh}>Retry</button>
+        <button class="retry-btn" onclick={handleReconnect}>Reconnect</button>
       </div>
     {:else if filteredFiles.length === 0}
       <div class="state-msg muted">
@@ -978,6 +1017,59 @@
     text-align: center;
     font-size: 11px;
     color: #a1a1aa;
+  }
+
+  .state-msg.disconnected {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 36px 16px;
+    gap: 8px;
+    color: var(--mute);
+    text-align: center;
+  }
+
+  .disconnected-icon {
+    color: var(--mute);
+    margin-bottom: 4px;
+    opacity: 0.8;
+  }
+
+  .disconnected-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+  }
+
+  .disconnected-subtitle {
+    font-size: 11px;
+    color: var(--mute);
+    margin-bottom: 6px;
+  }
+
+  .sftp-reconnect-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 14px;
+    background: var(--canvas-elevated);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm, 4px);
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  }
+
+  .sftp-reconnect-btn:hover {
+    background: var(--canvas-hover);
+    border-color: var(--hairline-hover);
+    color: #ffffff;
   }
 
   .state-msg.error {

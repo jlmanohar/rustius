@@ -510,6 +510,7 @@ export class AppStore {
   private terminateSession(tab: TabSession) {
     if (tab.type === 'ssh') {
       invoke('ssh_disconnect', { tabId: tab.id }).catch(() => {});
+      invoke('sftp_disconnect', { tabId: tab.id }).catch(() => {});
     } else if (tab.type === 'sftp') {
       invoke('sftp_disconnect', { tabId: tab.id }).catch(() => {});
     } else if (tab.type === 'local_terminal') {

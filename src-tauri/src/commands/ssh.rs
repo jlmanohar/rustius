@@ -64,6 +64,7 @@ pub async fn ssh_connect(
     let app_handle = app.clone();
     let tab_id_clone = tab_id.clone();
     let sessions_map = state.ssh_sessions.clone();
+    let sftp_sessions_map = state.sftp_sessions.clone();
 
     tokio::spawn(async move {
         loop {
@@ -95,6 +96,13 @@ pub async fn ssh_connect(
             let mut sessions = sessions_map.write().await;
             if let Some(s) = sessions.remove(&tab_id_clone) {
                 let _ = s.disconnect().await;
+            }
+        }
+        // Evict and disconnect any associated SFTP session for this tab
+        {
+            let mut sftp_sessions = sftp_sessions_map.write().await;
+            if let Some(sftp) = sftp_sessions.remove(&tab_id_clone) {
+                let _ = sftp.disconnect().await;
             }
         }
         debug!("SSH output loop exited for tab: {}", tab_id_clone);
@@ -170,6 +178,17 @@ pub async fn ssh_disconnect(tab_id: String, state: State<'_, AppState>) -> Resul
     if let Some(s) = session {
         let _ = s.disconnect().await;
     }
+
+    // Also clean up any associated SFTP session for this tab
+    let sftp_session = {
+        let mut sftp_sessions = state.sftp_sessions.write().await;
+        sftp_sessions.remove(&tab_id)
+    };
+
+    if let Some(s) = sftp_session {
+        let _ = s.disconnect().await;
+    }
+
     info!("SSH session closed for tab: {}", tab_id);
     Ok(())
 }
