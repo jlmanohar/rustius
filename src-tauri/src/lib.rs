@@ -4,8 +4,8 @@ pub mod state;
 use commands::config::{
     add_connection, add_credential, add_folder, delete_credential, get_config,
     get_connection_password, get_credential_password, import_sessions, import_sessions_content,
-    remove_node, save_app_settings, update_credential, vault_change_backend, vault_get_status,
-    vault_lock, vault_set_master_password, vault_unlock,
+    move_node, remove_node, save_app_settings, update_credential, vault_change_backend,
+    vault_get_status, vault_lock, vault_set_master_password, vault_unlock,
 };
 use commands::rdp::{
     freerdp_connect, freerdp_disconnect, freerdp_set_docked, freerdp_set_visibility,
@@ -18,7 +18,9 @@ use commands::sftp::{
 };
 use commands::ssh::{ssh_connect, ssh_disconnect, ssh_resize, ssh_write};
 use commands::terminal::{pty_close, pty_resize, pty_spawn, pty_write};
-use commands::window::{window_close, window_is_maximized, window_minimize, window_toggle_maximize};
+use commands::window::{
+    window_close, window_is_maximized, window_minimize, window_toggle_maximize,
+};
 use state::AppState;
 use tauri::{Emitter, Manager};
 
@@ -55,7 +57,9 @@ pub fn run() {
                         let target_w = (logical_w * 0.88).clamp(840.0, 1600.0);
                         let target_h = (logical_h * 0.85).clamp(500.0, 1000.0);
 
-                        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(target_w, target_h)));
+                        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+                            target_w, target_h,
+                        )));
                         let _ = window.center();
                     }
                 }
@@ -63,7 +67,10 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
+            if matches!(
+                event,
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+            ) {
                 let _ = window.emit("window-moved", ());
                 let state = window.state::<AppState>();
                 let sessions: Vec<_> = {
@@ -99,6 +106,7 @@ pub fn run() {
             add_connection,
             add_folder,
             remove_node,
+            move_node,
             add_credential,
             update_credential,
             delete_credential,

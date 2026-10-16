@@ -71,6 +71,25 @@ pub async fn remove_node(node_id: String, state: State<'_, AppState>) -> Result<
 }
 
 #[tauri::command]
+pub async fn move_node(
+    node_id: String,
+    target_parent_id: Option<String>,
+    target_index: usize,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let node_uuid = rustius_core::connection::parse_uuid_or_fallback(&node_id);
+    let parent_uuid = target_parent_id
+        .filter(|s| !s.trim().is_empty())
+        .map(|id| rustius_core::connection::parse_uuid_or_fallback(&id));
+
+    state
+        .config_manager
+        .move_node(node_uuid, parent_uuid, target_index)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn add_credential(
     credential: rustius_core::connection::CredentialProfile,
     state: State<'_, AppState>,
@@ -123,8 +142,9 @@ pub async fn import_sessions(
         .filter(|s| !s.trim().is_empty())
         .map(|id| rustius_core::connection::parse_uuid_or_fallback(&id));
 
-    let nodes = rustius_core::importer::import_from_file(&file_path, fmt, master_password.as_deref())
-        .map_err(|e| format!("Import failed: {e}"))?;
+    let nodes =
+        rustius_core::importer::import_from_file(&file_path, fmt, master_password.as_deref())
+            .map_err(|e| format!("Import failed: {e}"))?;
 
     state
         .config_manager
@@ -224,7 +244,12 @@ pub struct VaultStatus {
 #[tauri::command]
 pub async fn vault_get_status(state: State<'_, AppState>) -> Result<VaultStatus, String> {
     let is_portable = state.config_manager.is_portable();
-    let configured_backend = state.config_manager.get_config().await.app_settings.vault_backend;
+    let configured_backend = state
+        .config_manager
+        .get_config()
+        .await
+        .app_settings
+        .vault_backend;
     let effective_backend = state.config_manager.effective_vault_backend().await;
     let has_vault_file = state.config_manager.secret_manager().has_vault_file();
     let is_unlocked = state.config_manager.secret_manager().is_vault_unlocked();
@@ -254,7 +279,10 @@ pub async fn vault_lock(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn vault_set_master_password(password: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn vault_set_master_password(
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     state
         .config_manager
         .secret_manager()

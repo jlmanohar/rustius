@@ -284,6 +284,24 @@ export class AppStore {
     }
   }
 
+  async moveNode(nodeId: string, targetParentId: string | null, targetIndex: number) {
+    try {
+      await invoke('move_node', {
+        nodeId,
+        targetParentId: targetParentId || null,
+        targetIndex,
+      });
+      await this.loadConfig();
+    } catch (err) {
+      console.error('Failed to move node via Tauri:', err);
+      const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+      if (isTauri) {
+        throw err;
+      }
+      this.moveNodeLocally(nodeId, targetParentId, targetIndex);
+    }
+  }
+
   async addCredential(cred: CredentialProfile): Promise<string> {
     try {
       const id = await invoke<string>('add_credential', { credential: cred });
@@ -338,6 +356,40 @@ export class AppStore {
       }
     }
     return false;
+  }
+
+  moveNodeLocally(nodeId: string, targetParentId: string | null, targetIndex: number) {
+    const extracted = this.extractNodeLocally(this.config.tree, nodeId);
+    if (!extracted) return;
+
+    if (extracted.node_type === 'folder') {
+      extracted.parent_id = targetParentId || undefined;
+    }
+
+    if (targetParentId) {
+      const folder = this.findFolder(this.config.tree, targetParentId);
+      if (folder) {
+        const idx = Math.min(Math.max(0, targetIndex), folder.children.length);
+        folder.children.splice(idx, 0, extracted);
+      }
+    } else {
+      const idx = Math.min(Math.max(0, targetIndex), this.config.tree.length);
+      this.config.tree.splice(idx, 0, extracted);
+    }
+  }
+
+  private extractNodeLocally(nodes: TreeNode[], id: string): TreeNode | null {
+    const idx = nodes.findIndex((n) => n.id === id);
+    if (idx !== -1) {
+      return nodes.splice(idx, 1)[0];
+    }
+    for (const n of nodes) {
+      if (n.node_type === 'folder') {
+        const found = this.extractNodeLocally(n.children, id);
+        if (found) return found;
+      }
+    }
+    return null;
   }
 
   private findFolder(nodes: TreeNode[], folderId: string): Folder | null {

@@ -146,7 +146,10 @@ pub fn resolve_key_path(raw_path: &str, base_dir: Option<&std::path::Path>) -> s
 
     let candidate = if trimmed == "~" {
         get_user_home_dir().unwrap_or_else(|| std::path::PathBuf::from(trimmed))
-    } else if let Some(rest) = trimmed.strip_prefix("~/").or_else(|| trimmed.strip_prefix("~\\")) {
+    } else if let Some(rest) = trimmed
+        .strip_prefix("~/")
+        .or_else(|| trimmed.strip_prefix("~\\"))
+    {
         if let Some(home) = get_user_home_dir() {
             home.join(rest)
         } else {
@@ -417,6 +420,16 @@ pub struct Folder {
 pub enum TreeNode {
     Folder(Folder),
     Connection(Connection),
+}
+
+impl TreeNode {
+    /// Retrieve the unique identifier of this tree node.
+    pub fn id(&self) -> Uuid {
+        match self {
+            TreeNode::Folder(f) => f.id,
+            TreeNode::Connection(c) => c.id,
+        }
+    }
 }
 
 /// A reusable credential profile for authenticating across multiple connections.
@@ -819,12 +832,16 @@ mod tests {
         assert!(toml_str.contains("CORP Domain Admin"));
         assert!(toml_str.contains("CORP"));
 
-        let parsed: RustiusConfig = toml::from_str(&toml_str).expect("Should deserialize from TOML");
+        let parsed: RustiusConfig =
+            toml::from_str(&toml_str).expect("Should deserialize from TOML");
         assert_eq!(parsed.credentials.len(), 1);
         let loaded = &parsed.credentials[0];
         assert_eq!(loaded.name, "CORP Domain Admin");
         assert_eq!(loaded.domain.as_deref(), Some("CORP"));
-        if let AuthMethod::Password { username, password, .. } = &loaded.auth {
+        if let AuthMethod::Password {
+            username, password, ..
+        } = &loaded.auth
+        {
             assert_eq!(username, "administrator");
             assert_eq!(password.as_deref(), Some("P@ssw0rd123"));
         } else {
@@ -861,7 +878,8 @@ mod tests {
 
     #[test]
     fn test_resolve_key_path_relative_with_base_dir() {
-        let temp_base = std::env::temp_dir().join(format!("rustius-key-test-{}", uuid::Uuid::new_v4()));
+        let temp_base =
+            std::env::temp_dir().join(format!("rustius-key-test-{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_base);
 
         let res = resolve_key_path("keys/id_ed25519", Some(&temp_base));

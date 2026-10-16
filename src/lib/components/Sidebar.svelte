@@ -72,6 +72,156 @@
   function toggleFolder(folder: Folder) {
     folder.expanded = !folder.expanded;
   }
+
+  // Drag and drop state
+  let draggedNodeId = $state<string | null>(null);
+  let draggedNodeType = $state<'connection' | 'folder' | null>(null);
+  let draggedParentId = $state<string | null>(null);
+  let dropTargetId = $state<string | null>(null);
+  let dropPosition = $state<'before' | 'after' | 'inside' | null>(null);
+  let isOverRootDropZone = $state<boolean>(false);
+
+  function isDescendantFolder(folderId: string, checkTargetId: string): boolean {
+    if (folderId === checkTargetId) return true;
+    const hasNode = (nodes: TreeNode[], id: string): boolean => {
+      for (const n of nodes) {
+        if (n.id === id) return true;
+        if (n.node_type === 'folder' && hasNode(n.children, id)) return true;
+      }
+      return false;
+    };
+    const search = (nodes: TreeNode[]): boolean => {
+      for (const n of nodes) {
+        if (n.node_type === 'folder') {
+          if (n.id === folderId) {
+            return hasNode(n.children, checkTargetId);
+          }
+          if (search(n.children)) return true;
+        }
+      }
+      return false;
+    };
+    return search(appState.config.tree);
+  }
+
+  function findFolderById(nodes: TreeNode[], folderId: string): Folder | null {
+    for (const node of nodes) {
+      if (node.node_type === 'folder') {
+        if (node.id === folderId) return node;
+        const sub = findFolderById(node.children, folderId);
+        if (sub) return sub;
+      }
+    }
+    return null;
+  }
+
+  function handleDragStart(e: DragEvent, node: TreeNode, parentFolderId: string | null) {
+    if (appState.searchQuery.trim() !== '') {
+      e.preventDefault();
+      return;
+    }
+    draggedNodeId = node.id;
+    draggedNodeType = node.node_type;
+    draggedParentId = parentFolderId;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', node.id);
+    }
+  }
+
+  function handleDragEnd() {
+    draggedNodeId = null;
+    draggedNodeType = null;
+    draggedParentId = null;
+    dropTargetId = null;
+    dropPosition = null;
+    isOverRootDropZone = false;
+  }
+
+  function handleDragOver(e: DragEvent, targetNode: TreeNode, parentFolderId: string | null) {
+    if (!draggedNodeId) return;
+    if (draggedNodeId === targetNode.id) return;
+
+    if (draggedNodeType === 'folder' && isDescendantFolder(draggedNodeId, targetNode.id)) {
+      return;
+    }
+
+    e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'move';
+    }
+
+    const currentTarget = e.currentTarget as HTMLElement;
+    const rect = currentTarget.getBoundingClientRect();
+    const relativeY = e.clientY - rect.top;
+    const height = rect.height;
+
+    dropTargetId = targetNode.id;
+
+    if (targetNode.node_type === 'folder') {
+      if (relativeY < height * 0.25) {
+        dropPosition = 'before';
+      } else if (relativeY > height * 0.75 && !targetNode.expanded) {
+        dropPosition = 'after';
+      } else {
+        dropPosition = 'inside';
+      }
+    } else {
+      if (relativeY < height * 0.5) {
+        dropPosition = 'before';
+      } else {
+        dropPosition = 'after';
+      }
+    }
+  }
+
+  async function handleDrop(e: DragEvent, targetNode: TreeNode, parentFolderId: string | null) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const movingId = draggedNodeId;
+    const position = dropPosition;
+    handleDragEnd();
+
+    if (!movingId || !position || movingId === targetNode.id) return;
+
+    if (position === 'inside' && targetNode.node_type === 'folder') {
+      targetNode.expanded = true;
+      const targetList = targetNode.children.filter((n) => n.id !== movingId);
+      await appState.moveNode(movingId, targetNode.id, targetList.length);
+      return;
+    }
+
+    let targetList: TreeNode[] = [];
+    if (parentFolderId) {
+      const parentFolder = findFolderById(appState.config.tree, parentFolderId);
+      if (parentFolder) {
+        targetList = parentFolder.children;
+      }
+    } else {
+      targetList = appState.config.tree;
+    }
+
+    const filtered = targetList.filter((n) => n.id !== movingId);
+    const targetIdx = filtered.findIndex((n) => n.id === targetNode.id);
+    if (targetIdx === -1) return;
+
+    const newIndex = position === 'before' ? targetIdx : targetIdx + 1;
+    await appState.moveNode(movingId, parentFolderId, newIndex);
+  }
+
+  async function handleDropOnRoot(e: DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const movingId = draggedNodeId;
+    handleDragEnd();
+
+    if (!movingId) return;
+
+    const rootList = appState.config.tree.filter((n) => n.id !== movingId);
+    await appState.moveNode(movingId, null, rootList.length);
+  }
 </script>
 
 <aside class="sidebar">
@@ -167,9 +317,22 @@
       </div>
     {/if}
   </div>
-
-  <!-- Connection Tree List -->
-  <div class="tree-list">
+  <!-- Connection Tree List -->
+  <div
+    class="tree-list"
+    role="region"
+    aria-label="Connection Tree"
+    ondragover={(e) => {
+      if (!draggedNodeId) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    }}
+    ondrop={(e) => {
+      if (e.target === e.currentTarget) {
+        handleDropOnRoot(e);
+      }
+    }}
+  >
     {#if appState.config.tree.length === 0}
       <div class="empty-state">
         <Server size={24} class="empty-icon" />
@@ -182,149 +345,224 @@
         </button>
       </div>
     {:else}
-      {#snippet renderNode(node: TreeNode, depth: number)}
+      {#snippet renderNode(node: TreeNode, depth: number, parentFolderId: string | null)}
         {#if matchesFilter(node)}
           {#if node.node_type === 'folder'}
             <div class="folder-block" style="padding-left: {depth * 12}px">
-              <div
-                class="folder-row"
-                role="button"
-                tabindex="0"
-                onclick={() => toggleFolder(node)}
-                onkeydown={(e) => e.key === 'Enter' && toggleFolder(node)}
-              >
-                <span class="chevron">
-                  {#if node.expanded}
-                    <ChevronDown size={13} />
-                  {:else}
-                    <ChevronRight size={13} />
-                  {/if}
-                </span>
-                <span class="folder-icon">
-                  {#if node.expanded}
-                    <FolderOpen size={14} />
-                  {:else}
-                    <FolderIcon size={14} />
-                  {/if}
-                </span>
-                <span class="folder-name">{node.name}</span>
-                <span class="folder-badge">{node.children.length}</span>
-                <button
-                  class="row-action-btn"
-                  title="Delete Folder"
-                  onclick={async (e) => {
-                    e.stopPropagation();
-                    const ok = await appState.confirm({
-                      title: 'Delete Folder',
-                      message: `Are you sure you want to delete folder "${node.name}" and all of its contents?`,
-                      confirmText: 'Delete Folder',
-                      isDanger: true,
-                    });
-                    if (ok) {
-                      await appState.removeNode(node.id);
+              <div class="folder-row-wrapper relative">
+                {#if dropTargetId === node.id && dropPosition === 'before'}
+                  <div class="drop-line drop-line-top"></div>
+                {/if}
+
+                <div
+                  class="folder-row {draggedNodeId === node.id ? 'is-dragging' : ''} {dropTargetId === node.id && dropPosition === 'inside' ? 'folder-drop-inside' : ''}"
+                  role="button"
+                  tabindex="0"
+                  draggable={!appState.searchQuery}
+                  ondragstart={(e) => handleDragStart(e, node, parentFolderId)}
+                  ondragend={handleDragEnd}
+                  ondragover={(e) => handleDragOver(e, node, parentFolderId)}
+                  ondragleave={() => {
+                    if (dropTargetId === node.id) {
+                      dropTargetId = null;
+                      dropPosition = null;
                     }
                   }}
+                  ondrop={(e) => handleDrop(e, node, parentFolderId)}
+                  onclick={() => toggleFolder(node)}
+                  onkeydown={(e) => e.key === 'Enter' && toggleFolder(node)}
                 >
-                  <Trash2 size={12} />
-                </button>
+                  <span class="chevron">
+                    {#if node.expanded}
+                      <ChevronDown size={13} />
+                    {:else}
+                      <ChevronRight size={13} />
+                    {/if}
+                  </span>
+                  <span class="folder-icon">
+                    {#if node.expanded}
+                      <FolderOpen size={14} />
+                    {:else}
+                      <FolderIcon size={14} />
+                    {/if}
+                  </span>
+                  <span class="folder-name">{node.name}</span>
+                  <span class="folder-badge">{node.children.length}</span>
+                  <button
+                    class="row-action-btn"
+                    title="Delete Folder"
+                    onclick={async (e) => {
+                      e.stopPropagation();
+                      const ok = await appState.confirm({
+                        title: 'Delete Folder',
+                        message: `Are you sure you want to delete folder "${node.name}" and all of its contents?`,
+                        confirmText: 'Delete Folder',
+                        isDanger: true,
+                      });
+                      if (ok) {
+                        await appState.removeNode(node.id);
+                      }
+                    }}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+
+                {#if dropTargetId === node.id && dropPosition === 'after'}
+                  <div class="drop-line drop-line-bottom"></div>
+                {/if}
               </div>
 
               {#if node.expanded}
                 <div class="folder-sub">
                   {#each node.children as child}
-                    {@render renderNode(child, depth + 1)}
+                    {@render renderNode(child, depth + 1, node.id)}
                   {/each}
                 </div>
               {/if}
             </div>
           {:else}
-            <div
-              class="connection-row"
-              style="padding-left: {depth * 12 + 10}px"
-              role="button"
-              tabindex="0"
-              ondblclick={() => handleConnect(node)}
-              onkeydown={(e) => e.key === 'Enter' && handleConnect(node)}
-            >
-              <div class="node-icon">
-                {#if (node.connection_type || node.conn_type) === 'ssh'}
-                  <Terminal size={13} />
-                {:else if (node.connection_type || node.conn_type) === 'sftp'}
-                  <ArrowLeftRight size={13} />
-                {:else if (node.connection_type || node.conn_type) === 'rdp'}
-                  <Monitor size={13} />
-                {/if}
-              </div>
+            <div class="connection-row-wrapper relative">
+              {#if dropTargetId === node.id && dropPosition === 'before'}
+                <div class="drop-line drop-line-top"></div>
+              {/if}
 
-              <div class="node-details">
-                <div class="node-name-row">
-                  <span class="node-title" title={node.name}>{node.name}</span>
-                  {#if node.notes}
-                    <span class="notes-indicator" title="Has documentation/notes">
-                      <FileText size={10} />
-                    </span>
+              <div
+                class="connection-row {draggedNodeId === node.id ? 'is-dragging' : ''}"
+                style="padding-left: {depth * 12 + 10}px"
+                role="button"
+                tabindex="0"
+                draggable={!appState.searchQuery}
+                ondragstart={(e) => handleDragStart(e, node, parentFolderId)}
+                ondragend={handleDragEnd}
+                ondragover={(e) => handleDragOver(e, node, parentFolderId)}
+                ondragleave={() => {
+                  if (dropTargetId === node.id) {
+                    dropTargetId = null;
+                    dropPosition = null;
+                  }
+                }}
+                ondrop={(e) => handleDrop(e, node, parentFolderId)}
+                ondblclick={() => handleConnect(node)}
+                onkeydown={(e) => e.key === 'Enter' && handleConnect(node)}
+              >
+                <div class="node-icon">
+                  {#if (node.connection_type || node.conn_type) === 'ssh'}
+                    <Terminal size={13} />
+                  {:else if (node.connection_type || node.conn_type) === 'sftp'}
+                    <ArrowLeftRight size={13} />
+                  {:else if (node.connection_type || node.conn_type) === 'rdp'}
+                    <Monitor size={13} />
                   {/if}
                 </div>
-                <div class="node-sub">
-                  {#if node.environment}
-                    <span class="env-pill">{node.environment}</span>
-                  {/if}
-                  <span class="node-endpoint">{node.host}:{node.port}</span>
-                  {#if node.description}
-                    <span class="node-desc" title={node.description}>· {node.description}</span>
-                  {/if}
+
+                <div class="node-details">
+                  <div class="node-name-row">
+                    <span class="node-title" title={node.name}>{node.name}</span>
+                    {#if node.notes}
+                      <span class="notes-indicator" title="Has documentation/notes">
+                        <FileText size={10} />
+                      </span>
+                    {/if}
+                  </div>
+                  <div class="node-sub">
+                    {#if node.environment}
+                      <span class="env-pill">{node.environment}</span>
+                    {/if}
+                    <span class="node-endpoint">{node.host}:{node.port}</span>
+                    {#if node.description}
+                      <span class="node-desc" title={node.description}>· {node.description}</span>
+                    {/if}
+                  </div>
+                </div>
+
+                <div class="node-actions">
+                  <button
+                    class="action-btn"
+                    title="Connect"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      handleConnect(node);
+                    }}
+                  >
+                    <Play size={11} />
+                  </button>
+                  <button
+                    class="action-btn"
+                    title="Edit"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      appState.editingConnection = node;
+                      appState.isConnectionModalOpen = true;
+                    }}
+                  >
+                    <Pencil size={11} />
+                  </button>
+                  <button
+                    class="action-btn"
+                    title="Delete"
+                    onclick={async (e) => {
+                      e.stopPropagation();
+                      const ok = await appState.confirm({
+                        title: 'Delete Connection',
+                        message: `Are you sure you want to delete connection "${node.name}"?`,
+                        confirmText: 'Delete Connection',
+                        isDanger: true,
+                      });
+                      if (ok) {
+                        await appState.removeNode(node.id);
+                      }
+                    }}
+                  >
+                    <Trash2 size={11} />
+                  </button>
                 </div>
               </div>
 
-              <div class="node-actions">
-                <button
-                  class="action-btn"
-                  title="Connect"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    handleConnect(node);
-                  }}
-                >
-                  <Play size={11} />
-                </button>
-                <button
-                  class="action-btn"
-                  title="Edit"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    appState.editingConnection = node;
-                    appState.isConnectionModalOpen = true;
-                  }}
-                >
-                  <Pencil size={11} />
-                </button>
-                <button
-                  class="action-btn"
-                  title="Delete"
-                  onclick={async (e) => {
-                    e.stopPropagation();
-                    const ok = await appState.confirm({
-                      title: 'Delete Connection',
-                      message: `Are you sure you want to delete connection "${node.name}"?`,
-                      confirmText: 'Delete Connection',
-                      isDanger: true,
-                    });
-                    if (ok) {
-                      await appState.removeNode(node.id);
-                    }
-                  }}
-                >
-                  <Trash2 size={11} />
-                </button>
-              </div>
+              {#if dropTargetId === node.id && dropPosition === 'after'}
+                <div class="drop-line drop-line-bottom"></div>
+              {/if}
             </div>
           {/if}
         {/if}
       {/snippet}
 
       {#each appState.config.tree as rootNode}
-        {@render renderNode(rootNode, 0)}
+        {@render renderNode(rootNode, 0, null)}
       {/each}
+
+      <!-- Bottom Root Drop Target -->
+      <div
+        class="root-drop-zone {isOverRootDropZone ? 'active' : ''} {draggedNodeId ? 'visible' : ''}"
+        role="region"
+        aria-label="Move to root drop zone"
+        ondragenter={(e) => {
+          if (!draggedNodeId) return;
+          e.preventDefault();
+          isOverRootDropZone = true;
+          dropTargetId = null;
+          dropPosition = null;
+        }}
+        ondragover={(e) => {
+          if (!draggedNodeId) return;
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+          isOverRootDropZone = true;
+          dropTargetId = null;
+          dropPosition = null;
+        }}
+        ondragleave={(e) => {
+          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+          isOverRootDropZone = false;
+        }}
+        ondrop={handleDropOnRoot}
+      >
+        {#if draggedNodeId}
+          <div class="root-drop-hint {isOverRootDropZone ? 'active' : ''}">
+            {isOverRootDropZone ? 'Release to move to root' : 'Drop to move to root'}
+          </div>
+        {/if}
+      </div>
     {/if}
   </div>
 
@@ -750,5 +988,94 @@
     border: 1px solid var(--hairline);
     padding: 1px 4px;
     border-radius: 3px;
+  }
+
+  /* Drag and drop styling */
+  .relative {
+    position: relative;
+  }
+
+  .connection-row-wrapper,
+  .folder-row-wrapper {
+    position: relative;
+  }
+
+  .is-dragging {
+    opacity: 0.35 !important;
+    background: var(--canvas-hover) !important;
+    cursor: grabbing !important;
+  }
+
+  .drop-line {
+    position: absolute;
+    left: 6px;
+    right: 6px;
+    height: 2px;
+    background: #ffffff;
+    border-radius: 2px;
+    z-index: 50;
+    pointer-events: none;
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.5), 0 0 2px rgba(255, 255, 255, 0.9);
+  }
+
+  .drop-line::before {
+    content: '';
+    position: absolute;
+    left: -4px;
+    top: -3px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.7);
+  }
+
+  .drop-line-top {
+    top: -1px;
+  }
+
+  .drop-line-bottom {
+    bottom: -1px;
+  }
+
+  .folder-drop-inside {
+    background: rgba(255, 255, 255, 0.08) !important;
+    outline: 1px solid rgba(255, 255, 255, 0.6);
+    outline-offset: -1px;
+    border-radius: var(--radius-sm);
+  }
+
+  .root-drop-zone {
+    height: 38px;
+    margin-top: 8px;
+    border: 1px dashed transparent;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.12s ease, border-color 0.12s ease;
+    user-select: none;
+  }
+
+  .root-drop-zone.visible {
+    border-color: var(--hairline);
+  }
+
+  .root-drop-zone.active {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.6);
+    border-style: solid;
+  }
+
+  .root-drop-hint {
+    font-size: 11px;
+    color: var(--mute);
+    font-weight: 500;
+    pointer-events: none;
+    transition: color 0.12s ease;
+  }
+
+  .root-drop-hint.active {
+    color: var(--ink);
   }
 </style>
