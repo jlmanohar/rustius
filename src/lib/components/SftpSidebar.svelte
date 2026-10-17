@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { openPath } from '@tauri-apps/plugin-opener';
-  import type { FileEntry } from '../types';
+  import type { FileEntry, CredentialOverride } from '../types';
   import {
     Folder,
     FileText,
@@ -34,6 +34,7 @@
   let {
     tabId,
     connectionId,
+    credentialsOverride,
     terminalCwd = null,
     isTerminalDisconnected = false,
     onreconnect,
@@ -42,6 +43,7 @@
   }: {
     tabId: string;
     connectionId: string;
+    credentialsOverride?: CredentialOverride;
     terminalCwd?: string | null;
     isTerminalDisconnected?: boolean;
     onreconnect?: () => void;
@@ -183,6 +185,7 @@
       const homePath = await invoke<string>('sftp_connect', {
         tabId,
         connectionId,
+        credentialsOverride,
       });
       isConnected = true;
       initialHomePath = homePath;

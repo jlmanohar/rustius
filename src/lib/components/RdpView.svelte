@@ -268,6 +268,7 @@
       await invoke('freerdp_connect', {
         tabId: session.id,
         connectionId: session.connectionId,
+        credentialsOverride: session.credentialsOverride,
         x: bounds.x,
         y: bounds.y,
         width: bounds.width,

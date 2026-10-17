@@ -200,6 +200,7 @@
           await invoke('ssh_connect', {
             tabId: session.id,
             connectionId: session.connectionId,
+            credentialsOverride: session.credentialsOverride,
           });
 
           if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
@@ -664,6 +665,7 @@
         <SftpSidebar
           tabId={session.id}
           connectionId={session.connectionId}
+          credentialsOverride={session.credentialsOverride}
           {terminalCwd}
           isTerminalDisconnected={isDisconnected}
           onreconnect={reconnect}

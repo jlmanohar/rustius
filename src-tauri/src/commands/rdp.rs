@@ -15,6 +15,7 @@ pub async fn freerdp_connect(
     app_handle: AppHandle,
     tab_id: String,
     connection_id: String,
+    credentials_override: Option<rustius_core::connection::CredentialOverride>,
     x: i32,
     y: i32,
     width: i32,
@@ -35,11 +36,13 @@ pub async fn freerdp_connect(
         .get_connection(uuid)
         .await
         .map_err(|e| format!("Connection not found (ID: {connection_id}): {e}"))?;
-    let conn = state
+    let mut conn = state
         .config_manager
         .resolve_connection(&conn)
         .await
         .map_err(|e| format!("Failed to resolve credentials: {e}"))?;
+
+    conn.apply_override(credentials_override);
 
     let host = conn.host;
     let port = conn.port;

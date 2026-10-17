@@ -306,6 +306,78 @@ pub struct Connection {
     pub credential_id: Option<Uuid>,
 }
 
+/// Temporary credential overrides for a one-off connection session.
+/// Never saved to persistent storage.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct CredentialOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+}
+
+impl Connection {
+    /// Apply temporary credentials override for this session in memory only.
+    pub fn apply_override(&mut self, creds: Option<CredentialOverride>) {
+        let Some(creds) = creds else { return; };
+
+        if let Some(username) = creds.username {
+            let trimmed = username.trim();
+            if !trimmed.is_empty() {
+                match &mut self.auth {
+                    AuthMethod::Password { username: u, .. } => *u = trimmed.to_string(),
+                    AuthMethod::KeyFile { username: u, .. } => *u = trimmed.to_string(),
+                    AuthMethod::Agent { username: u } => *u = trimmed.to_string(),
+                }
+            }
+        }
+
+        if let Some(password) = creds.password {
+            match &mut self.auth {
+                AuthMethod::Password {
+                    password: p,
+                    secret_ref,
+                    ..
+                } => {
+                    *p = Some(password);
+                    *secret_ref = None;
+                }
+                AuthMethod::KeyFile { username, .. } => {
+                    self.auth = AuthMethod::Password {
+                        username: username.clone(),
+                        password: Some(password),
+                        secret_ref: None,
+                    };
+                }
+                AuthMethod::Agent { username } => {
+                    self.auth = AuthMethod::Password {
+                        username: username.clone(),
+                        password: Some(password),
+                        secret_ref: None,
+                    };
+                }
+            }
+        }
+
+        if let Some(domain) = creds.domain {
+            let domain_val = if domain.trim().is_empty() {
+                None
+            } else {
+                Some(domain.trim().to_string())
+            };
+            if let Some(ref mut rdp) = self.rdp_config {
+                rdp.domain = domain_val;
+            } else {
+                let mut rdp = RdpConfig::default();
+                rdp.domain = domain_val;
+                self.rdp_config = Some(rdp);
+            }
+        }
+    }
+}
+
 /// SSH-specific configuration for a connection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SshConfig {
@@ -904,5 +976,54 @@ mod tests {
             let abs = "/etc/hosts";
             assert_eq!(resolve_key_path(abs, None), std::path::PathBuf::from(abs));
         }
+    }
+
+    #[test]
+    fn test_apply_override() {
+        let mut conn = Connection {
+            id: Uuid::new_v4(),
+            name: "Test SSH".to_string(),
+            connection_type: ConnectionType::Ssh,
+            host: "example.com".to_string(),
+            port: 22,
+            auth: AuthMethod::password("original_user", Some("orig_pass".to_string())),
+            tags: vec![],
+            environment: None,
+            description: None,
+            notes: None,
+            created_at: default_timestamp(),
+            updated_at: default_timestamp(),
+            ssh_config: None,
+            rdp_config: None,
+            credential_id: None,
+        };
+
+        // None override leaves it unchanged
+        conn.apply_override(None);
+        if let AuthMethod::Password { username, password, .. } = &conn.auth {
+            assert_eq!(username, "original_user");
+            assert_eq!(password.as_deref(), Some("orig_pass"));
+        } else {
+            panic!("Expected password auth");
+        }
+
+        // Apply override
+        conn.apply_override(Some(CredentialOverride {
+            username: Some("temp_admin".to_string()),
+            password: Some("temporary_secret".to_string()),
+            domain: Some("CORP".to_string()),
+        }));
+
+        if let AuthMethod::Password { username, password, .. } = &conn.auth {
+            assert_eq!(username, "temp_admin");
+            assert_eq!(password.as_deref(), Some("temporary_secret"));
+        } else {
+            panic!("Expected password auth");
+        }
+
+        assert_eq!(
+            conn.rdp_config.as_ref().and_then(|r| r.domain.as_deref()),
+            Some("CORP")
+        );
     }
 }

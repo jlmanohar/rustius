@@ -21,6 +21,7 @@ use crate::state::AppState;
 pub async fn ssh_connect(
     tab_id: String,
     connection_id: String,
+    credentials_override: Option<rustius_core::connection::CredentialOverride>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -35,11 +36,13 @@ pub async fn ssh_connect(
         .get_connection(uuid)
         .await
         .map_err(|e| format!("Connection not found (ID: {connection_id}): {e}"))?;
-    let connection = state
+    let mut connection = state
         .config_manager
         .resolve_connection(&connection)
         .await
         .map_err(|e| format!("Failed to resolve credentials: {e}"))?;
+
+    connection.apply_override(credentials_override);
 
     let (output_tx, mut output_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let (exit_tx, mut exit_rx) = mpsc::channel::<u32>(1);

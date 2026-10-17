@@ -131,6 +131,12 @@ export interface RustiusConfig {
 
 export type TabType = 'ssh' | 'sftp' | 'rdp' | 'local_terminal';
 
+export interface CredentialOverride {
+  username?: string;
+  password?: string;
+  domain?: string;
+}
+
 export interface TabSession {
   id: string;
   title: string;
@@ -138,6 +144,7 @@ export interface TabSession {
   connectionId?: string;
   status: 'connecting' | 'connected' | 'disconnected' | 'error';
   badge?: string;
+  credentialsOverride?: CredentialOverride;
 }
 
 export interface FileEntry {

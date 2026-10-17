@@ -1,6 +1,7 @@
 <script lang="ts">
   import { appState } from '../stores/appState.svelte';
-  import type { TreeNode, Connection, Folder } from '../types';
+  import type { TreeNode, Connection, Folder, CredentialOverride } from '../types';
+  import ConnectWithCredentialsModal from './ConnectWithCredentialsModal.svelte';
   import {
     Folder as FolderIcon,
     FolderOpen,
@@ -67,6 +68,41 @@
       status: 'connecting',
       badge: conn.host,
     });
+  }
+
+  function handleConnectWithOverride(conn: Connection, override: CredentialOverride) {
+    const cType = conn.connection_type || conn.conn_type || 'ssh';
+    const title = (conn.name && conn.name.trim()) ? conn.name.trim() : conn.host;
+    appState.openTab({
+      title,
+      type: cType,
+      connectionId: conn.id,
+      status: 'connecting',
+      badge: override.username ? `${override.username}@${conn.host}` : conn.host,
+      credentialsOverride: override,
+    });
+    credentialsModalConnection = null;
+  }
+
+  // Right-click connection context menu and temporary credentials modal state
+  let contextMenu = $state<{
+    x: number;
+    y: number;
+    connection: Connection;
+  } | null>(null);
+
+  let credentialsModalConnection = $state<Connection | null>(null);
+
+  function handleConnectionContextMenu(e: MouseEvent, conn: Connection) {
+    e.preventDefault();
+    e.stopPropagation();
+    const x = Math.min(e.clientX, window.innerWidth - 240);
+    const y = Math.min(e.clientY, window.innerHeight - 200);
+    contextMenu = { x, y, connection: conn };
+  }
+
+  function closeContextMenu() {
+    contextMenu = null;
   }
 
   function toggleFolder(folder: Folder) {
@@ -223,6 +259,8 @@
     await appState.moveNode(movingId, null, rootList.length);
   }
 </script>
+
+<svelte:window onclick={closeContextMenu} />
 
 <aside class="sidebar">
   <!-- Brand Header -->
@@ -445,6 +483,7 @@
                 ondrop={(e) => handleDrop(e, node, parentFolderId)}
                 ondblclick={() => handleConnect(node)}
                 onkeydown={(e) => e.key === 'Enter' && handleConnect(node)}
+                oncontextmenu={(e) => handleConnectionContextMenu(e, node)}
               >
                 <div class="node-icon">
                   {#if (node.connection_type || node.conn_type) === 'ssh'}
@@ -585,6 +624,83 @@
     </button>
   </div>
 </aside>
+
+{#if contextMenu}
+  <div
+    class="connection-context-menu"
+    role="menu"
+    tabindex="-1"
+    style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
+    onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => e.key === 'Escape' && closeContextMenu()}
+  >
+    <button
+      class="context-menu-item"
+      onclick={() => {
+        if (contextMenu) handleConnect(contextMenu.connection);
+        closeContextMenu();
+      }}
+    >
+      <Play size={12} class="menu-item-icon" />
+      <span>Connect</span>
+    </button>
+    <button
+      class="context-menu-item"
+      onclick={() => {
+        if (contextMenu) {
+          credentialsModalConnection = contextMenu.connection;
+        }
+        closeContextMenu();
+      }}
+    >
+      <KeyRound size={12} class="menu-item-icon text-amber" />
+      <span>Connect with different credentials...</span>
+    </button>
+    <div class="menu-divider"></div>
+    <button
+      class="context-menu-item"
+      onclick={() => {
+        if (contextMenu) {
+          appState.editingConnection = contextMenu.connection;
+          appState.isConnectionModalOpen = true;
+        }
+        closeContextMenu();
+      }}
+    >
+      <Pencil size={12} class="menu-item-icon" />
+      <span>Edit</span>
+    </button>
+    <button
+      class="context-menu-item text-danger"
+      onclick={async () => {
+        const conn = contextMenu?.connection;
+        closeContextMenu();
+        if (conn) {
+          const ok = await appState.confirm({
+            title: 'Delete Connection',
+            message: `Are you sure you want to delete connection "${conn.name}"?`,
+            confirmText: 'Delete Connection',
+            isDanger: true,
+          });
+          if (ok) {
+            await appState.removeNode(conn.id);
+          }
+        }
+      }}
+    >
+      <Trash2 size={12} class="menu-item-icon" />
+      <span>Delete</span>
+    </button>
+  </div>
+{/if}
+
+{#if credentialsModalConnection}
+  <ConnectWithCredentialsModal
+    connection={credentialsModalConnection}
+    onconnect={(override) => handleConnectWithOverride(credentialsModalConnection!, override)}
+    onclose={() => (credentialsModalConnection = null)}
+  />
+{/if}
 
 <style>
   .sidebar {
@@ -1077,5 +1193,87 @@
 
   .root-drop-hint.active {
     color: var(--ink);
+  }
+
+  /* Right-click Connection Context Menu */
+  .connection-context-menu {
+    position: fixed;
+    z-index: 10000;
+    min-width: 235px;
+    background: var(--canvas-elevated);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    padding: 4px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.7);
+    display: flex;
+    flex-direction: column;
+    animation: menuFadeIn 0.1s ease-out;
+    user-select: none;
+  }
+
+  .context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--ink-secondary);
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.1s ease;
+    font-family: inherit;
+  }
+
+  .context-menu-item:hover {
+    background: var(--canvas-hover);
+    color: var(--ink);
+  }
+
+  :global(.menu-item-icon) {
+    flex-shrink: 0;
+    color: var(--mute);
+  }
+
+  .context-menu-item:hover :global(.menu-item-icon) {
+    color: var(--ink);
+  }
+
+  :global(.menu-item-icon.text-amber) {
+    color: var(--accent-amber) !important;
+  }
+
+  .context-menu-item.text-danger {
+    color: #ff4d4d;
+  }
+
+  .context-menu-item.text-danger:hover {
+    background: rgba(255, 77, 77, 0.12);
+    color: #ff4d4d;
+  }
+
+  .context-menu-item.text-danger :global(.menu-item-icon) {
+    color: #ff4d4d;
+  }
+
+  .menu-divider {
+    height: 1px;
+    background: var(--hairline);
+    margin: 4px 0;
+  }
+
+  @keyframes menuFadeIn {
+    from {
+      opacity: 0;
+      transform: scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
   }
 </style>
