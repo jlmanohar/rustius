@@ -59,6 +59,17 @@ export interface RdpConfig {
   domain?: string;
   resolution_mode?: 'auto' | 'native' | '1080p' | '720p' | 'custom';
   scale_factor?: number;
+  engine?: 'ironrdp' | 'freerdp';
+}
+
+export interface IronRdpFrame {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  desktop_width: number;
+  desktop_height: number;
+  data: string; // Base64 encoded RGBA pixel bytes
 }
 
 export interface RdpExitDiagnostic {
@@ -68,6 +79,7 @@ export interface RdpExitDiagnostic {
   severity: 'security' | 'auth' | 'error' | 'info';
   raw_error?: string;
 }
+
 
 export interface CredentialProfile {
   id: string;

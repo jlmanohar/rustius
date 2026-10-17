@@ -16,6 +16,14 @@ serde_json.workspace = true
 base64.workspace = true
 parking_lot = "0.12"
 
+ironrdp = { git = "https://github.com/Devolutions/IronRDP", features = ["input", "client", "rustls", "graphics"] }
+ironrdp-client = { git = "https://github.com/Devolutions/IronRDP", default-features = false, features = ["rustls"] }
+ironrdp-pdu = { git = "https://github.com/Devolutions/IronRDP" }
+ironrdp-tls = { git = "https://github.com/Devolutions/IronRDP" }
+
+
+
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",

@@ -210,10 +210,12 @@
         domain = c.rdp_config.domain || '';
         rdpResolutionMode = (c.rdp_config.resolution_mode as any) || 'auto';
         rdpScaleFactor = c.rdp_config.scale_factor ?? 0;
+        rdpEngine = (c.rdp_config.engine as any) || 'ironrdp';
       } else {
         domain = '';
         rdpResolutionMode = 'auto';
         rdpScaleFactor = 0;
+        rdpEngine = 'ironrdp';
       }
       if (connType === 'rdp' && !domain && username.includes('\\')) {
         const parts = username.split('\\');
@@ -231,6 +233,7 @@
       notesTab = 'write';
       rdpResolutionMode = 'auto';
       rdpScaleFactor = 0;
+      rdpEngine = 'ironrdp';
     }
   });
 
@@ -240,11 +243,13 @@
   let keepalive = $state(30);
 
   // RDP options
+  let rdpEngine = $state<'ironrdp' | 'freerdp'>('ironrdp');
   let rdpResolutionMode = $state<'auto' | 'native' | '1080p' | '720p' | 'custom'>('auto');
   let rdpScaleFactor = $state<number>(0);
   let rdpWidth = $state(1920);
   let rdpHeight = $state(1080);
   let clipboardSharing = $state(true);
+
 
   let availableFolders = $derived.by(() => {
     const list: { id: string; name: string }[] = [];
@@ -452,9 +457,11 @@
               domain: finalDomain || undefined,
               resolution_mode: rdpResolutionMode,
               scale_factor: rdpScaleFactor > 0 ? rdpScaleFactor : undefined,
+              engine: rdpEngine,
             }
           : undefined,
     };
+
 
     try {
       await appState.addConnection(newConnection, parentFolderId || null);
@@ -853,8 +860,17 @@
       {:else if connType === 'rdp'}
         <div class="form-grid">
           <div class="form-cell col-2">
+            <label for="rdp-engine">RDP Engine</label>
+            <select id="rdp-engine" bind:value={rdpEngine} class="input-field">
+              <option value="ironrdp">IronRDP (Cross-Platform · Canvas/GPU Render · Pure Rust)</option>
+              <option value="freerdp">FreeRDP (Direct3D Native Windows Overlay)</option>
+            </select>
+          </div>
+
+          <div class="form-cell col-2">
             <label for="rdp-resolution-mode">Display Resolution</label>
             <select id="rdp-resolution-mode" bind:value={rdpResolutionMode} class="input-field">
+
               <option value="auto">Auto (Fit Window · Larger UI)</option>
               <option value="native">Native Monitor (1440p / 4K / High Res)</option>
               <option value="1080p">1080p (Full HD · 1920×1080)</option>

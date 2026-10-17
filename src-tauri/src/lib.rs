@@ -9,8 +9,10 @@ use commands::config::{
 };
 use commands::rdp::{
     freerdp_connect, freerdp_disconnect, freerdp_set_docked, freerdp_set_visibility,
-    freerdp_update_bounds, rdp_disconnect,
+    freerdp_update_bounds, ironrdp_connect, ironrdp_disconnect, ironrdp_key_event,
+    ironrdp_mouse_button, ironrdp_mouse_move, ironrdp_mouse_wheel, ironrdp_resize, rdp_disconnect,
 };
+
 use commands::sftp::{
     local_get_home_dir, local_list_dir, local_mkdir, local_remove, local_rename, sftp_connect,
     sftp_disconnect, sftp_download, sftp_download_bytes, sftp_download_to_downloads, sftp_list_dir,
@@ -86,8 +88,14 @@ pub fn run() {
             } else if matches!(event, tauri::WindowEvent::Destroyed) {
                 let state = window.state::<AppState>();
                 let freerdp = state.freerdp_sessions.clone();
+                let ironrdp = state.ironrdp_sessions.clone();
                 let pty = state.local_terminals.clone();
                 if let Ok(mut guard) = freerdp.try_write() {
+                    for (_, session) in guard.drain() {
+                        session.disconnect();
+                    }
+                };
+                if let Ok(mut guard) = ironrdp.try_write() {
                     for (_, session) in guard.drain() {
                         session.disconnect();
                     }
@@ -98,6 +106,7 @@ pub fn run() {
                     }
                 };
             }
+
         })
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
@@ -149,11 +158,19 @@ pub fn run() {
             freerdp_set_docked,
             freerdp_update_bounds,
             freerdp_set_visibility,
+            ironrdp_connect,
+            ironrdp_disconnect,
+            ironrdp_mouse_move,
+            ironrdp_mouse_button,
+            ironrdp_mouse_wheel,
+            ironrdp_key_event,
+            ironrdp_resize,
             window_minimize,
             window_toggle_maximize,
             window_close,
             window_is_maximized
         ])
+
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -370,9 +370,10 @@ impl Connection {
             if let Some(ref mut rdp) = self.rdp_config {
                 rdp.domain = domain_val;
             } else {
-                let mut rdp = RdpConfig::default();
-                rdp.domain = domain_val;
-                self.rdp_config = Some(rdp);
+                self.rdp_config = Some(RdpConfig {
+                    domain: domain_val,
+                    ..Default::default()
+                });
             }
         }
     }
@@ -447,6 +448,9 @@ pub struct RdpConfig {
     /// Remote desktop DPI scale percentage: 100, 125, 150, 175, 200, or 0 (auto)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale_factor: Option<u32>,
+    /// RDP engine: "ironrdp" (default) or "freerdp"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
 }
 
 impl Default for RdpConfig {
@@ -460,9 +464,11 @@ impl Default for RdpConfig {
             domain: None,
             resolution_mode: None,
             scale_factor: None,
+            engine: None,
         }
     }
 }
+
 
 fn default_true() -> bool {
     true

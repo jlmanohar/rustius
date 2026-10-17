@@ -1,6 +1,6 @@
 use rustius_core::config::ConfigManager;
 use rustius_core::storage::PlaintextStorage;
-use rustius_rdp::FreeRdpSession;
+use rustius_rdp::{FreeRdpSession, IronRdpSession};
 use rustius_ssh::client::SshSession;
 use rustius_ssh::sftp::SftpClient;
 use rustius_terminal::pty::LocalTerminal;
@@ -16,9 +16,11 @@ pub struct AppState {
     pub ssh_sessions: Arc<RwLock<HashMap<String, Arc<SshSession>>>>,
     pub sftp_sessions: Arc<RwLock<HashMap<String, Arc<SftpClient>>>>,
     pub freerdp_sessions: Arc<RwLock<HashMap<String, Arc<FreeRdpSession>>>>,
+    pub ironrdp_sessions: Arc<RwLock<HashMap<String, Arc<IronRdpSession>>>>,
     pub data_dir: PathBuf,
     pub is_portable: bool,
 }
+
 
 /// Resolve the platform-standard user profile data directory:
 /// - Windows: %APPDATA%\rustius
@@ -119,6 +121,7 @@ impl AppState {
         let ssh_sessions = Arc::new(RwLock::new(HashMap::new()));
         let sftp_sessions = Arc::new(RwLock::new(HashMap::new()));
         let freerdp_sessions = Arc::new(RwLock::new(HashMap::new()));
+        let ironrdp_sessions = Arc::new(RwLock::new(HashMap::new()));
 
         Ok(Self {
             config_manager,
@@ -126,9 +129,11 @@ impl AppState {
             ssh_sessions,
             sftp_sessions,
             freerdp_sessions,
+            ironrdp_sessions,
             data_dir: base_dir,
             is_portable,
         })
+
     }
 
     /// Returns the active `known_hosts` file path.
