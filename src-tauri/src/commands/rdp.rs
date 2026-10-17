@@ -299,6 +299,8 @@ pub async fn ironrdp_connect(
         .filter(|&s| s >= 100)
         .or_else(|| conn.rdp_config.as_ref().and_then(|r| r.scale_factor).filter(|&s| s >= 100));
 
+    let egfx = conn.rdp_config.as_ref().and_then(|r| r.egfx);
+
     let rdp_config = IronRdpConfig {
         host,
         port,
@@ -308,6 +310,7 @@ pub async fn ironrdp_connect(
         width,
         height,
         scale_factor: scale,
+        egfx,
     };
 
     let app_clone = app_handle.clone();

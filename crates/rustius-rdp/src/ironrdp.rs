@@ -27,6 +27,7 @@ pub struct IronRdpConfig {
     pub width: u16,
     pub height: u16,
     pub scale_factor: Option<u32>,
+    pub egfx: Option<bool>,
 }
 
 /// Dirty rectangle or full image frame sent to the frontend.
@@ -68,6 +69,7 @@ impl IronRdpSession {
         );
 
         let dest = Destination::from_parts(config.host.clone(), config.port);
+        let egfx_enabled = config.egfx.unwrap_or(false);
 
         let mut builder = ConfigBuilder::new()
             .with_destination(dest)
@@ -76,6 +78,7 @@ impl IronRdpSession {
             .with_client_name("rustius-client")
             .with_client_dir("rustius")
             .with_platform(MajorPlatformType::WINDOWS)
+            .with_color_depth(32)
             .with_desktop_width(config.width)
             .with_desktop_height(config.height)
             .with_desktop_scale_factor(config.scale_factor.unwrap_or(100))
@@ -83,7 +86,7 @@ impl IronRdpSession {
             .with_credssp(true)
             .with_certificate_validation(CertificateValidation::DangerouslyAcceptInvalidCertificate)
             .with_pointer_software_rendering(true)
-            .with_graphics_pipeline(true);
+            .with_graphics_pipeline(egfx_enabled);
 
         if let Some(pass) = &config.password {
             builder = builder.with_password(pass.clone());
@@ -184,12 +187,25 @@ impl IronRdpSession {
                             }
                             Err(error) => {
                                 error!("IronRDP active session error: {:?}", error);
+                                let error_str = error.to_string();
+                                let raw_str = format!("{:?}", error);
+                                let (title, message) = if raw_str.contains("rfx progressive") || raw_str.contains("GraphicsPipeline") {
+                                    (
+                                        "Graphics Pipeline Codec Error".to_string(),
+                                        "RemoteFX progressive decoding failed. Keep EGFX disabled to use standard reliable bitmap updates.".to_string(),
+                                    )
+                                } else {
+                                    (
+                                        "Session Error".to_string(),
+                                        format!("Session error: {}", error_str),
+                                    )
+                                };
                                 let diag = RdpExitDiagnostic {
                                     code: -2,
-                                    title: "Session Error".to_string(),
-                                    message: format!("Session error: {}", error),
+                                    title,
+                                    message,
                                     severity: "error".to_string(),
-                                    raw_error: Some(format!("{:?}", error)),
+                                    raw_error: Some(raw_str),
                                 };
                                 on_event_loop(IronRdpEvent::Terminated(diag));
                             }

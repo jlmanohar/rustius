@@ -211,11 +211,13 @@
         rdpResolutionMode = (c.rdp_config.resolution_mode as any) || 'auto';
         rdpScaleFactor = c.rdp_config.scale_factor ?? 0;
         rdpEngine = (c.rdp_config.engine as any) || 'ironrdp';
+        rdpEgfx = c.rdp_config.egfx ?? false;
       } else {
         domain = '';
         rdpResolutionMode = 'auto';
         rdpScaleFactor = 0;
         rdpEngine = 'ironrdp';
+        rdpEgfx = false;
       }
       if (connType === 'rdp' && !domain && username.includes('\\')) {
         const parts = username.split('\\');
@@ -234,6 +236,7 @@
       rdpResolutionMode = 'auto';
       rdpScaleFactor = 0;
       rdpEngine = 'ironrdp';
+      rdpEgfx = false;
     }
   });
 
@@ -244,6 +247,7 @@
 
   // RDP options
   let rdpEngine = $state<'ironrdp' | 'freerdp'>('ironrdp');
+  let rdpEgfx = $state(false);
   let rdpResolutionMode = $state<'auto' | 'native' | '1080p' | '720p' | 'custom'>('auto');
   let rdpScaleFactor = $state<number>(0);
   let rdpWidth = $state(1920);
@@ -458,6 +462,7 @@
               resolution_mode: rdpResolutionMode,
               scale_factor: rdpScaleFactor > 0 ? rdpScaleFactor : undefined,
               engine: rdpEngine,
+              egfx: rdpEngine === 'ironrdp' ? rdpEgfx : undefined,
             }
           : undefined,
     };
@@ -908,6 +913,15 @@
               <span class="check-title">Clipboard Sharing</span>
             </label>
           </div>
+
+          {#if rdpEngine === 'ironrdp'}
+            <div class="form-cell col-2">
+              <label class="check-row" title="Enable Microsoft Remote Desktop Graphics Pipeline (MS-RDPEGFX). Keep disabled (recommended) for maximum stability.">
+                <input type="checkbox" bind:checked={rdpEgfx} />
+                <span class="check-title">Enable EGFX Graphics Pipeline (Experimental)</span>
+              </label>
+            </div>
+          {/if}
         </div>
       {/if}
 

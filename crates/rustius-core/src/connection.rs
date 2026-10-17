@@ -451,6 +451,9 @@ pub struct RdpConfig {
     /// RDP engine: "ironrdp" (default) or "freerdp"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<String>,
+    /// Optional MS-RDPEGFX graphics pipeline (defaults to false for stability)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egfx: Option<bool>,
 }
 
 impl Default for RdpConfig {
@@ -465,6 +468,7 @@ impl Default for RdpConfig {
             resolution_mode: None,
             scale_factor: None,
             engine: None,
+            egfx: None,
         }
     }
 }

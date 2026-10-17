@@ -60,6 +60,7 @@ export interface RdpConfig {
   resolution_mode?: 'auto' | 'native' | '1080p' | '720p' | 'custom';
   scale_factor?: number;
   engine?: 'ironrdp' | 'freerdp';
+  egfx?: boolean;
 }
 
 export interface IronRdpFrame {
