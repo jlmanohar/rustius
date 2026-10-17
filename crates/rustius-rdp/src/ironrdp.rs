@@ -30,6 +30,24 @@ pub struct IronRdpConfig {
     pub egfx: Option<bool>,
 }
 
+/// A single dirty rectangle tile within a frame update.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct IronRdpTile {
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+    pub data: String, // Base64 encoded RGBA pixel bytes
+}
+
+/// A batch of dirty tiles emitted atomically for a single screen update.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct IronRdpFrameBatch {
+    pub desktop_width: u16,
+    pub desktop_height: u16,
+    pub tiles: Vec<IronRdpTile>,
+}
+
 /// Dirty rectangle or full image frame sent to the frontend.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IronRdpFrame {
@@ -46,7 +64,7 @@ pub struct IronRdpFrame {
 #[derive(Clone, Debug)]
 pub enum IronRdpEvent {
     Connected,
-    Frame(IronRdpFrame),
+    FrameBatch(IronRdpFrameBatch),
     Terminated(RdpExitDiagnostic),
 }
 
@@ -131,89 +149,110 @@ impl IronRdpSession {
             .context("Failed to spawn IronRDP thread")?;
 
 
-        // Spawn background task processing output events from the client
+        // Spawn background task processing output events from the client with micro-batching
         tokio::spawn(async move {
-            while let Some(event) = output_rx.recv().await {
+            'outer: while let Some(event) = output_rx.recv().await {
                 match event {
-                    RdpOutputEvent::Connected => {
-                        info!("IronRDP session connected");
-                        on_event_loop(IronRdpEvent::Connected);
-                    }
-                    RdpOutputEvent::Image { buffer, width, height } => {
-                        let w = width.get();
-                        let h = height.get();
-
-                        let frame = encode_u32_buffer_to_frame(0, 0, w, h, w, h, &buffer);
-                        on_event_loop(IronRdpEvent::Frame(frame));
-                    }
                     RdpOutputEvent::DesktopUpdate(update) => {
                         let (buffer, full_w, full_h, region) = update.into_parts();
                         let fw = full_w.get();
                         let fh = full_h.get();
-
 
                         let left = region.left;
                         let top = region.top;
                         let rw = (region.right.saturating_sub(region.left) + 1).max(1);
                         let rh = (region.bottom.saturating_sub(region.top) + 1).max(1);
 
-                        let frame = encode_u32_buffer_to_frame(left, top, rw, rh, fw, fh, &buffer);
-                        on_event_loop(IronRdpEvent::Frame(frame));
-                    }
-                    RdpOutputEvent::ConnectionFailure(error) => {
-                        error!("IronRDP connection failed: {:?}", error);
-                        let diag = RdpExitDiagnostic {
-                            code: -1,
-                            title: "Connection Failed".to_string(),
-                            message: format!("IronRDP connection failure: {}", error),
-                            severity: "error".to_string(),
-                            raw_error: Some(format!("{:?}", error)),
-                        };
-                        on_event_loop(IronRdpEvent::Terminated(diag));
-                        break;
-                    }
-                    RdpOutputEvent::Terminated(result) => {
-                        match result {
-                            Ok(reason) => {
-                                info!("IronRDP session terminated gracefully: {}", reason);
-                                let diag = RdpExitDiagnostic {
-                                    code: 0,
-                                    title: "Session Disconnected".to_string(),
-                                    message: format!("Session disconnected: {}", reason),
-                                    severity: "info".to_string(),
-                                    raw_error: None,
-                                };
-                                on_event_loop(IronRdpEvent::Terminated(diag));
-                            }
-                            Err(error) => {
-                                error!("IronRDP active session error: {:?}", error);
-                                let error_str = error.to_string();
-                                let raw_str = format!("{:?}", error);
-                                let (title, message) = if raw_str.contains("rfx progressive") || raw_str.contains("GraphicsPipeline") {
-                                    (
-                                        "Graphics Pipeline Codec Error".to_string(),
-                                        "RemoteFX progressive decoding failed. Keep EGFX disabled to use standard reliable bitmap updates.".to_string(),
-                                    )
-                                } else {
-                                    (
-                                        "Session Error".to_string(),
-                                        format!("Session error: {}", error_str),
-                                    )
-                                };
-                                let diag = RdpExitDiagnostic {
-                                    code: -2,
-                                    title,
-                                    message,
-                                    severity: "error".to_string(),
-                                    raw_error: Some(raw_str),
-                                };
-                                on_event_loop(IronRdpEvent::Terminated(diag));
+                        let tile = encode_u32_buffer_to_tile(left, top, rw, rh, &buffer);
+
+                        let mut tiles = Vec::with_capacity(32);
+                        tiles.push(tile);
+
+                        // Coalesce additional tiles arriving in the same burst (within 4ms)
+                        // up to a maximum batch size of 64 tiles.
+                        let batch_timeout = std::time::Duration::from_millis(4);
+                        while tiles.len() < 64 {
+                            match tokio::time::timeout(batch_timeout, output_rx.recv()).await {
+                                Ok(Some(RdpOutputEvent::DesktopUpdate(next_update))) => {
+                                    let (next_buffer, next_fw, next_fh, next_region) = next_update.into_parts();
+                                    if next_fw.get() != fw || next_fh.get() != fh {
+                                        // Resolution changed: flush current batch
+                                        on_event_loop(IronRdpEvent::FrameBatch(IronRdpFrameBatch {
+                                            desktop_width: fw,
+                                            desktop_height: fh,
+                                            tiles,
+                                        }));
+
+                                        let next_rw = (next_region.right.saturating_sub(next_region.left) + 1).max(1);
+                                        let next_rh = (next_region.bottom.saturating_sub(next_region.top) + 1).max(1);
+                                        let next_tile = encode_u32_buffer_to_tile(
+                                            next_region.left,
+                                            next_region.top,
+                                            next_rw,
+                                            next_rh,
+                                            &next_buffer,
+                                        );
+                                        on_event_loop(IronRdpEvent::FrameBatch(IronRdpFrameBatch {
+                                            desktop_width: next_fw.get(),
+                                            desktop_height: next_fh.get(),
+                                            tiles: vec![next_tile],
+                                        }));
+                                        tiles = Vec::new();
+                                        break;
+                                    }
+                                    let next_rw = (next_region.right.saturating_sub(next_region.left) + 1).max(1);
+                                    let next_rh = (next_region.bottom.saturating_sub(next_region.top) + 1).max(1);
+                                    tiles.push(encode_u32_buffer_to_tile(
+                                        next_region.left,
+                                        next_region.top,
+                                        next_rw,
+                                        next_rh,
+                                        &next_buffer,
+                                    ));
+                                }
+                                Ok(Some(other_event)) => {
+                                    if !tiles.is_empty() {
+                                        on_event_loop(IronRdpEvent::FrameBatch(IronRdpFrameBatch {
+                                            desktop_width: fw,
+                                            desktop_height: fh,
+                                            tiles,
+                                        }));
+                                        tiles = Vec::new();
+                                    }
+                                    if handle_non_desktop_event(other_event, &*on_event_loop) {
+                                        break 'outer;
+                                    }
+                                    break;
+                                }
+                                Ok(None) => {
+                                    if !tiles.is_empty() {
+                                        on_event_loop(IronRdpEvent::FrameBatch(IronRdpFrameBatch {
+                                            desktop_width: fw,
+                                            desktop_height: fh,
+                                            tiles,
+                                        }));
+                                    }
+                                    break 'outer;
+                                }
+                                Err(_) => {
+                                    // 4ms batching window completed; flush gathered tiles
+                                    break;
+                                }
                             }
                         }
-                        break;
+
+                        if !tiles.is_empty() {
+                            on_event_loop(IronRdpEvent::FrameBatch(IronRdpFrameBatch {
+                                desktop_width: fw,
+                                desktop_height: fh,
+                                tiles,
+                            }));
+                        }
                     }
-                    other => {
-                        debug!("Other IronRDP event: {:?}", other);
+                    non_desktop_event => {
+                        if handle_non_desktop_event(non_desktop_event, &*on_event_loop) {
+                            break 'outer;
+                        }
                     }
                 }
             }
@@ -293,16 +332,95 @@ impl IronRdpSession {
     }
 }
 
-/// Convert packed 0x00RRGGBB pixels to RGBA and encode to Base64 frame
-fn encode_u32_buffer_to_frame(
+/// Handle non-desktop events (Connected, Image snapshot, ConnectionFailure, Terminated)
+fn handle_non_desktop_event(
+    event: RdpOutputEvent,
+    on_event: &impl Fn(IronRdpEvent),
+) -> bool {
+    match event {
+        RdpOutputEvent::Connected => {
+            info!("IronRDP session connected");
+            on_event(IronRdpEvent::Connected);
+            false
+        }
+        RdpOutputEvent::Image { buffer, width, height } => {
+            let w = width.get();
+            let h = height.get();
+            let tile = encode_u32_buffer_to_tile(0, 0, w, h, &buffer);
+            on_event(IronRdpEvent::FrameBatch(IronRdpFrameBatch {
+                desktop_width: w,
+                desktop_height: h,
+                tiles: vec![tile],
+            }));
+            false
+        }
+        RdpOutputEvent::ConnectionFailure(error) => {
+            error!("IronRDP connection failed: {:?}", error);
+            let diag = RdpExitDiagnostic {
+                code: -1,
+                title: "Connection Failed".to_string(),
+                message: format!("IronRDP connection failure: {}", error),
+                severity: "error".to_string(),
+                raw_error: Some(format!("{:?}", error)),
+            };
+            on_event(IronRdpEvent::Terminated(diag));
+            true
+        }
+        RdpOutputEvent::Terminated(result) => {
+            match result {
+                Ok(reason) => {
+                    info!("IronRDP session terminated gracefully: {}", reason);
+                    let diag = RdpExitDiagnostic {
+                        code: 0,
+                        title: "Session Disconnected".to_string(),
+                        message: format!("Session disconnected: {}", reason),
+                        severity: "info".to_string(),
+                        raw_error: None,
+                    };
+                    on_event(IronRdpEvent::Terminated(diag));
+                }
+                Err(error) => {
+                    error!("IronRDP active session error: {:?}", error);
+                    let error_str = error.to_string();
+                    let raw_str = format!("{:?}", error);
+                    let (title, message) = if raw_str.contains("rfx progressive") || raw_str.contains("GraphicsPipeline") {
+                        (
+                            "Graphics Pipeline Codec Error".to_string(),
+                            "RemoteFX progressive decoding failed. Keep EGFX disabled to use standard reliable bitmap updates.".to_string(),
+                        )
+                    } else {
+                        (
+                            "Session Error".to_string(),
+                            format!("Session error: {}", error_str),
+                        )
+                    };
+                    let diag = RdpExitDiagnostic {
+                        code: -2,
+                        title,
+                        message,
+                        severity: "error".to_string(),
+                        raw_error: Some(raw_str),
+                    };
+                    on_event(IronRdpEvent::Terminated(diag));
+                }
+            }
+            true
+        }
+        other => {
+            debug!("Other IronRDP event: {:?}", other);
+            false
+        }
+    }
+}
+
+/// Convert packed 0x00RRGGBB pixels to RGBA and encode to Base64 tile
+fn encode_u32_buffer_to_tile(
     x: u16,
     y: u16,
     width: u16,
     height: u16,
-    desktop_width: u16,
-    desktop_height: u16,
     buffer: &[u32],
-) -> IronRdpFrame {
+) -> IronRdpTile {
     let pixel_count = (width as usize) * (height as usize);
     let mut rgba = Vec::with_capacity(pixel_count * 4);
 
@@ -315,16 +433,15 @@ fn encode_u32_buffer_to_frame(
 
     let data = base64::engine::general_purpose::STANDARD.encode(&rgba);
 
-    IronRdpFrame {
+    IronRdpTile {
         x,
         y,
         width,
         height,
-        desktop_width,
-        desktop_height,
         data,
     }
 }
+
 
 /// Convert DOM / Web `KeyboardEvent.code` to PC/AT set-1 `Scancode`
 fn map_web_code_to_scancode(code: &str) -> Option<Scancode> {
@@ -488,5 +605,39 @@ mod tests {
         assert_eq!(decoded.desktop_width, 1920);
         assert_eq!(decoded.desktop_height, 1080);
         assert_eq!(decoded.data, "AQIDBA==");
+    }
+
+    #[test]
+    fn test_ironrdp_frame_batch_serialization() {
+        let batch = IronRdpFrameBatch {
+            desktop_width: 1920,
+            desktop_height: 1080,
+            tiles: vec![
+                IronRdpTile {
+                    x: 0,
+                    y: 0,
+                    width: 64,
+                    height: 64,
+                    data: "AQIDBA==".to_string(),
+                },
+                IronRdpTile {
+                    x: 64,
+                    y: 0,
+                    width: 64,
+                    height: 64,
+                    data: "BQYHCA==".to_string(),
+                },
+            ],
+        };
+
+        let json = serde_json::to_string(&batch).expect("Failed to serialize frame batch");
+        let decoded: IronRdpFrameBatch = serde_json::from_str(&json).expect("Failed to deserialize frame batch");
+
+        assert_eq!(decoded.desktop_width, 1920);
+        assert_eq!(decoded.desktop_height, 1080);
+        assert_eq!(decoded.tiles.len(), 2);
+        assert_eq!(decoded.tiles[0].x, 0);
+        assert_eq!(decoded.tiles[1].x, 64);
+        assert_eq!(decoded.tiles[1].data, "BQYHCA==");
     }
 }

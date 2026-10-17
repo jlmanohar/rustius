@@ -321,8 +321,8 @@ pub async fn ironrdp_connect(
             IronRdpEvent::Connected => {
                 let _ = app_clone.emit(&format!("rdp-connected-{}", tab_id_clone), ());
             }
-            IronRdpEvent::Frame(frame) => {
-                let _ = app_clone.emit(&format!("rdp-frame-{}", tab_id_clone), frame);
+            IronRdpEvent::FrameBatch(batch) => {
+                let _ = app_clone.emit(&format!("rdp-frame-batch-{}", tab_id_clone), batch);
             }
             IronRdpEvent::Terminated(diag) => {
                 let _ = app_clone.emit(&format!("rdp-exit-{}", tab_id_clone), diag);

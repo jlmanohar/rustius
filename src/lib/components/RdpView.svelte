@@ -4,7 +4,7 @@
   import { listen } from '@tauri-apps/api/event';
   import { appState } from '../stores/appState.svelte';
   import { DisposableStore } from '../utils/disposable';
-  import type { TabSession, RdpExitDiagnostic, IronRdpFrame } from '../types';
+  import type { TabSession, RdpExitDiagnostic, IronRdpFrameBatch, IronRdpTile } from '../types';
   import {
     Monitor,
     Maximize2,
@@ -46,29 +46,57 @@
   let pendingMouseMove: { x: number; y: number } | null = null;
   let mouseMoveRafId: number | null = null;
 
-  function renderFrame(frame: IronRdpFrame) {
+  let pendingTiles: IronRdpTile[] = [];
+  let pendingDesktopWidth = 0;
+  let pendingDesktopHeight = 0;
+  let frameRafId: number | null = null;
+
+  function queueFrameBatch(batch: IronRdpFrameBatch) {
     if (!canvasRef) return;
-    if (!canvasCtx || canvasRef.width !== frame.desktop_width || canvasRef.height !== frame.desktop_height) {
-      canvasRef.width = frame.desktop_width;
-      canvasRef.height = frame.desktop_height;
+
+    pendingDesktopWidth = batch.desktop_width;
+    pendingDesktopHeight = batch.desktop_height;
+
+    for (let i = 0; i < batch.tiles.length; i++) {
+      pendingTiles.push(batch.tiles[i]);
+    }
+
+    if (frameRafId === null) {
+      frameRafId = requestAnimationFrame(flushPendingTiles);
+    }
+  }
+
+  function flushPendingTiles() {
+    frameRafId = null;
+    if (!canvasRef || pendingTiles.length === 0) return;
+
+    if (!canvasCtx || canvasRef.width !== pendingDesktopWidth || canvasRef.height !== pendingDesktopHeight) {
+      canvasRef.width = pendingDesktopWidth;
+      canvasRef.height = pendingDesktopHeight;
       canvasCtx = canvasRef.getContext('2d', { alpha: false });
     }
     if (!canvasCtx) return;
 
+    const tilesToRender = pendingTiles;
+    pendingTiles = [];
+
     try {
-      const bin = atob(frame.data);
-      const len = bin.length;
-      if (!pixelBuffer || pixelBuffer.length < len) {
-        pixelBuffer = new Uint8ClampedArray(Math.max(len, 1920 * 1080 * 4));
+      for (let t = 0; t < tilesToRender.length; t++) {
+        const tile = tilesToRender[t];
+        const bin = atob(tile.data);
+        const len = bin.length;
+        if (!pixelBuffer || pixelBuffer.length < len) {
+          pixelBuffer = new Uint8ClampedArray(Math.max(len, 1920 * 1080 * 4));
+        }
+        for (let i = 0; i < len; i++) {
+          pixelBuffer[i] = bin.charCodeAt(i);
+        }
+        const slice = new Uint8ClampedArray(pixelBuffer.buffer as ArrayBuffer, 0, len);
+        const imgData = new ImageData(slice, tile.width, tile.height);
+        canvasCtx.putImageData(imgData, tile.x, tile.y);
       }
-      for (let i = 0; i < len; i++) {
-        pixelBuffer[i] = bin.charCodeAt(i);
-      }
-      const slice = new Uint8ClampedArray(pixelBuffer.buffer as ArrayBuffer, 0, len);
-      const imgData = new ImageData(slice, frame.width, frame.height);
-      canvasCtx.putImageData(imgData, frame.x, frame.y);
     } catch (err) {
-      console.error('Failed to render IronRDP frame:', err);
+      console.error('Failed to render IronRDP batch tiles:', err);
     }
   }
 
@@ -317,6 +345,11 @@
     session.status = 'connecting';
 
     sessionDisposables.clear();
+    if (frameRafId !== null) {
+      cancelAnimationFrame(frameRafId);
+      frameRafId = null;
+    }
+    pendingTiles = [];
 
     const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
     if (!isTauri) {
@@ -415,11 +448,11 @@
         });
         sessionDisposables.add(unlistenConnected);
 
-        const unlistenFrame = await listen<IronRdpFrame>(`rdp-frame-${session.id}`, (event) => {
+        const unlistenBatch = await listen<IronRdpFrameBatch>(`rdp-frame-batch-${session.id}`, (event) => {
           if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
-          renderFrame(event.payload);
+          queueFrameBatch(event.payload);
         });
-        sessionDisposables.add(unlistenFrame);
+        sessionDisposables.add(unlistenBatch);
 
         await invoke('ironrdp_connect', {
           tabId: session.id,
@@ -563,6 +596,10 @@
     if (mouseMoveRafId !== null) {
       cancelAnimationFrame(mouseMoveRafId);
     }
+    if (frameRafId !== null) {
+      cancelAnimationFrame(frameRafId);
+    }
+    pendingTiles = [];
     sessionDisposables.dispose();
     componentDisposables.dispose();
     invoke('rdp_disconnect', { tabId: session.id }).catch(() => {});

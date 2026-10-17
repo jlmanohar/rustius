@@ -63,6 +63,20 @@ export interface RdpConfig {
   egfx?: boolean;
 }
 
+export interface IronRdpTile {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  data: string; // Base64 encoded RGBA pixel bytes
+}
+
+export interface IronRdpFrameBatch {
+  desktop_width: number;
+  desktop_height: number;
+  tiles: IronRdpTile[];
+}
+
 export interface IronRdpFrame {
   x: number;
   y: number;
