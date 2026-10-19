@@ -16,8 +16,10 @@ serde_json.workspace = true
 base64.workspace = true
 parking_lot = "0.12"
 
-ironrdp = { git = "https://github.com/Devolutions/IronRDP", features = ["input", "client", "rustls", "graphics"] }
-ironrdp-client = { git = "https://github.com/Devolutions/IronRDP", default-features = false, features = ["rustls"] }
+ironrdp = { git = "https://github.com/Devolutions/IronRDP", features = ["input", "client", "rustls", "graphics", "core"] }
+ironrdp-client = { git = "https://github.com/Devolutions/IronRDP", default-features = false, features = ["rustls", "clipboard"] }
+ironrdp-cliprdr = { git = "https://github.com/Devolutions/IronRDP" }
+ironrdp-cliprdr-native = { git = "https://github.com/Devolutions/IronRDP" }
 ironrdp-pdu = { git = "https://github.com/Devolutions/IronRDP" }
 ironrdp-tls = { git = "https://github.com/Devolutions/IronRDP" }
 
@@ -29,5 +31,9 @@ windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Gdi",
+    "Win32_System_Threading",
+    "Win32_System_DataExchange",
+    "Win32_UI_Shell",
+    "Win32_System_Memory",
 ] }
 

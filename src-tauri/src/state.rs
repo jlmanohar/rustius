@@ -21,7 +21,6 @@ pub struct AppState {
     pub is_portable: bool,
 }
 
-
 /// Resolve the platform-standard user profile data directory:
 /// - Windows: %APPDATA%\rustius
 /// - macOS:   ~/Library/Application Support/rustius
@@ -33,14 +32,20 @@ fn get_system_data_dir() -> PathBuf {
             return PathBuf::from(appdata).join("rustius");
         }
         if let Ok(userprofile) = std::env::var("USERPROFILE") {
-            return PathBuf::from(userprofile).join("AppData").join("Roaming").join("rustius");
+            return PathBuf::from(userprofile)
+                .join("AppData")
+                .join("Roaming")
+                .join("rustius");
         }
     }
 
     #[cfg(target_os = "macos")]
     {
         if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join("Library").join("Application Support").join("rustius");
+            return PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("rustius");
         }
     }
 
@@ -133,7 +138,6 @@ impl AppState {
             data_dir: base_dir,
             is_portable,
         })
-
     }
 
     /// Returns the active `known_hosts` file path.

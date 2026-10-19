@@ -34,7 +34,10 @@ pub fn import_content(
         ImportFormat::MobaXterm => mobaxterm::parse_mobaxterm_ini(content, master_password),
         ImportFormat::Auto => {
             let trimmed = content.trim();
-            if trimmed.starts_with('<') || trimmed.contains("<Connections") || trimmed.contains("<Node") {
+            if trimmed.starts_with('<')
+                || trimmed.contains("<Connections")
+                || trimmed.contains("<Node")
+            {
                 mremoteng::parse_mremoteng_xml(content, master_password)
             } else if trimmed.contains("[Bookmarks") || trimmed.contains("[Passwords]") {
                 mobaxterm::parse_mobaxterm_ini(content, master_password)
@@ -62,7 +65,8 @@ pub fn import_from_file<P: AsRef<Path>>(
             if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
                 if ext.eq_ignore_ascii_case("xml") || ext.eq_ignore_ascii_case("mremoteng") {
                     ImportFormat::MRemoteNG
-                } else if ext.eq_ignore_ascii_case("mxtsessions") || ext.eq_ignore_ascii_case("ini") {
+                } else if ext.eq_ignore_ascii_case("mxtsessions") || ext.eq_ignore_ascii_case("ini")
+                {
                     ImportFormat::MobaXterm
                 } else {
                     ImportFormat::Auto

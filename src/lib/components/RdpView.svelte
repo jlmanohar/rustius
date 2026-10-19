@@ -4,6 +4,7 @@
   import { listen } from '@tauri-apps/api/event';
   import { appState } from '../stores/appState.svelte';
   import { DisposableStore } from '../utils/disposable';
+  import { RdpWebGlRenderer } from '../utils/rdpWebGlRenderer';
   import type { TabSession, RdpExitDiagnostic, IronRdpFrameBatch, IronRdpTile } from '../types';
   import {
     Monitor,
@@ -41,8 +42,10 @@
   let rdpEngine = $derived(conn?.rdp_config?.engine || 'ironrdp');
   let isIronRdp = $derived(rdpEngine === 'ironrdp');
 
+  let webglRenderer: RdpWebGlRenderer | null = null;
+  let useWebGl = $state(false);
   let canvasCtx: CanvasRenderingContext2D | null = null;
-  let pixelBuffer: Uint8ClampedArray | null = null;
+  let pixelBuffer: Uint8Array | null = null;
   let pendingMouseMove: { x: number; y: number } | null = null;
   let mouseMoveRafId: number | null = null;
 
@@ -50,6 +53,49 @@
   let pendingDesktopWidth = 0;
   let pendingDesktopHeight = 0;
   let frameRafId: number | null = null;
+
+  function initRenderer(): boolean {
+    if (!canvasRef) return false;
+    if (useWebGl && webglRenderer) return true;
+    if (canvasCtx) return false;
+
+    try {
+      const renderer = new RdpWebGlRenderer();
+      if (renderer.init(canvasRef)) {
+        webglRenderer = renderer;
+        useWebGl = true;
+        canvasCtx = null;
+        return true;
+      }
+      renderer.destroy();
+    } catch (err) {
+      console.warn('Failed to initialize WebGL2 in RdpView; falling back to 2D canvas:', err);
+    }
+
+    useWebGl = false;
+    webglRenderer = null;
+    canvasCtx = canvasRef.getContext('2d', { alpha: false });
+    return false;
+  }
+
+  function decodeTileData(base64: string): Uint8Array {
+    if (typeof (Uint8Array as any).fromBase64 === 'function') {
+      try {
+        return (Uint8Array as any).fromBase64(base64);
+      } catch {
+        // Fall back to pre-allocated buffer decode
+      }
+    }
+    const bin = atob(base64);
+    const len = bin.length;
+    if (!pixelBuffer || pixelBuffer.length < len) {
+      pixelBuffer = new Uint8Array(Math.max(len, 1920 * 1080 * 4));
+    }
+    for (let i = 0; i < len; i++) {
+      pixelBuffer[i] = bin.charCodeAt(i);
+    }
+    return new Uint8Array(pixelBuffer.buffer as ArrayBuffer, 0, len);
+  }
 
   function queueFrameBatch(batch: IronRdpFrameBatch) {
     if (!canvasRef) return;
@@ -70,12 +116,19 @@
     frameRafId = null;
     if (!canvasRef || pendingTiles.length === 0) return;
 
-    if (!canvasCtx || canvasRef.width !== pendingDesktopWidth || canvasRef.height !== pendingDesktopHeight) {
+    if (!webglRenderer && !canvasCtx) {
+      initRenderer();
+    }
+
+    if (canvasRef.width !== pendingDesktopWidth || canvasRef.height !== pendingDesktopHeight) {
       canvasRef.width = pendingDesktopWidth;
       canvasRef.height = pendingDesktopHeight;
-      canvasCtx = canvasRef.getContext('2d', { alpha: false });
+      if (useWebGl && webglRenderer) {
+        webglRenderer.ensureSize(pendingDesktopWidth, pendingDesktopHeight);
+      } else if (!useWebGl) {
+        canvasCtx = canvasRef.getContext('2d', { alpha: false });
+      }
     }
-    if (!canvasCtx) return;
 
     const tilesToRender = pendingTiles;
     pendingTiles = [];
@@ -83,17 +136,19 @@
     try {
       for (let t = 0; t < tilesToRender.length; t++) {
         const tile = tilesToRender[t];
-        const bin = atob(tile.data);
-        const len = bin.length;
-        if (!pixelBuffer || pixelBuffer.length < len) {
-          pixelBuffer = new Uint8ClampedArray(Math.max(len, 1920 * 1080 * 4));
+        const slice = decodeTileData(tile.data);
+
+        if (useWebGl && webglRenderer) {
+          webglRenderer.uploadTile(tile.x, tile.y, tile.width, tile.height, slice);
+        } else if (canvasCtx) {
+          const clamped = new Uint8ClampedArray(slice.buffer as ArrayBuffer, slice.byteOffset, slice.byteLength);
+          const imgData = new ImageData(clamped, tile.width, tile.height);
+          canvasCtx.putImageData(imgData, tile.x, tile.y);
         }
-        for (let i = 0; i < len; i++) {
-          pixelBuffer[i] = bin.charCodeAt(i);
-        }
-        const slice = new Uint8ClampedArray(pixelBuffer.buffer as ArrayBuffer, 0, len);
-        const imgData = new ImageData(slice, tile.width, tile.height);
-        canvasCtx.putImageData(imgData, tile.x, tile.y);
+      }
+
+      if (useWebGl && webglRenderer) {
+        webglRenderer.render();
       }
     } catch (err) {
       console.error('Failed to render IronRDP batch tiles:', err);
@@ -442,6 +497,7 @@
           isConnecting = false;
           isDisconnected = false;
           session.status = 'connected';
+          initRenderer();
           setTimeout(() => {
             canvasRef?.focus();
           }, 100);
@@ -600,6 +656,12 @@
       cancelAnimationFrame(frameRafId);
     }
     pendingTiles = [];
+    if (webglRenderer) {
+      webglRenderer.destroy();
+      webglRenderer = null;
+    }
+    useWebGl = false;
+    canvasCtx = null;
     sessionDisposables.dispose();
     componentDisposables.dispose();
     invoke('rdp_disconnect', { tabId: session.id }).catch(() => {});
@@ -625,9 +687,20 @@
       {/if}
 
       {#if isIronRdp}
-        <span class="acceleration-pill iron" title="Pure Rust, Memory-Safe IronRDP Client">
-          <Shield size={11} />
-          <span>IronRDP · Pure Rust</span>
+        <span
+          class="acceleration-pill iron"
+          class:webgl={useWebGl}
+          title={useWebGl
+            ? 'Hardware-Accelerated WebGL2 GPU Texture Pipeline'
+            : 'Pure Rust IronRDP Engine with 2D Canvas Fallback'}
+        >
+          {#if useWebGl}
+            <Zap size={11} />
+            <span>IronRDP · WebGL2 GPU</span>
+          {:else}
+            <Shield size={11} />
+            <span>IronRDP · Pure Rust</span>
+          {/if}
         </span>
       {:else}
         <span class="acceleration-pill native" title="Direct3D Hardware-Accelerated FreeRDP Engine">
@@ -1231,6 +1304,18 @@
     background: rgba(0, 112, 243, 0.15);
     border-color: #0070f3;
     color: #9eccff;
+  }
+
+  .acceleration-pill.iron.webgl {
+    background: rgba(0, 112, 243, 0.12);
+    border-color: rgba(0, 112, 243, 0.45);
+    color: #58a6ff;
+  }
+
+  .acceleration-pill.iron.webgl:hover {
+    background: rgba(0, 112, 243, 0.2);
+    border-color: #0070f3;
+    color: #79b8ff;
   }
 
   .detached-badge {

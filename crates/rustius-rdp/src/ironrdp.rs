@@ -1,12 +1,13 @@
-use std::sync::Arc;
 use anyhow::{Context, Result};
 use base64::Engine;
 pub use ironrdp::input::MouseButton;
 use ironrdp::input::{Database, MousePosition, Operation, Scancode, WheelRotations};
+use std::sync::Arc;
 
-use ironrdp_client::config::{ConfigBuilder, Destination};
+use ironrdp_client::config::{ClipboardType, ConfigBuilder, Destination};
 use ironrdp_client::output_channel::output_channel;
 use ironrdp_client::rdp::{RdpClient, RdpInputEvent, RdpInputSender, RdpOutputEvent};
+use ironrdp_cliprdr::backend::{ClipboardMessage, ClipboardMessageProxy};
 use ironrdp_pdu::rdp::capability_sets::MajorPlatformType;
 use ironrdp_tls::CertificateValidation;
 
@@ -28,6 +29,7 @@ pub struct IronRdpConfig {
     pub height: u16,
     pub scale_factor: Option<u32>,
     pub egfx: Option<bool>,
+    pub clipboard_sharing: Option<bool>,
 }
 
 /// A single dirty rectangle tile within a frame update.
@@ -68,11 +70,25 @@ pub enum IronRdpEvent {
     Terminated(RdpExitDiagnostic),
 }
 
+/// Forwarding proxy that routes clipboard events to the IronRDP client input queue.
+#[derive(Clone, Debug)]
+struct SessionClipboardProxy(RdpInputSender);
+
+impl ClipboardMessageProxy for SessionClipboardProxy {
+    fn send_clipboard_message(&self, message: ClipboardMessage) {
+        if self.0.send_clipboard(message).is_err() {
+            warn!("Unable to enqueue clipboard message because the RDP session is closed");
+        }
+    }
+}
+
 /// Active IronRDP session controlling connection lifecycle and input injection.
 pub struct IronRdpSession {
     input_sender: RdpInputSender,
     input_database: Mutex<Database>,
     desktop_size: RwLock<(u16, u16)>,
+    #[cfg(windows)]
+    clipboard_thread_id: std::sync::atomic::AtomicU32,
 }
 
 impl IronRdpSession {
@@ -88,6 +104,12 @@ impl IronRdpSession {
 
         let dest = Destination::from_parts(config.host.clone(), config.port);
         let egfx_enabled = config.egfx.unwrap_or(false);
+        let clipboard_enabled = config.clipboard_sharing.unwrap_or(true);
+        let clipboard_type = if clipboard_enabled {
+            ClipboardType::Enable
+        } else {
+            ClipboardType::Disable
+        };
 
         let mut builder = ConfigBuilder::new()
             .with_destination(dest)
@@ -104,7 +126,8 @@ impl IronRdpSession {
             .with_credssp(true)
             .with_certificate_validation(CertificateValidation::DangerouslyAcceptInvalidCertificate)
             .with_pointer_software_rendering(true)
-            .with_graphics_pipeline(egfx_enabled);
+            .with_graphics_pipeline(egfx_enabled)
+            .with_clipboard(clipboard_type);
 
         if let Some(pass) = &config.password {
             builder = builder.with_password(pass.clone());
@@ -115,11 +138,178 @@ impl IronRdpSession {
             }
         }
 
-        let client_config = builder.build().context("Failed to build IronRDP configuration")?;
+        let client_config = builder
+            .build()
+            .context("Failed to build IronRDP configuration")?;
 
         let (output_tx, mut output_rx) = output_channel(256);
-        let client = RdpClient::new(client_config, output_tx).with_desktop_updates();
+        let mut client = RdpClient::new(client_config, output_tx).with_desktop_updates();
         let input_sender = client.input_sender();
+
+        let local_files = Arc::new(parking_lot::RwLock::new(Vec::new()));
+        let proxy_arc: Arc<dyn ClipboardMessageProxy + Send + Sync> =
+            Arc::new(SessionClipboardProxy(input_sender.clone()));
+        let staging_dir = std::env::temp_dir().join("rustius").join("clipboard");
+
+        #[cfg(windows)]
+        let (clipboard_factory, clipboard_thread_id) = if clipboard_enabled {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let proxy = SessionClipboardProxy(input_sender.clone());
+            let local_files_pump = Arc::clone(&local_files);
+            let proxy_arc_pump = Arc::clone(&proxy_arc);
+            let staging_dir_pump = staging_dir.clone();
+
+            let pump_handle = std::thread::Builder::new()
+                .name("ironrdp-cliprdr-pump".to_string())
+                .spawn(move || {
+                    let thread_id = unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() };
+                    let clip = match ironrdp_cliprdr_native::WinClipboard::new(proxy) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            error!("Failed to initialize WinClipboard: {:?}", e);
+                            let _ = tx.send(None);
+                            return;
+                        }
+                    };
+
+                    // Post WM_ACTIVATE (WA_INACTIVE) to ensure the hidden clipboard window
+                    // transitions its internal `window_is_active` state to false, enabling
+                    // local clipboard changes to trigger announcements to the remote desktop.
+                    unsafe {
+                        unsafe extern "system" fn enum_thread_wnd_proc(
+                            hwnd: windows_sys::Win32::Foundation::HWND,
+                            _lparam: windows_sys::Win32::Foundation::LPARAM,
+                        ) -> windows_sys::Win32::Foundation::BOOL {
+                            windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+                                hwnd,
+                                windows_sys::Win32::UI::WindowsAndMessaging::WM_ACTIVATE,
+                                windows_sys::Win32::UI::WindowsAndMessaging::WA_INACTIVE as usize,
+                                0,
+                            );
+                            1
+                        }
+
+                        windows_sys::Win32::UI::WindowsAndMessaging::EnumThreadWindows(
+                            thread_id,
+                            Some(enum_thread_wnd_proc),
+                            0,
+                        );
+                    }
+
+                    // Wrap the native WinClipboard factory with RustiusCliprdrBackendFactory
+                    // to provide file-contents streaming and remote file ingestion.
+                    let wrapped_factory = Box::new(crate::clipboard::RustiusCliprdrBackendFactory::new(
+                        clip.backend_factory(),
+                        proxy_arc_pump.clone(),
+                        local_files_pump.clone(),
+                        staging_dir_pump.clone(),
+                    )) as Box<dyn ironrdp_cliprdr::backend::CliprdrBackendFactory + Send>;
+
+                    let _ = tx.send(Some((wrapped_factory, thread_id)));
+
+                    // Run Windows message pump until WM_QUIT is posted on session disconnect
+                    unsafe {
+                        let mut msg = std::mem::zeroed();
+                        while windows_sys::Win32::UI::WindowsAndMessaging::GetMessageW(&mut msg, core::ptr::null_mut(), 0, 0) > 0 {
+                            if msg.message == windows_sys::Win32::UI::WindowsAndMessaging::WM_CLIPBOARDUPDATE {
+                                // Inspect whether CF_HDROP (files) are present on the host clipboard
+                                const CF_HDROP: u32 = 15;
+                                if windows_sys::Win32::System::DataExchange::IsClipboardFormatAvailable(CF_HDROP) != 0 {
+                                    let mut opened = false;
+                                    for _ in 0..10 {
+                                        if windows_sys::Win32::System::DataExchange::OpenClipboard(msg.hwnd) != 0 {
+                                            opened = true;
+                                            break;
+                                        }
+                                        std::thread::sleep(std::time::Duration::from_millis(5));
+                                    }
+
+                                    if opened {
+                                        let hdrop = windows_sys::Win32::System::DataExchange::GetClipboardData(CF_HDROP);
+                                        let paths = if !hdrop.is_null() {
+                                            crate::clipboard::extract_hdrop_paths(hdrop as _)
+                                        } else {
+                                            Vec::new()
+                                        };
+                                        windows_sys::Win32::System::DataExchange::CloseClipboard();
+
+                                        if !paths.is_empty() {
+                                            // Ignore files originating from our own remote staging directory
+                                            let is_from_staging = paths.iter().all(|p| p.starts_with(&staging_dir_pump));
+                                            if !is_from_staging {
+                                                let descriptors = crate::clipboard::create_file_descriptors_from_paths(&paths);
+                                                if !descriptors.is_empty() {
+                                                    info!(
+                                                        count = descriptors.len(),
+                                                        "Captured files from host clipboard; announcing to remote session"
+                                                    );
+                                                    *local_files_pump.write() = paths;
+                                                    proxy_arc_pump.send_clipboard_message(
+                                                        ironrdp_cliprdr::backend::ClipboardMessage::SendInitiateFileCopy(descriptors),
+                                                    );
+                                                }
+                                            } else {
+                                                debug!("Ignoring clipboard update for files from remote staging directory");
+                                            }
+                                        }
+
+                                        // CRUCIAL: Do NOT dispatch WM_CLIPBOARDUPDATE to WinClipboard!
+                                        // If we dispatch to WinClipboard when files were copied, WinClipboard
+                                        // will look for CF_UNICODETEXT, find nothing, and send an empty
+                                        // format list (SendInitiateCopy(vec![])), immediately overwriting
+                                        // the SendInitiateFileCopy we just sent and causing the remote
+                                        // desktop paste operation to fail with "Unspecified error".
+                                        continue;
+                                    }
+                                } else {
+                                    // No files on clipboard; clear stored local files
+                                    *local_files_pump.write() = Vec::new();
+                                }
+                            }
+
+                            windows_sys::Win32::UI::WindowsAndMessaging::TranslateMessage(&msg);
+                            windows_sys::Win32::UI::WindowsAndMessaging::DispatchMessageW(&msg);
+
+                        }
+                    }
+                    debug!("IronRDP WinClipboard message pump thread exited");
+                    drop(clip);
+                });
+
+            if let Err(e) = pump_handle {
+                error!("Failed to spawn ironrdp-cliprdr-pump thread: {:?}", e);
+                (None, 0u32)
+            } else {
+                match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                    Ok(Some((factory, thread_id))) => (Some(factory), thread_id),
+                    _ => {
+                        warn!("WinClipboard initialization timed out or failed");
+                        (None, 0u32)
+                    }
+                }
+            }
+        } else {
+            (None, 0u32)
+        };
+
+        #[cfg(not(windows))]
+        let clipboard_factory = if clipboard_enabled {
+            let wrapped_factory = Box::new(crate::clipboard::RustiusCliprdrBackendFactory::new(
+                ironrdp_cliprdr_native::StubClipboard::new().backend_factory(),
+                proxy_arc,
+                local_files,
+                staging_dir,
+            ))
+                as Box<dyn ironrdp_cliprdr::backend::CliprdrBackendFactory + Send>;
+            Some(wrapped_factory)
+        } else {
+            None
+        };
+
+        if let Some(factory) = clipboard_factory {
+            client = client.with_cliprdr_backend_factory(factory);
+            info!("Attached CLIPRDR backend factory to IronRDP client");
+        }
 
         let initial_width = config.width;
         let initial_height = config.height;
@@ -148,7 +338,6 @@ impl IronRdpSession {
             })
             .context("Failed to spawn IronRDP thread")?;
 
-
         // Spawn background task processing output events from the client with micro-batching
         tokio::spawn(async move {
             'outer: while let Some(event) = output_rx.recv().await {
@@ -174,17 +363,26 @@ impl IronRdpSession {
                         while tiles.len() < 64 {
                             match tokio::time::timeout(batch_timeout, output_rx.recv()).await {
                                 Ok(Some(RdpOutputEvent::DesktopUpdate(next_update))) => {
-                                    let (next_buffer, next_fw, next_fh, next_region) = next_update.into_parts();
+                                    let (next_buffer, next_fw, next_fh, next_region) =
+                                        next_update.into_parts();
                                     if next_fw.get() != fw || next_fh.get() != fh {
                                         // Resolution changed: flush current batch
-                                        on_event_loop(IronRdpEvent::FrameBatch(IronRdpFrameBatch {
-                                            desktop_width: fw,
-                                            desktop_height: fh,
-                                            tiles,
-                                        }));
+                                        on_event_loop(IronRdpEvent::FrameBatch(
+                                            IronRdpFrameBatch {
+                                                desktop_width: fw,
+                                                desktop_height: fh,
+                                                tiles,
+                                            },
+                                        ));
 
-                                        let next_rw = (next_region.right.saturating_sub(next_region.left) + 1).max(1);
-                                        let next_rh = (next_region.bottom.saturating_sub(next_region.top) + 1).max(1);
+                                        let next_rw =
+                                            (next_region.right.saturating_sub(next_region.left)
+                                                + 1)
+                                            .max(1);
+                                        let next_rh =
+                                            (next_region.bottom.saturating_sub(next_region.top)
+                                                + 1)
+                                            .max(1);
                                         let next_tile = encode_u32_buffer_to_tile(
                                             next_region.left,
                                             next_region.top,
@@ -192,16 +390,22 @@ impl IronRdpSession {
                                             next_rh,
                                             &next_buffer,
                                         );
-                                        on_event_loop(IronRdpEvent::FrameBatch(IronRdpFrameBatch {
-                                            desktop_width: next_fw.get(),
-                                            desktop_height: next_fh.get(),
-                                            tiles: vec![next_tile],
-                                        }));
+                                        on_event_loop(IronRdpEvent::FrameBatch(
+                                            IronRdpFrameBatch {
+                                                desktop_width: next_fw.get(),
+                                                desktop_height: next_fh.get(),
+                                                tiles: vec![next_tile],
+                                            },
+                                        ));
                                         tiles = Vec::new();
                                         break;
                                     }
-                                    let next_rw = (next_region.right.saturating_sub(next_region.left) + 1).max(1);
-                                    let next_rh = (next_region.bottom.saturating_sub(next_region.top) + 1).max(1);
+                                    let next_rw =
+                                        (next_region.right.saturating_sub(next_region.left) + 1)
+                                            .max(1);
+                                    let next_rh =
+                                        (next_region.bottom.saturating_sub(next_region.top) + 1)
+                                            .max(1);
                                     tiles.push(encode_u32_buffer_to_tile(
                                         next_region.left,
                                         next_region.top,
@@ -212,11 +416,13 @@ impl IronRdpSession {
                                 }
                                 Ok(Some(other_event)) => {
                                     if !tiles.is_empty() {
-                                        on_event_loop(IronRdpEvent::FrameBatch(IronRdpFrameBatch {
-                                            desktop_width: fw,
-                                            desktop_height: fh,
-                                            tiles,
-                                        }));
+                                        on_event_loop(IronRdpEvent::FrameBatch(
+                                            IronRdpFrameBatch {
+                                                desktop_width: fw,
+                                                desktop_height: fh,
+                                                tiles,
+                                            },
+                                        ));
                                         tiles = Vec::new();
                                     }
                                     if handle_non_desktop_event(other_event, &*on_event_loop) {
@@ -226,11 +432,13 @@ impl IronRdpSession {
                                 }
                                 Ok(None) => {
                                     if !tiles.is_empty() {
-                                        on_event_loop(IronRdpEvent::FrameBatch(IronRdpFrameBatch {
-                                            desktop_width: fw,
-                                            desktop_height: fh,
-                                            tiles,
-                                        }));
+                                        on_event_loop(IronRdpEvent::FrameBatch(
+                                            IronRdpFrameBatch {
+                                                desktop_width: fw,
+                                                desktop_height: fh,
+                                                tiles,
+                                            },
+                                        ));
                                     }
                                     break 'outer;
                                 }
@@ -262,6 +470,8 @@ impl IronRdpSession {
             input_sender,
             input_database: Mutex::new(Database::default()),
             desktop_size: RwLock::new((initial_width, initial_height)),
+            #[cfg(windows)]
+            clipboard_thread_id: std::sync::atomic::AtomicU32::new(clipboard_thread_id),
         })
     }
 
@@ -318,6 +528,22 @@ impl IronRdpSession {
     /// Request session shutdown
     pub fn disconnect(&self) {
         self.input_sender.request_close();
+        #[cfg(windows)]
+        {
+            let tid = self
+                .clipboard_thread_id
+                .swap(0, std::sync::atomic::Ordering::SeqCst);
+            if tid != 0 {
+                unsafe {
+                    windows_sys::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
+                        tid,
+                        windows_sys::Win32::UI::WindowsAndMessaging::WM_QUIT,
+                        0,
+                        0,
+                    );
+                }
+            }
+        }
     }
 
     fn apply_and_send_operations(&self, operations: impl IntoIterator<Item = Operation>) {
@@ -332,18 +558,25 @@ impl IronRdpSession {
     }
 }
 
+impl Drop for IronRdpSession {
+    fn drop(&mut self) {
+        self.disconnect();
+    }
+}
+
 /// Handle non-desktop events (Connected, Image snapshot, ConnectionFailure, Terminated)
-fn handle_non_desktop_event(
-    event: RdpOutputEvent,
-    on_event: &impl Fn(IronRdpEvent),
-) -> bool {
+fn handle_non_desktop_event(event: RdpOutputEvent, on_event: &impl Fn(IronRdpEvent)) -> bool {
     match event {
         RdpOutputEvent::Connected => {
             info!("IronRDP session connected");
             on_event(IronRdpEvent::Connected);
             false
         }
-        RdpOutputEvent::Image { buffer, width, height } => {
+        RdpOutputEvent::Image {
+            buffer,
+            width,
+            height,
+        } => {
             let w = width.get();
             let h = height.get();
             let tile = encode_u32_buffer_to_tile(0, 0, w, h, &buffer);
@@ -383,7 +616,9 @@ fn handle_non_desktop_event(
                     error!("IronRDP active session error: {:?}", error);
                     let error_str = error.to_string();
                     let raw_str = format!("{:?}", error);
-                    let (title, message) = if raw_str.contains("rfx progressive") || raw_str.contains("GraphicsPipeline") {
+                    let (title, message) = if raw_str.contains("rfx progressive")
+                        || raw_str.contains("GraphicsPipeline")
+                    {
                         (
                             "Graphics Pipeline Codec Error".to_string(),
                             "RemoteFX progressive decoding failed. Keep EGFX disabled to use standard reliable bitmap updates.".to_string(),
@@ -441,7 +676,6 @@ fn encode_u32_buffer_to_tile(
         data,
     }
 }
-
 
 /// Convert DOM / Web `KeyboardEvent.code` to PC/AT set-1 `Scancode`
 fn map_web_code_to_scancode(code: &str) -> Option<Scancode> {
@@ -596,7 +830,8 @@ mod tests {
         };
 
         let json = serde_json::to_string(&frame).expect("Failed to serialize frame");
-        let decoded: IronRdpFrame = serde_json::from_str(&json).expect("Failed to deserialize frame");
+        let decoded: IronRdpFrame =
+            serde_json::from_str(&json).expect("Failed to deserialize frame");
 
         assert_eq!(decoded.x, 10);
         assert_eq!(decoded.y, 20);
@@ -631,7 +866,8 @@ mod tests {
         };
 
         let json = serde_json::to_string(&batch).expect("Failed to serialize frame batch");
-        let decoded: IronRdpFrameBatch = serde_json::from_str(&json).expect("Failed to deserialize frame batch");
+        let decoded: IronRdpFrameBatch =
+            serde_json::from_str(&json).expect("Failed to deserialize frame batch");
 
         assert_eq!(decoded.desktop_width, 1920);
         assert_eq!(decoded.desktop_height, 1080);

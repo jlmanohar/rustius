@@ -4,11 +4,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::info;
 
 use rustius_core::connection::AuthMethod;
-use rustius_rdp::{FreeRdpConfig, FreeRdpSession, IronRdpConfig, IronRdpEvent, IronRdpSession, MouseButton};
+use rustius_rdp::{
+    FreeRdpConfig, FreeRdpSession, IronRdpConfig, IronRdpEvent, IronRdpSession, MouseButton,
+};
 
 use crate::state::AppState;
-
-
 
 /// Establish a native FreeRDP session embedded into the application window.
 #[tauri::command]
@@ -104,9 +104,12 @@ pub async fn freerdp_connect(
         height,
         desktop_width,
         desktop_height,
-        scale_desktop: scale_desktop
-            .filter(|&s| s >= 100)
-            .or_else(|| conn.rdp_config.as_ref().and_then(|r| r.scale_factor).filter(|&s| s >= 100)),
+        scale_desktop: scale_desktop.filter(|&s| s >= 100).or_else(|| {
+            conn.rdp_config
+                .as_ref()
+                .and_then(|r| r.scale_factor)
+                .filter(|&s| s >= 100)
+        }),
     };
 
     let session = FreeRdpSession::connect(config)
@@ -136,10 +139,7 @@ pub async fn freerdp_connect(
                     let code = status.code().unwrap_or(0);
                     let diag = session_clone.get_exit_diagnostic(code);
                     if code == 0 {
-                        info!(
-                            "FreeRDP session ended normally for tab: {}",
-                            tab_id_clone
-                        );
+                        info!("FreeRDP session ended normally for tab: {}", tab_id_clone);
                     } else {
                         tracing::error!(
                             target: "rustius_rdp",
@@ -295,11 +295,15 @@ pub async fn ironrdp_connect(
         }
     }
 
-    let scale = scale_factor
-        .filter(|&s| s >= 100)
-        .or_else(|| conn.rdp_config.as_ref().and_then(|r| r.scale_factor).filter(|&s| s >= 100));
+    let scale = scale_factor.filter(|&s| s >= 100).or_else(|| {
+        conn.rdp_config
+            .as_ref()
+            .and_then(|r| r.scale_factor)
+            .filter(|&s| s >= 100)
+    });
 
     let egfx = conn.rdp_config.as_ref().and_then(|r| r.egfx);
+    let clipboard_sharing = conn.rdp_config.as_ref().map(|r| r.clipboard_sharing);
 
     let rdp_config = IronRdpConfig {
         host,
@@ -311,22 +315,21 @@ pub async fn ironrdp_connect(
         height,
         scale_factor: scale,
         egfx,
+        clipboard_sharing,
     };
 
     let app_clone = app_handle.clone();
     let tab_id_clone = tab_id.clone();
 
-    let session = IronRdpSession::connect(rdp_config, move |event| {
-        match event {
-            IronRdpEvent::Connected => {
-                let _ = app_clone.emit(&format!("rdp-connected-{}", tab_id_clone), ());
-            }
-            IronRdpEvent::FrameBatch(batch) => {
-                let _ = app_clone.emit(&format!("rdp-frame-batch-{}", tab_id_clone), batch);
-            }
-            IronRdpEvent::Terminated(diag) => {
-                let _ = app_clone.emit(&format!("rdp-exit-{}", tab_id_clone), diag);
-            }
+    let session = IronRdpSession::connect(rdp_config, move |event| match event {
+        IronRdpEvent::Connected => {
+            let _ = app_clone.emit(&format!("rdp-connected-{}", tab_id_clone), ());
+        }
+        IronRdpEvent::FrameBatch(batch) => {
+            let _ = app_clone.emit(&format!("rdp-frame-batch-{}", tab_id_clone), batch);
+        }
+        IronRdpEvent::Terminated(diag) => {
+            let _ = app_clone.emit(&format!("rdp-exit-{}", tab_id_clone), diag);
         }
     })
     .await
@@ -447,10 +450,7 @@ pub async fn ironrdp_resize(
 
 /// Terminate the active IronRDP session for the specified tab.
 #[tauri::command]
-pub async fn ironrdp_disconnect(
-    tab_id: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn ironrdp_disconnect(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let sess = {
         let mut map = state.ironrdp_sessions.write().await;
         map.remove(&tab_id)
@@ -469,4 +469,3 @@ pub async fn rdp_disconnect(tab_id: String, state: State<'_, AppState>) -> Resul
     let _ = freerdp_disconnect(tab_id, state).await;
     Ok(())
 }
-

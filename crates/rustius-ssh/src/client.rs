@@ -55,7 +55,10 @@ impl SshSession {
         );
 
         let addr = format!("{}:{}", connection.host, connection.port);
-        info!("Connecting SSH to {} (keepalive: {}s, timeout: {}s)", addr, keepalive_secs, timeout_secs);
+        info!(
+            "Connecting SSH to {} (keepalive: {}s, timeout: {}s)",
+            addr, keepalive_secs, timeout_secs
+        );
 
         let connect_fut = async {
             let mut handle = russh::client::connect(
@@ -72,10 +75,17 @@ impl SshSession {
             Ok::<_, anyhow::Error>(handle)
         };
 
-        let handle = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), connect_fut)
-            .await
-            .map_err(|_| anyhow::anyhow!("Connection to {} timed out after {} seconds (host unreachable or offline)", addr, timeout_secs))?
-            .context(format!("Failed to connect to {}", addr))?;
+        let handle =
+            tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), connect_fut)
+                .await
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "Connection to {} timed out after {} seconds (host unreachable or offline)",
+                        addr,
+                        timeout_secs
+                    )
+                })?
+                .context(format!("Failed to connect to {}", addr))?;
 
         // Open channel and request PTY + shell with 5-second timeout
         let channel = tokio::time::timeout(
@@ -116,9 +126,7 @@ impl SshSession {
                         received_exit_status = true;
                         let _ = exit_tx.send(exit_status).await;
                     }
-                    russh::ChannelMsg::Eof | russh::ChannelMsg::Close
-                        if !received_exit_status =>
-                    {
+                    russh::ChannelMsg::Eof | russh::ChannelMsg::Close if !received_exit_status => {
                         received_exit_status = true;
                         let _ = exit_tx.try_send(0);
                     }

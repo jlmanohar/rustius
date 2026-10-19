@@ -28,13 +28,27 @@ use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,rustius=debug")),
-        )
-        .init();
+    // Initialize tracing to both disk log file and stdout
+    let log_dir = std::env::temp_dir().join("rustius");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("rustius.log"));
+
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new("info,rustius=debug,ironrdp=debug,ironrdp_cliprdr=debug")
+    });
+
+    if let Ok(file) = log_file {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(std::sync::Mutex::new(file))
+            .with_ansi(false)
+            .init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter(filter).init();
+    }
 
     let app_state = match AppState::new() {
         Ok(state) => state,
@@ -106,7 +120,6 @@ pub fn run() {
                     }
                 };
             }
-
         })
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
@@ -170,7 +183,6 @@ pub fn run() {
             window_close,
             window_is_maximized
         ])
-
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

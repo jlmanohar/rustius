@@ -321,7 +321,9 @@ pub struct CredentialOverride {
 impl Connection {
     /// Apply temporary credentials override for this session in memory only.
     pub fn apply_override(&mut self, creds: Option<CredentialOverride>) {
-        let Some(creds) = creds else { return; };
+        let Some(creds) = creds else {
+            return;
+        };
 
         if let Some(username) = creds.username {
             let trimmed = username.trim();
@@ -472,7 +474,6 @@ impl Default for RdpConfig {
         }
     }
 }
-
 
 fn default_true() -> bool {
     true
@@ -1010,7 +1011,10 @@ mod tests {
 
         // None override leaves it unchanged
         conn.apply_override(None);
-        if let AuthMethod::Password { username, password, .. } = &conn.auth {
+        if let AuthMethod::Password {
+            username, password, ..
+        } = &conn.auth
+        {
             assert_eq!(username, "original_user");
             assert_eq!(password.as_deref(), Some("orig_pass"));
         } else {
@@ -1024,7 +1028,10 @@ mod tests {
             domain: Some("CORP".to_string()),
         }));
 
-        if let AuthMethod::Password { username, password, .. } = &conn.auth {
+        if let AuthMethod::Password {
+            username, password, ..
+        } = &conn.auth
+        {
             assert_eq!(username, "temp_admin");
             assert_eq!(password.as_deref(), Some("temporary_secret"));
         } else {

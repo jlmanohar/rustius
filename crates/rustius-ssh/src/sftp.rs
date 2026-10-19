@@ -62,7 +62,10 @@ impl SftpClient {
             known_hosts_path,
         );
         let addr = format!("{}:{}", connection.host, connection.port);
-        info!("Connecting SFTP subsystem to {} (keepalive: {}s, timeout: {}s)", addr, keepalive_secs, timeout_secs);
+        info!(
+            "Connecting SFTP subsystem to {} (keepalive: {}s, timeout: {}s)",
+            addr, keepalive_secs, timeout_secs
+        );
 
         let connect_fut = async {
             let mut handle = russh::client::connect(
@@ -96,7 +99,13 @@ impl SftpClient {
 
         tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), connect_fut)
             .await
-            .map_err(|_| anyhow::anyhow!("SFTP connection to {} timed out after {} seconds", addr, timeout_secs))?
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "SFTP connection to {} timed out after {} seconds",
+                    addr,
+                    timeout_secs
+                )
+            })?
     }
 
     /// Disconnect and terminate the SFTP session.
