@@ -254,6 +254,10 @@ pub async fn vault_get_status(state: State<'_, AppState>) -> Result<VaultStatus,
     let has_vault_file = state.config_manager.secret_manager().has_vault_file();
     let is_unlocked = state.config_manager.secret_manager().is_vault_unlocked();
 
+    if is_unlocked {
+        let _ = state.config_manager.secure_all_unencrypted_secrets().await;
+    }
+
     Ok(VaultStatus {
         is_portable,
         configured_backend,
@@ -265,11 +269,16 @@ pub async fn vault_get_status(state: State<'_, AppState>) -> Result<VaultStatus,
 
 #[tauri::command]
 pub async fn vault_unlock(password: String, state: State<'_, AppState>) -> Result<bool, String> {
-    state
+    let unlocked = state
         .config_manager
         .secret_manager()
         .unlock_vault(&password)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    if unlocked {
+        let _ = state.config_manager.secure_all_unencrypted_secrets().await;
+    }
+    Ok(unlocked)
 }
 
 #[tauri::command]
@@ -287,7 +296,10 @@ pub async fn vault_set_master_password(
         .config_manager
         .secret_manager()
         .set_master_password(&password)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    let _ = state.config_manager.secure_all_unencrypted_secrets().await;
+    Ok(())
 }
 
 #[tauri::command]

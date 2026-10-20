@@ -245,11 +245,23 @@ impl SecretManager {
     pub fn set_secret(&self, key: &str, secret: &str) -> Result<()> {
         let entry = keyring::Entry::new(&self.service, key)
             .map_err(|e| anyhow::anyhow!("Failed to create keyring entry for key {key}: {e}"))?;
-        entry.set_password(secret).map_err(|e| {
-            anyhow::anyhow!("Failed to save credential to OS keyring for key {key}: {e}")
-        })?;
-        debug!("Stored secret in OS keyring for key: {}", key);
-        Ok(())
+        let mut last_err = None;
+        for attempt in 0..5 {
+            match entry.set_password(secret) {
+                Ok(()) => {
+                    debug!("Stored secret in OS keyring for key: {}", key);
+                    return Ok(());
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    std::thread::sleep(std::time::Duration::from_millis(15 * (attempt + 1)));
+                }
+            }
+        }
+        Err(anyhow::anyhow!(
+            "Failed to save credential to OS keyring for key {key}: {:?}",
+            last_err
+        ))
     }
 
     /// Retrieve a secret string from the OS keyring for the given key/account.
@@ -257,17 +269,23 @@ impl SecretManager {
     pub fn get_secret(&self, key: &str) -> Result<Option<String>> {
         let entry = keyring::Entry::new(&self.service, key)
             .map_err(|e| anyhow::anyhow!("Failed to access keyring entry for key {key}: {e}"))?;
-        match entry.get_password() {
-            Ok(pass) => Ok(Some(pass)),
-            Err(keyring::Error::NoEntry) => {
-                debug!("No secret found in OS keyring for key: {}", key);
-                Ok(None)
-            }
-            Err(e) => {
-                warn!("Error retrieving secret from OS keyring for key {key}: {e}");
-                Err(anyhow::anyhow!("Keyring lookup failed for key {key}: {e}"))
+        for attempt in 0..5 {
+            match entry.get_password() {
+                Ok(pass) => return Ok(Some(pass)),
+                Err(keyring::Error::NoEntry) => {
+                    debug!("No secret found in OS keyring for key: {}", key);
+                    return Ok(None);
+                }
+                Err(e) => {
+                    if attempt == 4 {
+                        warn!("Error retrieving secret from OS keyring for key {key}: {e}");
+                        return Err(anyhow::anyhow!("Keyring lookup failed for key {key}: {e}"));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(15 * (attempt + 1)));
+                }
             }
         }
+        Ok(None)
     }
 
     /// Delete a secret from the OS keyring for the given key/account.

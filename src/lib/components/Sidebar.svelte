@@ -20,7 +20,9 @@
     Pencil,
     FolderDown,
     KeyRound,
-    FileText
+    FileText,
+    Lock,
+    LockOpen
   } from '@lucide/svelte';
 
   let environments = $derived.by(() => {
@@ -302,6 +304,25 @@
       >
         <KeyRound size={14} />
       </button>
+      {#if appState.vaultStatus?.has_vault_file}
+        <button
+          class="btn-icon {appState.vaultStatus.is_unlocked ? 'vault-unlocked-btn' : 'vault-locked-btn'}"
+          title={appState.vaultStatus.is_unlocked ? 'Vault Unlocked (Click to lock credentials)' : 'Vault Locked (Click to unlock)'}
+          onclick={() => {
+            if (appState.vaultStatus?.is_unlocked) {
+              void appState.lockVault();
+            } else {
+              appState.isVaultUnlockModalOpen = true;
+            }
+          }}
+        >
+          {#if appState.vaultStatus.is_unlocked}
+            <LockOpen size={14} />
+          {:else}
+            <Lock size={14} />
+          {/if}
+        </button>
+      {/if}
       <button
         class="btn-icon"
         title="Settings"
@@ -1275,5 +1296,20 @@
       opacity: 1;
       transform: scale(1);
     }
+  }
+  .vault-unlocked-btn {
+    color: #10b981 !important;
+  }
+
+  .vault-unlocked-btn:hover {
+    color: #34d399 !important;
+  }
+
+  .vault-locked-btn {
+    color: #f59e0b !important;
+  }
+
+  .vault-locked-btn:hover {
+    color: #fbbf24 !important;
   }
 </style>

@@ -108,13 +108,16 @@ export class AppStore {
       this._initPromise = (async () => {
         await this.loadConfig();
         const status = await this.fetchVaultStatus();
-        if (
-          status &&
-          status.effective_backend === 'master_password' &&
-          status.has_vault_file &&
-          !status.is_unlocked
-        ) {
-          this.isVaultUnlockModalOpen = true;
+        if (status) {
+          if (!status.has_vault_file) {
+            // App onboarding: Master password must always be set on initial run
+            this.isVaultUnlockModalOpen = true;
+          } else if (
+            status.effective_backend === 'master_password' &&
+            !status.is_unlocked
+          ) {
+            this.isVaultUnlockModalOpen = true;
+          }
         }
       })();
     }
@@ -164,6 +167,13 @@ export class AppStore {
     await invoke('vault_change_backend', { target, masterPassword: masterPassword || null });
     await this.fetchVaultStatus();
     await this.loadConfig();
+  }
+
+  async setupMasterPassword(password: string): Promise<void> {
+    await invoke('vault_change_backend', { target: 'master_password', masterPassword: password });
+    await this.fetchVaultStatus();
+    await this.loadConfig();
+    this.isVaultUnlockModalOpen = false;
   }
 
   async loadConfig() {
