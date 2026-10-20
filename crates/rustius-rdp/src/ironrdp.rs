@@ -129,12 +129,26 @@ impl BinaryFrameBatchBuilder {
     }
 }
 
+/// Decoded pointer bitmap sent to the frontend for client-side hardware cursor rendering.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct IronRdpPointerBitmap {
+    pub width: u16,
+    pub height: u16,
+    pub hotspot_x: u16,
+    pub hotspot_y: u16,
+    pub data: String, // Base64 encoded RGBA pixel bytes
+}
+
 /// Events emitted by an active IronRDP session.
 #[derive(Clone, Debug)]
 pub enum IronRdpEvent {
     Connected,
     FrameBatch(IronRdpFrameBatch),
     BinaryFrameBatch(Vec<u8>),
+    PointerDefault,
+    PointerHidden,
+    PointerPosition { x: u16, y: u16 },
+    PointerBitmap(IronRdpPointerBitmap),
     Terminated(RdpExitDiagnostic),
 }
 
@@ -204,7 +218,7 @@ impl IronRdpSession {
             .with_tls(true)
             .with_credssp(true)
             .with_certificate_validation(CertificateValidation::DangerouslyAcceptInvalidCertificate)
-            .with_pointer_software_rendering(true)
+            .with_pointer_software_rendering(false)
             .with_graphics_pipeline(egfx_enabled)
             .with_clipboard(clipboard_type);
 
@@ -751,6 +765,40 @@ fn handle_non_desktop_event(event: RdpOutputEvent, on_event: &impl Fn(IronRdpEve
             }
             true
         }
+        RdpOutputEvent::PointerDefault => {
+            debug!("IronRDP pointer reset to default");
+            on_event(IronRdpEvent::PointerDefault);
+            false
+        }
+        RdpOutputEvent::PointerHidden => {
+            debug!("IronRDP pointer hidden");
+            on_event(IronRdpEvent::PointerHidden);
+            false
+        }
+        RdpOutputEvent::PointerPosition { x, y } => {
+            debug!("IronRDP pointer position: ({}, {})", x, y);
+            on_event(IronRdpEvent::PointerPosition { x, y });
+            false
+        }
+        RdpOutputEvent::PointerBitmap(decoded) => {
+            debug!(
+                "IronRDP pointer bitmap: {}x{} hotspot=({}, {}) bytes={}",
+                decoded.width,
+                decoded.height,
+                decoded.hotspot_x,
+                decoded.hotspot_y,
+                decoded.bitmap_data.len()
+            );
+            let data = base64::engine::general_purpose::STANDARD.encode(&decoded.bitmap_data);
+            on_event(IronRdpEvent::PointerBitmap(IronRdpPointerBitmap {
+                width: decoded.width,
+                height: decoded.height,
+                hotspot_x: decoded.hotspot_x,
+                hotspot_y: decoded.hotspot_y,
+                data,
+            }));
+            false
+        }
         other => {
             debug!("Other IronRDP event: {:?}", other);
             false
@@ -1037,5 +1085,24 @@ mod tests {
             )
         });
         assert!(has_v8_1, "EGFX handler must advertise V8.1 with AVC420_ENABLED");
+    }
+
+    #[test]
+    fn test_pointer_bitmap_serialization() {
+        let bitmap = IronRdpPointerBitmap {
+            width: 32,
+            height: 32,
+            hotspot_x: 0,
+            hotspot_y: 0,
+            data: "AAAA".to_string(),
+        };
+
+        let json = serde_json::to_string(&bitmap).unwrap();
+        let decoded: IronRdpPointerBitmap = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.width, 32);
+        assert_eq!(decoded.height, 32);
+        assert_eq!(decoded.hotspot_x, 0);
+        assert_eq!(decoded.hotspot_y, 0);
+        assert_eq!(decoded.data, "AAAA");
     }
 }

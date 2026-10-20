@@ -5,7 +5,7 @@
   import { appState } from '../stores/appState.svelte';
   import { DisposableStore } from '../utils/disposable';
   import { RdpWebGlRenderer } from '../utils/rdpWebGlRenderer';
-  import type { TabSession, RdpExitDiagnostic, IronRdpFrameBatch, IronRdpTile } from '../types';
+  import type { TabSession, RdpExitDiagnostic, IronRdpFrameBatch, IronRdpTile, IronRdpPointerBitmap } from '../types';
   import {
     Monitor,
     Maximize2,
@@ -47,6 +47,43 @@
   let canvasCtx: CanvasRenderingContext2D | null = null;
   let pendingMouseMove: { x: number; y: number } | null = null;
   let mouseMoveRafId: number | null = null;
+  let cursorCanvas: HTMLCanvasElement | null = null;
+
+  function updateCursorBitmap(bitmap: IronRdpPointerBitmap) {
+    if (!canvasRef) return;
+    if (!bitmap.width || !bitmap.height || !bitmap.data) {
+      canvasRef.style.cursor = 'default';
+      return;
+    }
+
+    try {
+      if (!cursorCanvas) {
+        cursorCanvas = document.createElement('canvas');
+      }
+      cursorCanvas.width = bitmap.width;
+      cursorCanvas.height = bitmap.height;
+      const ctx = cursorCanvas.getContext('2d');
+      if (!ctx) return;
+
+      const binaryStr = atob(bitmap.data);
+      const len = binaryStr.length;
+      const bytes = new Uint8ClampedArray(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+
+      const imgData = new ImageData(bytes, bitmap.width, bitmap.height);
+      ctx.putImageData(imgData, 0, 0);
+
+      const dataUrl = cursorCanvas.toDataURL('image/png');
+      const hx = Math.min(Math.max(0, bitmap.hotspot_x), bitmap.width - 1);
+      const hy = Math.min(Math.max(0, bitmap.hotspot_y), bitmap.height - 1);
+      canvasRef.style.cursor = `url("${dataUrl}") ${hx} ${hy}, default`;
+    } catch (err) {
+      console.warn('Failed to update cursor bitmap:', err);
+      canvasRef.style.cursor = 'default';
+    }
+  }
 
   interface BinaryTile {
     x: number;
@@ -232,6 +269,10 @@
 
   function handleMouseUp(e: MouseEvent) {
     if (!isConnected || !isIronRdp) return;
+    const coords = getCanvasMouseCoords(e);
+    if (coords) {
+      invoke('ironrdp_mouse_move', { tabId: session.id, x: coords.x, y: coords.y }).catch(() => {});
+    }
     invoke('ironrdp_mouse_button', {
       tabId: session.id,
       button: e.button,
@@ -537,6 +578,24 @@
         });
         sessionDisposables.add(unlistenConnected);
 
+        const unlistenPtrDefault = await listen(`rdp-pointer-default-${session.id}`, () => {
+          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
+          if (canvasRef) canvasRef.style.cursor = 'default';
+        });
+        sessionDisposables.add(unlistenPtrDefault);
+
+        const unlistenPtrHidden = await listen(`rdp-pointer-hidden-${session.id}`, () => {
+          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
+          if (canvasRef) canvasRef.style.cursor = 'none';
+        });
+        sessionDisposables.add(unlistenPtrHidden);
+
+        const unlistenPtrBitmap = await listen<IronRdpPointerBitmap>(`rdp-pointer-bitmap-${session.id}`, (event) => {
+          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
+          updateCursorBitmap(event.payload);
+        });
+        sessionDisposables.add(unlistenPtrBitmap);
+
         await invoke('ironrdp_connect', {
           tabId: session.id,
           connectionId: session.connectionId,
@@ -617,6 +676,7 @@
       message: 'Session disconnected by user',
       severity: 'info',
     };
+    if (canvasRef) canvasRef.style.cursor = 'default';
     await invoke('rdp_disconnect', { tabId: session.id }).catch(() => {});
   }
 
@@ -1258,7 +1318,7 @@
     top: 0;
     left: 0;
     overflow: hidden;
-    cursor: none;
+    cursor: default;
   }
 
   .ironrdp-container.hidden {
@@ -1275,7 +1335,7 @@
     outline: none;
     user-select: none;
     -webkit-user-select: none;
-    cursor: none;
+    cursor: default;
     image-rendering: auto;
   }
 

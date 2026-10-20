@@ -349,6 +349,18 @@ pub async fn ironrdp_connect(
         IronRdpEvent::FrameBatch(batch) => {
             let _ = app_clone.emit(&format!("rdp-frame-batch-{}", tab_id_clone), batch);
         }
+        IronRdpEvent::PointerDefault => {
+            let _ = app_clone.emit(&format!("rdp-pointer-default-{}", tab_id_clone), ());
+        }
+        IronRdpEvent::PointerHidden => {
+            let _ = app_clone.emit(&format!("rdp-pointer-hidden-{}", tab_id_clone), ());
+        }
+        IronRdpEvent::PointerPosition { x, y } => {
+            let _ = app_clone.emit(&format!("rdp-pointer-position-{}", tab_id_clone), (x, y));
+        }
+        IronRdpEvent::PointerBitmap(bitmap) => {
+            let _ = app_clone.emit(&format!("rdp-pointer-bitmap-{}", tab_id_clone), bitmap);
+        }
         IronRdpEvent::Terminated(diag) => {
             let _ = app_clone.emit(&format!("rdp-exit-{}", tab_id_clone), diag);
         }

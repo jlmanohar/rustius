@@ -71,6 +71,14 @@ export interface IronRdpTile {
   data: string; // Base64 encoded RGBA pixel bytes
 }
 
+export interface IronRdpPointerBitmap {
+  width: number;
+  height: number;
+  hotspot_x: number;
+  hotspot_y: number;
+  data: string; // Base64 encoded RGBA pixel bytes
+}
+
 export interface IronRdpFrameBatch {
   desktop_width: number;
   desktop_height: number;
