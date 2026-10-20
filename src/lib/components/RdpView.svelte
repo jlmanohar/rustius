@@ -1230,6 +1230,7 @@
     top: 0;
     left: 0;
     overflow: hidden;
+    cursor: none;
   }
 
   .ironrdp-container.hidden {
@@ -1246,7 +1247,7 @@
     outline: none;
     user-select: none;
     -webkit-user-select: none;
-    cursor: default;
+    cursor: none;
     image-rendering: auto;
   }
 
