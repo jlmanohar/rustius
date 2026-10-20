@@ -52,28 +52,10 @@ pub struct SrlDecoder<'a> {
 }
 
 impl<'a> SrlDecoder<'a> {
-    /// Create a decoder for an SRL stream, excluding its optional trailing zero byte.
+    /// Create a decoder for an SRL stream.
     pub fn new(data: &'a [u8]) -> Result<Self, SrlError> {
-        if data.is_empty() {
-            return Ok(Self {
-                reader: BitReader::new(&[]),
-                kp: INITIAL_KP,
-                zero_run_remaining: 0,
-                nonzero_pending: false,
-            });
-        }
-
-        // MS-RDPEGFX 3.1.8.1.5.2 & 3.3.8.2.1.2: A trailing 0x00 byte is emitted as a terminator/safety margin.
-        // However, standard Windows RDP servers frequently omit this trailing zero byte or end on non-zero bit alignments.
-        // If a trailing zero byte is present, exclude it from payload; otherwise decode full buffer.
-        let payload = if data.last() == Some(&0) {
-            &data[..data.len() - 1]
-        } else {
-            data
-        };
-
         Ok(Self {
-            reader: BitReader::new(payload),
+            reader: BitReader::new(data),
             kp: INITIAL_KP,
             zero_run_remaining: 0,
             nonzero_pending: false,
@@ -100,25 +82,48 @@ impl<'a> SrlDecoder<'a> {
                 continue;
             }
 
-            self.zero_run_remaining = self.decode_zero_run()?;
-            self.nonzero_pending = true;
+            match self.decode_zero_run()? {
+                Some(zeros) => {
+                    self.zero_run_remaining = zeros;
+                    self.nonzero_pending = true;
+                }
+                None => {
+                    // Stream ended cleanly between code words.
+                    // MS-RDPEGFX 3.1.8.1.5: Remaining elements default to zero.
+                    output.resize(num_values, 0);
+                    break;
+                }
+            }
         }
 
         Ok(output)
     }
 
-    fn decode_zero_run(&mut self) -> Result<usize, SrlError> {
+    fn decode_zero_run(&mut self) -> Result<Option<usize>, SrlError> {
         let mut zeros = 0usize;
 
         loop {
             let k = self.kp / 8;
 
-            if self.reader.read_bit()? {
+            let bit = match self.reader.read_bit() {
+                Ok(b) => b,
+                Err(SrlError::Truncated) if zeros == 0 => {
+                    // Reached end of stream before any bits of a new zero run were read.
+                    // Stream ended cleanly; all remaining coefficients default to 0.
+                    return Ok(None);
+                }
+                Err(e) => return Err(e),
+            };
+
+            if bit {
                 let tail = usize::try_from(self.reader.read_bits(k)?).map_err(|_| SrlError::ZeroRunTooLong)?;
                 self.kp = self.kp.saturating_sub(6);
 
                 let zeros = zeros.checked_add(tail).ok_or(SrlError::ZeroRunTooLong)?;
-                return (zeros <= MAX_ZERO_RUN).then_some(zeros).ok_or(SrlError::ZeroRunTooLong);
+                if zeros > MAX_ZERO_RUN {
+                    return Err(SrlError::ZeroRunTooLong);
+                }
+                return Ok(Some(zeros));
             }
 
             let chunk = 1usize << k;
@@ -380,6 +385,12 @@ mod tests {
     #[test]
     fn rejects_truncated_stream() {
         assert_eq!(decode_srl(&[0x80, 0x00], 1, 4), Err(SrlError::Truncated));
+    }
+
+    #[test]
+    fn decodes_empty_stream_to_zeros() {
+        // An empty SRL stream defaults all requested coefficients to 0
+        assert_eq!(decode_srl(&[], 4, 4), Ok(vec![0, 0, 0, 0]));
     }
 
     #[test]
