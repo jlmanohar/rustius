@@ -204,15 +204,22 @@
         legacyKex = c.ssh_config.legacy_kex;
       }
       if (c.rdp_config) {
-        rdpWidth = c.rdp_config.width;
-        rdpHeight = c.rdp_config.height;
+        rdpWidth = c.rdp_config.width || 1920;
+        rdpHeight = c.rdp_config.height || 1080;
         clipboardSharing = c.rdp_config.clipboard_sharing ?? (appState.config.app_settings?.default_rdp_clipboard_sharing ?? true);
         domain = c.rdp_config.domain || '';
         rdpResolutionMode = (c.rdp_config.resolution_mode as any) || (appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto');
         rdpScaleFactor = c.rdp_config.scale_factor ?? (appState.config.app_settings?.default_rdp_scale_factor ?? 0);
         rdpEngine = (c.rdp_config.engine as any) || (appState.config.app_settings?.default_rdp_engine ?? 'ironrdp');
         rdpEgfx = c.rdp_config.egfx ?? (appState.config.app_settings?.default_rdp_egfx ?? false);
+        overrideRdpSettings = !!(
+          c.rdp_config.engine ||
+          c.rdp_config.resolution_mode ||
+          (c.rdp_config.scale_factor !== undefined && c.rdp_config.scale_factor > 0) ||
+          c.rdp_config.egfx !== undefined
+        );
       } else {
+        overrideRdpSettings = false;
         domain = '';
         rdpResolutionMode = appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto';
         rdpScaleFactor = appState.config.app_settings?.default_rdp_scale_factor ?? 0;
@@ -234,6 +241,7 @@
       description = '';
       notes = '';
       notesTab = 'write';
+      overrideRdpSettings = false;
       rdpResolutionMode = appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto';
       rdpScaleFactor = appState.config.app_settings?.default_rdp_scale_factor ?? 0;
       rdpEngine = appState.config.app_settings?.default_rdp_engine ?? 'ironrdp';
@@ -248,6 +256,7 @@
   let keepalive = $state(30);
 
   // RDP options
+  let overrideRdpSettings = $state(false);
   let rdpEngine = $state<'ironrdp' | 'freerdp'>(appState.config.app_settings?.default_rdp_engine ?? 'ironrdp');
   let rdpEgfx = $state(appState.config.app_settings?.default_rdp_egfx ?? false);
   let rdpResolutionMode = $state<'auto' | 'native' | '1080p' | '720p' | 'custom'>(appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto');
@@ -255,6 +264,32 @@
   let rdpWidth = $state(1920);
   let rdpHeight = $state(1080);
   let clipboardSharing = $state(appState.config.app_settings?.default_rdp_clipboard_sharing ?? true);
+
+  let defaultEngineLabel = $derived(
+    appState.config.app_settings?.default_rdp_engine === 'freerdp' ? 'FreeRDP (Native Windows)' : 'IronRDP (Pure Rust)'
+  );
+  let defaultResolutionLabel = $derived(
+    (() => {
+      const mode = appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto';
+      if (mode === 'native') return 'Native Monitor';
+      if (mode === '1080p') return '1080p (1920×1080)';
+      if (mode === '720p') return '720p (1280×720)';
+      if (mode === 'custom') return 'Custom';
+      return 'Auto (Fit Window)';
+    })()
+  );
+  let defaultScaleLabel = $derived(
+    (() => {
+      const scale = appState.config.app_settings?.default_rdp_scale_factor ?? 0;
+      return scale > 0 ? `${scale}%` : 'Auto';
+    })()
+  );
+  let defaultEgfxLabel = $derived(
+    appState.config.app_settings?.default_rdp_egfx ? 'Enabled' : 'Disabled'
+  );
+  let defaultClipboardLabel = $derived(
+    appState.config.app_settings?.default_rdp_clipboard_sharing !== false ? 'Enabled' : 'Disabled'
+  );
 
 
   let availableFolders = $derived.by(() => {
@@ -455,16 +490,16 @@
       rdp_config:
         connType === 'rdp'
           ? {
-              width: rdpWidth,
-              height: rdpHeight,
+              width: overrideRdpSettings ? rdpWidth : 1920,
+              height: overrideRdpSettings ? rdpHeight : 1080,
               color_depth: 24,
               fullscreen: false,
-              clipboard_sharing: clipboardSharing,
+              clipboard_sharing: overrideRdpSettings ? clipboardSharing : (appState.config.app_settings?.default_rdp_clipboard_sharing ?? true),
               domain: finalDomain || undefined,
-              resolution_mode: rdpResolutionMode,
-              scale_factor: rdpScaleFactor > 0 ? rdpScaleFactor : undefined,
-              engine: rdpEngine,
-              egfx: rdpEngine === 'ironrdp' ? rdpEgfx : undefined,
+              resolution_mode: overrideRdpSettings ? rdpResolutionMode : undefined,
+              scale_factor: (overrideRdpSettings && rdpScaleFactor > 0) ? rdpScaleFactor : undefined,
+              engine: overrideRdpSettings ? rdpEngine : undefined,
+              egfx: (overrideRdpSettings && rdpEngine === 'ironrdp') ? rdpEgfx : undefined,
             }
           : undefined,
     };
@@ -865,63 +900,119 @@
           </label>
         </div>
       {:else if connType === 'rdp'}
-        <div class="form-grid">
-          <div class="form-cell col-2">
-            <label for="rdp-engine">RDP Engine</label>
-            <select id="rdp-engine" bind:value={rdpEngine} class="input-field">
-              <option value="ironrdp">IronRDP (Cross-Platform · Canvas/GPU Render · Pure Rust)</option>
-              <option value="freerdp">FreeRDP (Direct3D Native Windows Overlay)</option>
-            </select>
-          </div>
-
-          <div class="form-cell col-2">
-            <label for="rdp-resolution-mode">Display Resolution</label>
-            <select id="rdp-resolution-mode" bind:value={rdpResolutionMode} class="input-field">
-
-              <option value="auto">Auto (Fit Window · Larger UI)</option>
-              <option value="native">Native Monitor (1440p / 4K / High Res)</option>
-              <option value="1080p">1080p (Full HD · 1920×1080)</option>
-              <option value="720p">720p (HD · 1280×720)</option>
-              <option value="custom">Custom (Width × Height)</option>
-            </select>
-          </div>
-
-          <div class="form-cell col-1">
-            <label for="rdp-scale">Desktop Scaling (DPI)</label>
-            <select id="rdp-scale" bind:value={rdpScaleFactor} class="input-field">
-              <option value={0}>Auto (Recommended)</option>
-              <option value={100}>100% (Standard)</option>
-              <option value={125}>125%</option>
-              <option value={150}>150% (Recommended for 1440p)</option>
-              <option value={175}>175%</option>
-              <option value={200}>200% (Recommended for 4K)</option>
-            </select>
-          </div>
-
-          {#if rdpResolutionMode === 'custom'}
-            <div class="form-cell col-1">
-              <label for="rdp-w">Custom Width</label>
-              <input id="rdp-w" type="number" bind:value={rdpWidth} class="input-field" />
+        <div class="rdp-options-container">
+          <button
+            type="button"
+            class="override-button {overrideRdpSettings ? 'active' : ''}"
+            onclick={() => (overrideRdpSettings = !overrideRdpSettings)}
+          >
+            <div class="override-button-left">
+              <div class="override-checkbox {overrideRdpSettings ? 'checked' : ''}">
+                {#if overrideRdpSettings}
+                  <Check size={11} strokeWidth={3} />
+                {/if}
+              </div>
+              <div class="override-button-text">
+                <span class="override-button-title">Customize RDP Settings for this Connection</span>
+                <span class="override-button-sub">
+                  {overrideRdpSettings
+                    ? 'Custom display, engine, and performance overrides enabled'
+                    : 'Using default application settings (clean & inherited)'}
+                </span>
+              </div>
             </div>
-            <div class="form-cell col-1">
-              <label for="rdp-h">Custom Height</label>
-              <input id="rdp-h" type="number" bind:value={rdpHeight} class="input-field" />
+            <span class="override-badge {overrideRdpSettings ? 'custom' : 'default'}">
+              {overrideRdpSettings ? 'Custom Overrides' : 'Application Defaults'}
+            </span>
+          </button>
+
+          {#if !overrideRdpSettings}
+            <div class="defaults-summary-card">
+              <div class="defaults-summary-grid">
+                <div class="defaults-item">
+                  <span class="defaults-label">Engine</span>
+                  <span class="defaults-val">{defaultEngineLabel}</span>
+                </div>
+                <div class="defaults-item">
+                  <span class="defaults-label">Resolution</span>
+                  <span class="defaults-val">{defaultResolutionLabel}</span>
+                </div>
+                <div class="defaults-item">
+                  <span class="defaults-label">Scaling (DPI)</span>
+                  <span class="defaults-val">{defaultScaleLabel}</span>
+                </div>
+                <div class="defaults-item">
+                  <span class="defaults-label">Clipboard</span>
+                  <span class="defaults-val">{defaultClipboardLabel}</span>
+                </div>
+                <div class="defaults-item">
+                  <span class="defaults-label">EGFX Pipeline</span>
+                  <span class="defaults-val">{defaultEgfxLabel}</span>
+                </div>
+              </div>
+              <div class="defaults-hint">
+                Global settings apply. Check the box above to customize settings specifically for this host.
+              </div>
             </div>
-          {/if}
+          {:else}
+            <div class="form-grid rdp-override-grid">
+              <div class="form-cell col-2">
+                <label for="rdp-engine">RDP Engine</label>
+                <select id="rdp-engine" bind:value={rdpEngine} class="input-field">
+                  <option value="ironrdp">IronRDP (Cross-Platform · Canvas/GPU Render · Pure Rust)</option>
+                  <option value="freerdp">FreeRDP (Direct3D Native Windows Overlay)</option>
+                </select>
+              </div>
 
-          <div class="form-cell col-1">
-            <label class="check-row" style="margin-top: 24px;">
-              <input type="checkbox" bind:checked={clipboardSharing} />
-              <span class="check-title">Clipboard Sharing</span>
-            </label>
-          </div>
+              <div class="form-cell col-2">
+                <label for="rdp-resolution-mode">Display Resolution</label>
+                <select id="rdp-resolution-mode" bind:value={rdpResolutionMode} class="input-field">
+                  <option value="auto">Auto (Fit Window · Larger UI)</option>
+                  <option value="native">Native Monitor (1440p / 4K / High Res)</option>
+                  <option value="1080p">1080p (Full HD · 1920×1080)</option>
+                  <option value="720p">720p (HD · 1280×720)</option>
+                  <option value="custom">Custom (Width × Height)</option>
+                </select>
+              </div>
 
-          {#if rdpEngine === 'ironrdp'}
-            <div class="form-cell col-2">
-              <label class="check-row" title="Enable Microsoft Remote Desktop Graphics Pipeline (MS-RDPEGFX). Keep disabled (recommended) for maximum stability.">
-                <input type="checkbox" bind:checked={rdpEgfx} />
-                <span class="check-title">Enable EGFX Graphics Pipeline (Experimental)</span>
-              </label>
+              <div class="form-cell col-1">
+                <label for="rdp-scale">Desktop Scaling (DPI)</label>
+                <select id="rdp-scale" bind:value={rdpScaleFactor} class="input-field">
+                  <option value={0}>Auto (Recommended)</option>
+                  <option value={100}>100% (Standard)</option>
+                  <option value={125}>125%</option>
+                  <option value={150}>150% (Recommended for 1440p)</option>
+                  <option value={175}>175%</option>
+                  <option value={200}>200% (Recommended for 4K)</option>
+                </select>
+              </div>
+
+              {#if rdpResolutionMode === 'custom'}
+                <div class="form-cell col-1">
+                  <label for="rdp-w">Custom Width</label>
+                  <input id="rdp-w" type="number" bind:value={rdpWidth} class="input-field" />
+                </div>
+                <div class="form-cell col-1">
+                  <label for="rdp-h">Custom Height</label>
+                  <input id="rdp-h" type="number" bind:value={rdpHeight} class="input-field" />
+                </div>
+              {/if}
+
+              <div class="form-cell col-1">
+                <label class="check-row" style="margin-top: 24px;">
+                  <input type="checkbox" bind:checked={clipboardSharing} />
+                  <span class="check-title">Clipboard Sharing</span>
+                </label>
+              </div>
+
+              {#if rdpEngine === 'ironrdp'}
+                <div class="form-cell col-2">
+                  <label class="check-row" title="Enable Microsoft Remote Desktop Graphics Pipeline (MS-RDPEGFX). Keep disabled (recommended) for maximum stability.">
+                    <input type="checkbox" bind:checked={rdpEgfx} />
+                    <span class="check-title">Enable EGFX Graphics Pipeline (Experimental)</span>
+                  </label>
+                </div>
+              {/if}
             </div>
           {/if}
         </div>
@@ -1569,5 +1660,142 @@
   .password-toggle-btn:hover {
     color: var(--ink);
     background: rgba(255, 255, 255, 0.08);
+  }
+
+  .rdp-options-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .override-button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--canvas-subtle);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-align: left;
+  }
+
+  .override-button:hover {
+    background: var(--canvas-hover);
+    border-color: var(--hairline-strong);
+  }
+
+  .override-button.active {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.18);
+  }
+
+  .override-button-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .override-checkbox {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1px solid var(--hairline-strong);
+    background: var(--canvas);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink);
+    transition: all 0.12s ease;
+    flex-shrink: 0;
+  }
+
+  .override-checkbox.checked {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--canvas);
+  }
+
+  .override-button-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .override-button-title {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+
+  .override-button-sub {
+    font-size: 11px;
+    color: var(--mute);
+  }
+
+  .override-badge {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    padding: 2px 7px;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--hairline);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--mute);
+    transition: all 0.12s ease;
+  }
+
+  .override-badge.custom {
+    background: rgba(59, 130, 246, 0.12);
+    border-color: rgba(59, 130, 246, 0.3);
+    color: #60a5fa;
+  }
+
+  .defaults-summary-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px dashed var(--hairline);
+    border-radius: var(--radius-sm);
+  }
+
+  .defaults-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
+  }
+
+  .defaults-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .defaults-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--mute);
+    font-family: var(--font-mono);
+  }
+
+  .defaults-val {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-secondary);
+  }
+
+  .defaults-hint {
+    font-size: 11px;
+    color: var(--mute);
+    margin-top: 4px;
+    line-height: 1.4;
+  }
+
+  .rdp-override-grid {
+    margin-top: 4px;
   }
 </style>
