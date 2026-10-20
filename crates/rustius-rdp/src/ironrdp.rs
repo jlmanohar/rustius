@@ -72,11 +72,22 @@ pub enum IronRdpEvent {
 
 /// Forwarding proxy that routes clipboard events to the IronRDP client input queue.
 #[derive(Clone, Debug)]
-struct SessionClipboardProxy(RdpInputSender);
+struct SessionClipboardProxy {
+    sender: RdpInputSender,
+    is_ready: Arc<std::sync::atomic::AtomicBool>,
+}
 
 impl ClipboardMessageProxy for SessionClipboardProxy {
     fn send_clipboard_message(&self, message: ClipboardMessage) {
-        if self.0.send_clipboard(message).is_err() {
+        if matches!(message, ClipboardMessage::SendInitiateFileCopy(_))
+            && !self.is_ready.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            debug!(
+                "Dropped SendInitiateFileCopy because clipboard channel is not in Ready state yet"
+            );
+            return;
+        }
+        if self.sender.send_clipboard(message).is_err() {
             warn!("Unable to enqueue clipboard message because the RDP session is closed");
         }
     }
@@ -146,18 +157,26 @@ impl IronRdpSession {
         let mut client = RdpClient::new(client_config, output_tx).with_desktop_updates();
         let input_sender = client.input_sender();
 
+        let is_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let local_files = Arc::new(parking_lot::RwLock::new(Vec::new()));
         let proxy_arc: Arc<dyn ClipboardMessageProxy + Send + Sync> =
-            Arc::new(SessionClipboardProxy(input_sender.clone()));
+            Arc::new(SessionClipboardProxy {
+                sender: input_sender.clone(),
+                is_ready: Arc::clone(&is_ready),
+            });
         let staging_dir = std::env::temp_dir().join("rustius").join("clipboard");
 
         #[cfg(windows)]
         let (clipboard_factory, clipboard_thread_id) = if clipboard_enabled {
             let (tx, rx) = std::sync::mpsc::channel();
-            let proxy = SessionClipboardProxy(input_sender.clone());
+            let proxy = SessionClipboardProxy {
+                sender: input_sender.clone(),
+                is_ready: Arc::clone(&is_ready),
+            };
             let local_files_pump = Arc::clone(&local_files);
             let proxy_arc_pump = Arc::clone(&proxy_arc);
             let staging_dir_pump = staging_dir.clone();
+            let is_ready_pump = Arc::clone(&is_ready);
 
             let pump_handle = std::thread::Builder::new()
                 .name("ironrdp-cliprdr-pump".to_string())
@@ -203,6 +222,7 @@ impl IronRdpSession {
                         proxy_arc_pump.clone(),
                         local_files_pump.clone(),
                         staging_dir_pump.clone(),
+                        is_ready_pump.clone(),
                     )) as Box<dyn ironrdp_cliprdr::backend::CliprdrBackendFactory + Send>;
 
                     let _ = tx.send(Some((wrapped_factory, thread_id)));
@@ -239,14 +259,21 @@ impl IronRdpSession {
                                             if !is_from_staging {
                                                 let descriptors = crate::clipboard::create_file_descriptors_from_paths(&paths);
                                                 if !descriptors.is_empty() {
-                                                    info!(
-                                                        count = descriptors.len(),
-                                                        "Captured files from host clipboard; announcing to remote session"
-                                                    );
                                                     *local_files_pump.write() = paths;
-                                                    proxy_arc_pump.send_clipboard_message(
-                                                        ironrdp_cliprdr::backend::ClipboardMessage::SendInitiateFileCopy(descriptors),
-                                                    );
+                                                    if is_ready_pump.load(std::sync::atomic::Ordering::SeqCst) {
+                                                        info!(
+                                                            count = descriptors.len(),
+                                                            "Captured files from host clipboard; announcing to remote session"
+                                                        );
+                                                        proxy_arc_pump.send_clipboard_message(
+                                                            ironrdp_cliprdr::backend::ClipboardMessage::SendInitiateFileCopy(descriptors),
+                                                        );
+                                                    } else {
+                                                        debug!(
+                                                            count = descriptors.len(),
+                                                            "Captured files from host clipboard while channel not Ready; cached for on_ready"
+                                                        );
+                                                    }
                                                 }
                                             } else {
                                                 debug!("Ignoring clipboard update for files from remote staging directory");
@@ -299,6 +326,7 @@ impl IronRdpSession {
                 proxy_arc,
                 local_files,
                 staging_dir,
+                is_ready,
             ))
                 as Box<dyn ironrdp_cliprdr::backend::CliprdrBackendFactory + Send>;
             Some(wrapped_factory)

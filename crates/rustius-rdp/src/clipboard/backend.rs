@@ -25,6 +25,7 @@ pub struct RustiusCliprdrBackendFactory {
     proxy: Arc<dyn ClipboardMessageProxy + Send + Sync>,
     local_files: Arc<RwLock<Vec<PathBuf>>>,
     remote_staging_dir: PathBuf,
+    is_ready: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl RustiusCliprdrBackendFactory {
@@ -33,12 +34,14 @@ impl RustiusCliprdrBackendFactory {
         proxy: Arc<dyn ClipboardMessageProxy + Send + Sync>,
         local_files: Arc<RwLock<Vec<PathBuf>>>,
         remote_staging_dir: PathBuf,
+        is_ready: Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
         Self {
             inner_factory,
             proxy,
             local_files,
             remote_staging_dir,
+            is_ready,
         }
     }
 }
@@ -50,6 +53,7 @@ impl CliprdrBackendFactory for RustiusCliprdrBackendFactory {
             proxy: Arc::clone(&self.proxy),
             local_files: Arc::clone(&self.local_files),
             remote_staging_dir: self.remote_staging_dir.clone(),
+            is_ready: Arc::clone(&self.is_ready),
             active_fetch: None,
             current_remote_file: None,
             remote_file_queue: VecDeque::new(),
@@ -68,12 +72,20 @@ pub struct RustiusCliprdrBackend {
     proxy: Arc<dyn ClipboardMessageProxy + Send + Sync>,
     local_files: Arc<RwLock<Vec<PathBuf>>>,
     remote_staging_dir: PathBuf,
+    is_ready: Arc<std::sync::atomic::AtomicBool>,
     active_fetch: Option<ChunkedFetch>,
     current_remote_file: Option<FileDescriptor>,
     remote_file_queue: VecDeque<FileDescriptor>,
     downloaded_paths: Vec<PathBuf>,
     current_file_index: i32,
     current_clip_data_id: Option<u32>,
+}
+
+impl Drop for RustiusCliprdrBackend {
+    fn drop(&mut self) {
+        self.is_ready
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl_as_any!(RustiusCliprdrBackend);
@@ -149,6 +161,8 @@ impl CliprdrBackend for RustiusCliprdrBackend {
 
     fn on_ready(&mut self) {
         self.inner.on_ready();
+        self.is_ready
+            .store(true, std::sync::atomic::Ordering::SeqCst);
 
         let mut paths = self.local_files.read().clone();
         if paths.is_empty() {
@@ -176,20 +190,7 @@ impl CliprdrBackend for RustiusCliprdrBackend {
         if paths.is_empty() {
             paths = get_host_clipboard_files();
             if !paths.is_empty() {
-                *self.local_files.write() = paths.clone();
-            }
-        }
-
-        if !paths.is_empty() {
-            let descriptors = create_file_descriptors_from_paths(&paths);
-            if !descriptors.is_empty() {
-                info!(
-                    count = descriptors.len(),
-                    "Format list requested by server; announcing local files"
-                );
-                self.proxy
-                    .send_clipboard_message(ClipboardMessage::SendInitiateFileCopy(descriptors));
-                return;
+                *self.local_files.write() = paths;
             }
         }
         self.inner.on_request_format_list();
