@@ -182,7 +182,7 @@ impl IronRdpSession {
         );
 
         let dest = Destination::from_parts(config.host.clone(), config.port);
-        let egfx_enabled = config.egfx.unwrap_or(false);
+        let egfx_enabled = config.egfx.unwrap_or(true);
         let clipboard_enabled = config.clipboard_sharing.unwrap_or(true);
         let clipboard_type = if clipboard_enabled {
             ClipboardType::Enable
@@ -207,6 +207,40 @@ impl IronRdpSession {
             .with_pointer_software_rendering(true)
             .with_graphics_pipeline(egfx_enabled)
             .with_clipboard(clipboard_type);
+
+        if egfx_enabled {
+            info!("EGFX enabled: attaching GraphicsPipelineClient with OpenH264 AVC420 decoder");
+            builder = builder.with_dvc(|_ps| {
+                match ironrdp_egfx::decode::OpenH264Decoder::new() {
+                    Ok(decoder) => {
+                        struct RustiusEgfxHandler;
+                        impl ironrdp_egfx::client::GraphicsPipelineHandler for RustiusEgfxHandler {
+                            fn on_capabilities_confirmed(
+                                &mut self,
+                                caps: &ironrdp_egfx::pdu::CapabilitySet,
+                            ) {
+                                info!("Remote RDP server confirmed EGFX capabilities: {:?}", caps);
+                            }
+                            fn on_reset_graphics(&mut self, width: u32, height: u32) {
+                                info!("EGFX reset graphics to {}x{}", width, height);
+                            }
+                        }
+
+                        Some(ironrdp_egfx::client::GraphicsPipelineClient::new(
+                            Box::new(RustiusEgfxHandler),
+                            Some(Box::new(decoder)),
+                        ))
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to initialize OpenH264 decoder for EGFX: {:?}; falling back to non-AVC",
+                            e
+                        );
+                        None
+                    }
+                }
+            });
+        }
 
         if let Some(pass) = &config.password {
             builder = builder.with_password(pass.clone());
@@ -981,5 +1015,27 @@ mod tests {
         assert_eq!(len, 8);
         assert_eq!(&bytes[18..22], &[255, 0, 0, 255]);
         assert_eq!(&bytes[22..26], &[0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn test_egfx_openh264_initialization() {
+        let decoder = ironrdp_egfx::decode::OpenH264Decoder::new();
+        assert!(decoder.is_ok(), "OpenH264 decoder must initialize successfully");
+
+        struct TestHandler;
+        impl ironrdp_egfx::client::GraphicsPipelineHandler for TestHandler {}
+
+        let handler = TestHandler;
+        use ironrdp_egfx::client::GraphicsPipelineHandler;
+        let caps = handler.capabilities();
+        assert!(!caps.is_empty());
+        let has_v8_1 = caps.iter().any(|c| {
+            matches!(
+                c,
+                ironrdp_egfx::pdu::CapabilitySet::V8_1 { flags }
+                    if flags.contains(ironrdp_egfx::pdu::CapabilitiesV81Flags::AVC420_ENABLED)
+            )
+        });
+        assert!(has_v8_1, "EGFX handler must advertise V8.1 with AVC420_ENABLED");
     }
 }

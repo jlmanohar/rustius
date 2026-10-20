@@ -5,6 +5,8 @@ members = [
     "crates/rustius-ssh",
     "crates/rustius-rdp",
     "crates/rustius-terminal",
+    "patches/ironrdp-graphics",
+    "patches/ironrdp-egfx",
 ]
 resolver = "2"
 
@@ -92,3 +94,11 @@ codegen-units = 16       # 16 parallel LLVM code generation units (utilizes mult
 panic = "abort"          # Remove unwinding tables for smaller binary and faster execution
 strip = true             # Strip all debug symbols for a clean portable single executable
 overflow-checks = true   # Ensure integer overflow safety in production
+
+# ==============================================================================
+# Dependency Patches
+# ==============================================================================
+[patch."https://github.com/Devolutions/IronRDP"]
+ironrdp-graphics = { path = "patches/ironrdp-graphics" }
+ironrdp-egfx = { path = "patches/ironrdp-egfx" }
+
