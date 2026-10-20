@@ -250,6 +250,7 @@ pub async fn ironrdp_connect(
     width: u16,
     height: u16,
     scale_factor: Option<u32>,
+    on_frame: tauri::ipc::Channel<tauri::ipc::Response>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     info!(
@@ -336,10 +337,14 @@ pub async fn ironrdp_connect(
 
     let app_clone = app_handle.clone();
     let tab_id_clone = tab_id.clone();
+    let on_frame_clone = on_frame.clone();
 
     let session = IronRdpSession::connect(rdp_config, move |event| match event {
         IronRdpEvent::Connected => {
             let _ = app_clone.emit(&format!("rdp-connected-{}", tab_id_clone), ());
+        }
+        IronRdpEvent::BinaryFrameBatch(bytes) => {
+            let _ = on_frame_clone.send(tauri::ipc::Response::new(bytes));
         }
         IronRdpEvent::FrameBatch(batch) => {
             let _ = app_clone.emit(&format!("rdp-frame-batch-{}", tab_id_clone), batch);

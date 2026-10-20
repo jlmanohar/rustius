@@ -62,11 +62,79 @@ pub struct IronRdpFrame {
     pub data: String, // Base64 encoded RGBA pixel bytes
 }
 
+/// Efficient binary frame batch builder that packs desktop updates into a single byte buffer.
+///
+/// Binary Protocol:
+/// - Offset 0..2: desktop_width (u16 LE)
+/// - Offset 2..4: desktop_height (u16 LE)
+/// - Offset 4..6: tile_count (u16 LE)
+/// For each tile:
+///   - 0..2: x (u16 LE)
+///   - 2..4: y (u16 LE)
+///   - 4..6: width (u16 LE)
+///   - 6..8: height (u16 LE)
+///   - 8..12: byte_len (u32 LE) = width * height * 4
+///   - 12..12+byte_len: raw RGBA bytes
+#[derive(Debug, Clone)]
+pub struct BinaryFrameBatchBuilder {
+    pub desktop_width: u16,
+    pub desktop_height: u16,
+    pub tile_count: u16,
+    buffer: Vec<u8>,
+}
+
+impl BinaryFrameBatchBuilder {
+    pub fn new(desktop_width: u16, desktop_height: u16) -> Self {
+        let mut buffer = Vec::with_capacity(32768);
+        buffer.extend_from_slice(&desktop_width.to_le_bytes());
+        buffer.extend_from_slice(&desktop_height.to_le_bytes());
+        buffer.extend_from_slice(&0u16.to_le_bytes());
+        Self {
+            desktop_width,
+            desktop_height,
+            tile_count: 0,
+            buffer,
+        }
+    }
+
+    pub fn add_tile(&mut self, x: u16, y: u16, width: u16, height: u16, u32_buffer: &[u32]) {
+        self.tile_count += 1;
+        let pixel_count = (width as usize) * (height as usize);
+        let byte_len = (pixel_count * 4) as u32;
+
+        self.buffer.extend_from_slice(&x.to_le_bytes());
+        self.buffer.extend_from_slice(&y.to_le_bytes());
+        self.buffer.extend_from_slice(&width.to_le_bytes());
+        self.buffer.extend_from_slice(&height.to_le_bytes());
+        self.buffer.extend_from_slice(&byte_len.to_le_bytes());
+
+        self.buffer.reserve(pixel_count * 4);
+        for &pixel in u32_buffer.iter().take(pixel_count) {
+            let r = ((pixel >> 16) & 0xFF) as u8;
+            let g = ((pixel >> 8) & 0xFF) as u8;
+            let b = (pixel & 0xFF) as u8;
+            self.buffer.extend_from_slice(&[r, g, b, 255]);
+        }
+    }
+
+    pub fn finish(mut self) -> Vec<u8> {
+        let count_bytes = self.tile_count.to_le_bytes();
+        self.buffer[4] = count_bytes[0];
+        self.buffer[5] = count_bytes[1];
+        self.buffer
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tile_count == 0
+    }
+}
+
 /// Events emitted by an active IronRDP session.
 #[derive(Clone, Debug)]
 pub enum IronRdpEvent {
     Connected,
     FrameBatch(IronRdpFrameBatch),
+    BinaryFrameBatch(Vec<u8>),
     Terminated(RdpExitDiagnostic),
 }
 
@@ -372,37 +440,36 @@ impl IronRdpSession {
                 match event {
                     RdpOutputEvent::DesktopUpdate(update) => {
                         let (buffer, full_w, full_h, region) = update.into_parts();
-                        let fw = full_w.get();
-                        let fh = full_h.get();
+                        let mut fw = full_w.get();
+                        let mut fh = full_h.get();
+
+                        let mut builder = BinaryFrameBatchBuilder::new(fw, fh);
 
                         let left = region.left;
                         let top = region.top;
                         let rw = (region.right.saturating_sub(region.left) + 1).max(1);
                         let rh = (region.bottom.saturating_sub(region.top) + 1).max(1);
-
-                        let tile = encode_u32_buffer_to_tile(left, top, rw, rh, &buffer);
-
-                        let mut tiles = Vec::with_capacity(32);
-                        tiles.push(tile);
+                        builder.add_tile(left, top, rw, rh, &buffer);
 
                         // Coalesce additional tiles arriving in the same burst (within 4ms)
                         // up to a maximum batch size of 64 tiles.
                         let batch_timeout = std::time::Duration::from_millis(4);
-                        while tiles.len() < 64 {
+                        while builder.tile_count < 64 {
                             match tokio::time::timeout(batch_timeout, output_rx.recv()).await {
                                 Ok(Some(RdpOutputEvent::DesktopUpdate(next_update))) => {
                                     let (next_buffer, next_fw, next_fh, next_region) =
                                         next_update.into_parts();
                                     if next_fw.get() != fw || next_fh.get() != fh {
                                         // Resolution changed: flush current batch
-                                        on_event_loop(IronRdpEvent::FrameBatch(
-                                            IronRdpFrameBatch {
-                                                desktop_width: fw,
-                                                desktop_height: fh,
-                                                tiles,
-                                            },
-                                        ));
+                                        if !builder.is_empty() {
+                                            on_event_loop(IronRdpEvent::BinaryFrameBatch(
+                                                builder.finish(),
+                                            ));
+                                        }
 
+                                        fw = next_fw.get();
+                                        fh = next_fh.get();
+                                        let mut new_builder = BinaryFrameBatchBuilder::new(fw, fh);
                                         let next_rw =
                                             (next_region.right.saturating_sub(next_region.left)
                                                 + 1)
@@ -411,21 +478,17 @@ impl IronRdpSession {
                                             (next_region.bottom.saturating_sub(next_region.top)
                                                 + 1)
                                             .max(1);
-                                        let next_tile = encode_u32_buffer_to_tile(
+                                        new_builder.add_tile(
                                             next_region.left,
                                             next_region.top,
                                             next_rw,
                                             next_rh,
                                             &next_buffer,
                                         );
-                                        on_event_loop(IronRdpEvent::FrameBatch(
-                                            IronRdpFrameBatch {
-                                                desktop_width: next_fw.get(),
-                                                desktop_height: next_fh.get(),
-                                                tiles: vec![next_tile],
-                                            },
+                                        on_event_loop(IronRdpEvent::BinaryFrameBatch(
+                                            new_builder.finish(),
                                         ));
-                                        tiles = Vec::new();
+                                        builder = BinaryFrameBatchBuilder::new(fw, fh);
                                         break;
                                     }
                                     let next_rw =
@@ -434,24 +497,20 @@ impl IronRdpSession {
                                     let next_rh =
                                         (next_region.bottom.saturating_sub(next_region.top) + 1)
                                             .max(1);
-                                    tiles.push(encode_u32_buffer_to_tile(
+                                    builder.add_tile(
                                         next_region.left,
                                         next_region.top,
                                         next_rw,
                                         next_rh,
                                         &next_buffer,
-                                    ));
+                                    );
                                 }
                                 Ok(Some(other_event)) => {
-                                    if !tiles.is_empty() {
-                                        on_event_loop(IronRdpEvent::FrameBatch(
-                                            IronRdpFrameBatch {
-                                                desktop_width: fw,
-                                                desktop_height: fh,
-                                                tiles,
-                                            },
+                                    if !builder.is_empty() {
+                                        on_event_loop(IronRdpEvent::BinaryFrameBatch(
+                                            builder.finish(),
                                         ));
-                                        tiles = Vec::new();
+                                        builder = BinaryFrameBatchBuilder::new(fw, fh);
                                     }
                                     if handle_non_desktop_event(other_event, &*on_event_loop) {
                                         break 'outer;
@@ -459,13 +518,9 @@ impl IronRdpSession {
                                     break;
                                 }
                                 Ok(None) => {
-                                    if !tiles.is_empty() {
-                                        on_event_loop(IronRdpEvent::FrameBatch(
-                                            IronRdpFrameBatch {
-                                                desktop_width: fw,
-                                                desktop_height: fh,
-                                                tiles,
-                                            },
+                                    if !builder.is_empty() {
+                                        on_event_loop(IronRdpEvent::BinaryFrameBatch(
+                                            builder.finish(),
                                         ));
                                     }
                                     break 'outer;
@@ -477,12 +532,8 @@ impl IronRdpSession {
                             }
                         }
 
-                        if !tiles.is_empty() {
-                            on_event_loop(IronRdpEvent::FrameBatch(IronRdpFrameBatch {
-                                desktop_width: fw,
-                                desktop_height: fh,
-                                tiles,
-                            }));
+                        if !builder.is_empty() {
+                            on_event_loop(IronRdpEvent::BinaryFrameBatch(builder.finish()));
                         }
                     }
                     non_desktop_event => {
@@ -607,12 +658,9 @@ fn handle_non_desktop_event(event: RdpOutputEvent, on_event: &impl Fn(IronRdpEve
         } => {
             let w = width.get();
             let h = height.get();
-            let tile = encode_u32_buffer_to_tile(0, 0, w, h, &buffer);
-            on_event(IronRdpEvent::FrameBatch(IronRdpFrameBatch {
-                desktop_width: w,
-                desktop_height: h,
-                tiles: vec![tile],
-            }));
+            let mut builder = BinaryFrameBatchBuilder::new(w, h);
+            builder.add_tile(0, 0, w, h, &buffer);
+            on_event(IronRdpEvent::BinaryFrameBatch(builder.finish()));
             false
         }
         RdpOutputEvent::ConnectionFailure(error) => {
@@ -677,6 +725,7 @@ fn handle_non_desktop_event(event: RdpOutputEvent, on_event: &impl Fn(IronRdpEve
 }
 
 /// Convert packed 0x00RRGGBB pixels to RGBA and encode to Base64 tile
+#[allow(dead_code)]
 fn encode_u32_buffer_to_tile(
     x: u16,
     y: u16,
@@ -903,5 +952,34 @@ mod tests {
         assert_eq!(decoded.tiles[0].x, 0);
         assert_eq!(decoded.tiles[1].x, 64);
         assert_eq!(decoded.tiles[1].data, "BQYHCA==");
+    }
+
+    #[test]
+    fn test_binary_frame_batch_packing() {
+        let mut builder = BinaryFrameBatchBuilder::new(1920, 1080);
+        let u32_pixels = vec![0x00FF0000, 0x0000FF00];
+        builder.add_tile(10, 20, 2, 1, &u32_pixels);
+        let bytes = builder.finish();
+
+        assert!(bytes.len() >= 6 + 12 + 8);
+        let dw = u16::from_le_bytes([bytes[0], bytes[1]]);
+        let dh = u16::from_le_bytes([bytes[2], bytes[3]]);
+        let num_tiles = u16::from_le_bytes([bytes[4], bytes[5]]);
+        assert_eq!(dw, 1920);
+        assert_eq!(dh, 1080);
+        assert_eq!(num_tiles, 1);
+
+        let x = u16::from_le_bytes([bytes[6], bytes[7]]);
+        let y = u16::from_le_bytes([bytes[8], bytes[9]]);
+        let w = u16::from_le_bytes([bytes[10], bytes[11]]);
+        let h = u16::from_le_bytes([bytes[12], bytes[13]]);
+        let len = u32::from_le_bytes([bytes[14], bytes[15], bytes[16], bytes[17]]);
+        assert_eq!(x, 10);
+        assert_eq!(y, 20);
+        assert_eq!(w, 2);
+        assert_eq!(h, 1);
+        assert_eq!(len, 8);
+        assert_eq!(&bytes[18..22], &[255, 0, 0, 255]);
+        assert_eq!(&bytes[22..26], &[0, 255, 0, 255]);
     }
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { invoke, Channel } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { appState } from '../stores/appState.svelte';
   import { DisposableStore } from '../utils/disposable';
@@ -45,11 +45,18 @@
   let webglRenderer: RdpWebGlRenderer | null = null;
   let useWebGl = $state(false);
   let canvasCtx: CanvasRenderingContext2D | null = null;
-  let pixelBuffer: Uint8Array | null = null;
   let pendingMouseMove: { x: number; y: number } | null = null;
   let mouseMoveRafId: number | null = null;
 
-  let pendingTiles: IronRdpTile[] = [];
+  interface BinaryTile {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    slice: Uint8Array;
+  }
+
+  let pendingTiles: BinaryTile[] = [];
   let pendingDesktopWidth = 0;
   let pendingDesktopHeight = 0;
   let frameRafId: number | null = null;
@@ -78,33 +85,51 @@
     return false;
   }
 
-  function decodeTileData(base64: string): Uint8Array {
-    if (typeof (Uint8Array as any).fromBase64 === 'function') {
-      try {
-        return (Uint8Array as any).fromBase64(base64);
-      } catch {
-        // Fall back to pre-allocated buffer decode
-      }
-    }
-    const bin = atob(base64);
-    const len = bin.length;
-    if (!pixelBuffer || pixelBuffer.length < len) {
-      pixelBuffer = new Uint8Array(Math.max(len, 1920 * 1080 * 4));
-    }
-    for (let i = 0; i < len; i++) {
-      pixelBuffer[i] = bin.charCodeAt(i);
-    }
-    return new Uint8Array(pixelBuffer.buffer as ArrayBuffer, 0, len);
-  }
-
-  function queueFrameBatch(batch: IronRdpFrameBatch) {
+  function handleBinaryFrameBatch(raw: ArrayBuffer | Uint8Array | number[]) {
     if (!canvasRef) return;
 
-    pendingDesktopWidth = batch.desktop_width;
-    pendingDesktopHeight = batch.desktop_height;
+    let buf: ArrayBuffer;
+    let byteOffset = 0;
+    let byteLength = 0;
 
-    for (let i = 0; i < batch.tiles.length; i++) {
-      pendingTiles.push(batch.tiles[i]);
+    if (raw instanceof ArrayBuffer) {
+      buf = raw;
+      byteOffset = 0;
+      byteLength = raw.byteLength;
+    } else if (ArrayBuffer.isView(raw)) {
+      buf = raw.buffer as ArrayBuffer;
+      byteOffset = raw.byteOffset;
+      byteLength = raw.byteLength;
+    } else if (Array.isArray(raw)) {
+      const u8 = new Uint8Array(raw);
+      buf = u8.buffer;
+      byteOffset = 0;
+      byteLength = u8.byteLength;
+    } else {
+      return;
+    }
+
+    if (byteLength < 6) return;
+
+    const view = new DataView(buf, byteOffset, byteLength);
+    pendingDesktopWidth = view.getUint16(0, true);
+    pendingDesktopHeight = view.getUint16(2, true);
+    const numTiles = view.getUint16(4, true);
+
+    let offset = 6;
+    for (let i = 0; i < numTiles; i++) {
+      if (offset + 12 > byteLength) break;
+      const x = view.getUint16(offset, true);
+      const y = view.getUint16(offset + 2, true);
+      const width = view.getUint16(offset + 4, true);
+      const height = view.getUint16(offset + 6, true);
+      const dataLen = view.getUint32(offset + 8, true);
+      offset += 12;
+
+      if (offset + dataLen > byteLength) break;
+      const slice = new Uint8Array(buf, byteOffset + offset, dataLen);
+      pendingTiles.push({ x, y, width, height, slice });
+      offset += dataLen;
     }
 
     if (frameRafId === null) {
@@ -136,12 +161,15 @@
     try {
       for (let t = 0; t < tilesToRender.length; t++) {
         const tile = tilesToRender[t];
-        const slice = decodeTileData(tile.data);
 
         if (useWebGl && webglRenderer) {
-          webglRenderer.uploadTile(tile.x, tile.y, tile.width, tile.height, slice);
+          webglRenderer.uploadTile(tile.x, tile.y, tile.width, tile.height, tile.slice);
         } else if (canvasCtx) {
-          const clamped = new Uint8ClampedArray(slice.buffer as ArrayBuffer, slice.byteOffset, slice.byteLength);
+          const clamped = new Uint8ClampedArray(
+            tile.slice.buffer as ArrayBuffer,
+            tile.slice.byteOffset,
+            tile.slice.byteLength
+          );
           const imgData = new ImageData(clamped, tile.width, tile.height);
           canvasCtx.putImageData(imgData, tile.x, tile.y);
         }
@@ -491,6 +519,11 @@
       sessionDisposables.add(unlistenExit);
 
       if (isIronRdp) {
+        const onFrame = new Channel<ArrayBuffer>((payload) => {
+          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
+          handleBinaryFrameBatch(payload);
+        });
+
         const unlistenConnected = await listen(`rdp-connected-${session.id}`, () => {
           if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
           isConnected = true;
@@ -504,12 +537,6 @@
         });
         sessionDisposables.add(unlistenConnected);
 
-        const unlistenBatch = await listen<IronRdpFrameBatch>(`rdp-frame-batch-${session.id}`, (event) => {
-          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
-          queueFrameBatch(event.payload);
-        });
-        sessionDisposables.add(unlistenBatch);
-
         await invoke('ironrdp_connect', {
           tabId: session.id,
           connectionId: session.connectionId,
@@ -517,6 +544,7 @@
           width: bounds.desktopWidth,
           height: bounds.desktopHeight,
           scaleFactor: bounds.scaleDesktop,
+          onFrame,
         });
       } else {
         await invoke('freerdp_connect', {
