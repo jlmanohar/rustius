@@ -584,6 +584,14 @@ pub enum VaultBackend {
     Keyring,
 }
 
+fn default_rdp_engine() -> String {
+    "ironrdp".to_string()
+}
+
+fn default_rdp_resolution_mode() -> String {
+    "auto".to_string()
+}
+
 /// Application-wide settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -602,6 +610,21 @@ pub struct AppSettings {
     /// Credential storage backend (Auto, MasterPassword, Keyring).
     #[serde(default)]
     pub vault_backend: VaultBackend,
+    /// Default RDP engine: "ironrdp" or "freerdp"
+    #[serde(default = "default_rdp_engine")]
+    pub default_rdp_engine: String,
+    /// Default RDP resolution mode: "auto", "native", "1080p", "720p", "custom"
+    #[serde(default = "default_rdp_resolution_mode")]
+    pub default_rdp_resolution_mode: String,
+    /// Default RDP scaling factor: 0 (auto), 100, 125, 150, 175, 200
+    #[serde(default)]
+    pub default_rdp_scale_factor: u32,
+    /// Default RDP clipboard sharing enabled
+    #[serde(default = "default_true")]
+    pub default_rdp_clipboard_sharing: bool,
+    /// Default RDP EGFX graphics pipeline enabled (MS-RDPEGFX, defaults to false)
+    #[serde(default)]
+    pub default_rdp_egfx: bool,
 }
 
 impl Default for AppSettings {
@@ -616,6 +639,11 @@ impl Default for AppSettings {
             close_tab_on_exit: false,
             sftp_follow_terminal_folder: true,
             vault_backend: VaultBackend::default(),
+            default_rdp_engine: default_rdp_engine(),
+            default_rdp_resolution_mode: default_rdp_resolution_mode(),
+            default_rdp_scale_factor: 0,
+            default_rdp_clipboard_sharing: true,
+            default_rdp_egfx: false,
         }
     }
 }

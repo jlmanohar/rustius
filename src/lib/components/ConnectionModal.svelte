@@ -206,18 +206,19 @@
       if (c.rdp_config) {
         rdpWidth = c.rdp_config.width;
         rdpHeight = c.rdp_config.height;
-        clipboardSharing = c.rdp_config.clipboard_sharing;
+        clipboardSharing = c.rdp_config.clipboard_sharing ?? (appState.config.app_settings?.default_rdp_clipboard_sharing ?? true);
         domain = c.rdp_config.domain || '';
-        rdpResolutionMode = (c.rdp_config.resolution_mode as any) || 'auto';
-        rdpScaleFactor = c.rdp_config.scale_factor ?? 0;
-        rdpEngine = (c.rdp_config.engine as any) || 'ironrdp';
-        rdpEgfx = c.rdp_config.egfx ?? false;
+        rdpResolutionMode = (c.rdp_config.resolution_mode as any) || (appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto');
+        rdpScaleFactor = c.rdp_config.scale_factor ?? (appState.config.app_settings?.default_rdp_scale_factor ?? 0);
+        rdpEngine = (c.rdp_config.engine as any) || (appState.config.app_settings?.default_rdp_engine ?? 'ironrdp');
+        rdpEgfx = c.rdp_config.egfx ?? (appState.config.app_settings?.default_rdp_egfx ?? false);
       } else {
         domain = '';
-        rdpResolutionMode = 'auto';
-        rdpScaleFactor = 0;
-        rdpEngine = 'ironrdp';
-        rdpEgfx = false;
+        rdpResolutionMode = appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto';
+        rdpScaleFactor = appState.config.app_settings?.default_rdp_scale_factor ?? 0;
+        rdpEngine = appState.config.app_settings?.default_rdp_engine ?? 'ironrdp';
+        rdpEgfx = appState.config.app_settings?.default_rdp_egfx ?? false;
+        clipboardSharing = appState.config.app_settings?.default_rdp_clipboard_sharing ?? true;
       }
       if (connType === 'rdp' && !domain && username.includes('\\')) {
         const parts = username.split('\\');
@@ -233,10 +234,11 @@
       description = '';
       notes = '';
       notesTab = 'write';
-      rdpResolutionMode = 'auto';
-      rdpScaleFactor = 0;
-      rdpEngine = 'ironrdp';
-      rdpEgfx = false;
+      rdpResolutionMode = appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto';
+      rdpScaleFactor = appState.config.app_settings?.default_rdp_scale_factor ?? 0;
+      rdpEngine = appState.config.app_settings?.default_rdp_engine ?? 'ironrdp';
+      rdpEgfx = appState.config.app_settings?.default_rdp_egfx ?? false;
+      clipboardSharing = appState.config.app_settings?.default_rdp_clipboard_sharing ?? true;
     }
   });
 
@@ -246,13 +248,13 @@
   let keepalive = $state(30);
 
   // RDP options
-  let rdpEngine = $state<'ironrdp' | 'freerdp'>('ironrdp');
-  let rdpEgfx = $state(false);
-  let rdpResolutionMode = $state<'auto' | 'native' | '1080p' | '720p' | 'custom'>('auto');
-  let rdpScaleFactor = $state<number>(0);
+  let rdpEngine = $state<'ironrdp' | 'freerdp'>(appState.config.app_settings?.default_rdp_engine ?? 'ironrdp');
+  let rdpEgfx = $state(appState.config.app_settings?.default_rdp_egfx ?? false);
+  let rdpResolutionMode = $state<'auto' | 'native' | '1080p' | '720p' | 'custom'>(appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto');
+  let rdpScaleFactor = $state<number>(appState.config.app_settings?.default_rdp_scale_factor ?? 0);
   let rdpWidth = $state(1920);
   let rdpHeight = $state(1080);
-  let clipboardSharing = $state(true);
+  let clipboardSharing = $state(appState.config.app_settings?.default_rdp_clipboard_sharing ?? true);
 
 
   let availableFolders = $derived.by(() => {

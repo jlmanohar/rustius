@@ -39,7 +39,7 @@
   let copiedDetails = $state(false);
 
   let conn = $derived(appState.findConnection(session.connectionId));
-  let rdpEngine = $derived(conn?.rdp_config?.engine || 'ironrdp');
+  let rdpEngine = $derived(conn?.rdp_config?.engine || appState.config.app_settings?.default_rdp_engine || 'ironrdp');
   let isIronRdp = $derived(rdpEngine === 'ironrdp');
 
   let webglRenderer: RdpWebGlRenderer | null = null;
@@ -307,7 +307,7 @@
     const rect = viewportRef.getBoundingClientRect();
     const scale = window.devicePixelRatio || 1;
     const rdpCfg = appState.findConnection(session.connectionId)?.rdp_config;
-    const resMode = rdpCfg?.resolution_mode || 'auto';
+    const resMode = rdpCfg?.resolution_mode || appState.config.app_settings?.default_rdp_resolution_mode || 'auto';
 
     let desktopW: number;
     let desktopH: number;
@@ -333,7 +333,7 @@
     }
 
     let desktopScale: number | undefined;
-    const cfgScale = rdpCfg?.scale_factor ?? 0;
+    const cfgScale = rdpCfg?.scale_factor ?? (appState.config.app_settings?.default_rdp_scale_factor ?? 0);
     if (cfgScale > 0) {
       desktopScale = cfgScale;
     } else {

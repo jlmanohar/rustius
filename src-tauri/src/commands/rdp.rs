@@ -91,6 +91,8 @@ pub async fn freerdp_connect(
     #[cfg(not(windows))]
     let parent_window = 0isize;
 
+    let app_settings = state.config_manager.get_config().await.app_settings;
+
     let config = FreeRdpConfig {
         host,
         port,
@@ -109,6 +111,8 @@ pub async fn freerdp_connect(
                 .as_ref()
                 .and_then(|r| r.scale_factor)
                 .filter(|&s| s >= 100)
+        }).or_else(|| {
+            Some(app_settings.default_rdp_scale_factor).filter(|&s| s >= 100)
         }),
     };
 
@@ -295,15 +299,27 @@ pub async fn ironrdp_connect(
         }
     }
 
+    let app_settings = state.config_manager.get_config().await.app_settings;
+
     let scale = scale_factor.filter(|&s| s >= 100).or_else(|| {
         conn.rdp_config
             .as_ref()
             .and_then(|r| r.scale_factor)
             .filter(|&s| s >= 100)
+    }).or_else(|| {
+        Some(app_settings.default_rdp_scale_factor).filter(|&s| s >= 100)
     });
 
-    let egfx = conn.rdp_config.as_ref().and_then(|r| r.egfx);
-    let clipboard_sharing = conn.rdp_config.as_ref().map(|r| r.clipboard_sharing);
+    let egfx = conn
+        .rdp_config
+        .as_ref()
+        .and_then(|r| r.egfx)
+        .or(Some(app_settings.default_rdp_egfx));
+    let clipboard_sharing = conn
+        .rdp_config
+        .as_ref()
+        .map(|r| r.clipboard_sharing)
+        .or(Some(app_settings.default_rdp_clipboard_sharing));
 
     let rdp_config = IronRdpConfig {
         host,
