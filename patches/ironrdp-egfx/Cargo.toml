@@ -1,0 +1,28 @@
+[package]
+name = "ironrdp-egfx"
+version = "0.3.0"
+readme = "README.md"
+description = "Patched Graphics pipeline dynamic channel extension implementation with non-fatal progressive tile handling"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[lib]
+doctest = false
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"], optional = true }
+bit_field = "0.10"
+bitflags = "2.11"
+ironrdp-core = { git = "https://github.com/Devolutions/IronRDP" }
+ironrdp-dvc = { git = "https://github.com/Devolutions/IronRDP" }
+ironrdp-graphics = { path = "../ironrdp-graphics" }
+ironrdp-pdu = { git = "https://github.com/Devolutions/IronRDP" }
+openh264 = { version = "0.9", optional = true, default-features = false }
+tracing = { version = "0.1", features = ["log"] }
+yuv = { version = "0.8", default-features = false, optional = true }
+
+[features]
+arbitrary = ["dep:arbitrary", "bitflags/arbitrary", "ironrdp-pdu/arbitrary"]
+openh264 = ["dep:openh264", "dep:yuv"]
+openh264-bundled = ["openh264", "openh264/source"]
+openh264-libloading = ["openh264", "openh264/libloading"]

@@ -200,6 +200,7 @@
           await invoke('ssh_connect', {
             tabId: session.id,
             connectionId: session.connectionId,
+            credentialsOverride: session.credentialsOverride,
           });
 
           if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
@@ -263,6 +264,11 @@
     isDisconnected = true;
     isTauriLive = false;
     session.status = exitCode === 0 ? 'disconnected' : 'error';
+
+    // Clean up associated SFTP session on backend without closing the UI pane
+    if (session.type === 'ssh') {
+      invoke('sftp_disconnect', { tabId: session.id }).catch(() => {});
+    }
 
     if (appState.config.app_settings?.close_tab_on_exit) {
       appState.closeTab(session.id);
@@ -583,12 +589,10 @@
     componentDisposables.dispose();
 
     // 3. Gracefully terminate backend process if still running
-    if (isTauriLive) {
-      const closeCmd = session.type === 'ssh' ? 'ssh_disconnect' : 'pty_close';
-      invoke(closeCmd, { tabId: session.id }).catch(() => {});
-      if (session.type === 'ssh') {
-        invoke('sftp_disconnect', { tabId: session.id }).catch(() => {});
-      }
+    const closeCmd = session.type === 'ssh' ? 'ssh_disconnect' : 'pty_close';
+    invoke(closeCmd, { tabId: session.id }).catch(() => {});
+    if (session.type === 'ssh') {
+      invoke('sftp_disconnect', { tabId: session.id }).catch(() => {});
     }
   });
 </script>
@@ -661,7 +665,10 @@
         <SftpSidebar
           tabId={session.id}
           connectionId={session.connectionId}
+          credentialsOverride={session.credentialsOverride}
           {terminalCwd}
+          isTerminalDisconnected={isDisconnected}
+          onreconnect={reconnect}
           onclose={toggleSftp}
           onresize={() => fitAddon?.fit()}
         />

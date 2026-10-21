@@ -19,12 +19,12 @@ use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
 use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
 #[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DestroyWindow, EnumChildWindows, EnumWindows, GetClientRect, GetParent,
-    GetWindowLongW, GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetParent,
-    SetWindowLongPtrW, SetWindowLongW, SetWindowPos, ShowWindow, GWL_EXSTYLE, GWL_STYLE,
-    GWLP_HWNDPARENT, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SWP_SHOWWINDOW, WS_CAPTION, WS_CHILD, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
-    WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME, WS_VISIBLE,
+    DestroyWindow, EnumChildWindows, EnumWindows, GetClientRect, GetParent, GetWindowLongW,
+    GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetParent,
+    SetWindowLongPtrW, SetWindowLongW, SetWindowPos, ShowWindow, GWLP_HWNDPARENT, GWL_EXSTYLE,
+    GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE,
+    SW_SHOW, SW_SHOWNOACTIVATE, WS_CAPTION, WS_CHILD, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME, WS_VISIBLE,
 };
 
 /// Diagnostic information explaining why a FreeRDP session ended or failed.
@@ -48,13 +48,21 @@ pub fn log_freerdp(msg: &str) {
     }
 
     let log_path = std::env::temp_dir().join("rustius_freerdp.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+    {
         use std::io::Write;
         let _ = writeln!(f, "[FreeRDP] {}", msg);
     }
 
     let proc_log_path = std::env::temp_dir().join("freerdp_process.log");
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(proc_log_path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(proc_log_path)
+    {
         use std::io::Write;
         let _ = writeln!(f, "{}", msg);
     }
@@ -128,10 +136,7 @@ pub(crate) fn find_freerdp_hwnd(parent: HWND, pid: u32) -> HWND {
             );
         }
         if result.1.is_null() {
-            EnumWindows(
-                Some(enum_child_proc),
-                &mut result as *mut _ as isize,
-            );
+            EnumWindows(Some(enum_child_proc), &mut result as *mut _ as isize);
         }
     }
     result.1
@@ -143,11 +148,19 @@ pub fn find_freerdp_executable() -> Result<PathBuf> {
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(parent) = exe_path.parent() {
             let candidates = [
-                parent.join("resources").join("binaries").join("freerdp").join("wfreerdp.exe"),
+                parent
+                    .join("resources")
+                    .join("binaries")
+                    .join("freerdp")
+                    .join("wfreerdp.exe"),
                 parent.join("binaries").join("freerdp").join("wfreerdp.exe"),
                 parent.join("wfreerdp.exe"),
                 parent.join("resources").join("wfreerdp.exe"),
-                parent.join("resources").join("binaries").join("freerdp").join("xfreerdp"),
+                parent
+                    .join("resources")
+                    .join("binaries")
+                    .join("freerdp")
+                    .join("xfreerdp"),
                 parent.join("xfreerdp"),
             ];
             for p in candidates {
@@ -252,7 +265,12 @@ unsafe fn apply_window_docking(
         return;
     }
 
-    let mut client_rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut client_rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
     GetClientRect(parent_hwnd, &mut client_rect);
     let parent_w = client_rect.right - client_rect.left;
     let parent_h = client_rect.bottom - client_rect.top;
@@ -281,7 +299,8 @@ unsafe fn apply_window_docking(
 
     // Style as borderless popup, but KEEP WS_SYSMENU so OS shortcut handling remains intact
     let cur_style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
-    let new_style = (cur_style & !(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CHILD))
+    let new_style = (cur_style
+        & !(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CHILD))
         | WS_POPUP
         | WS_VISIBLE
         | WS_SYSMENU;
@@ -345,8 +364,14 @@ impl FreeRdpSession {
         }
 
         // Size & Smart-Sizing: scale remote desktop dynamically to window size
-        let session_w = config.desktop_width.unwrap_or(config.width.max(100) as u32).max(100);
-        let session_h = config.desktop_height.unwrap_or(config.height.max(100) as u32).max(100);
+        let session_w = config
+            .desktop_width
+            .unwrap_or(config.width.max(100) as u32)
+            .max(100);
+        let session_h = config
+            .desktop_height
+            .unwrap_or(config.height.max(100) as u32)
+            .max(100);
         cmd.arg(format!("/size:{}x{}", session_w, session_h));
 
         // Performance, Scaling, and Hardware Acceleration Flags
@@ -366,8 +391,7 @@ impl FreeRdpSession {
             .arg("/bpp:32")
             .arg("/log-level:INFO");
 
-        cmd.stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         if pass_to_pipe.is_some() {
             cmd.stdin(Stdio::piped());
@@ -429,7 +453,12 @@ impl FreeRdpSession {
         }
 
         let child_hwnd = Arc::new(parking_lot::Mutex::new(0));
-        let last_bounds = Arc::new(parking_lot::Mutex::new((config.x, config.y, config.width, config.height)));
+        let last_bounds = Arc::new(parking_lot::Mutex::new((
+            config.x,
+            config.y,
+            config.width,
+            config.height,
+        )));
         let is_connected = Arc::new(AtomicBool::new(true));
         let is_docked = Arc::new(AtomicBool::new(true));
         let is_visible = Arc::new(AtomicBool::new(true));
@@ -445,7 +474,10 @@ impl FreeRdpSession {
 
             // Continuous monitor loop: discovers FreeRDP HWND and enforces boundary containment
             tokio::spawn(async move {
-                log_freerdp(&format!("Starting async monitor for PID {} under owner HWND 0x{:X}", child_pid, parent_hwnd));
+                log_freerdp(&format!(
+                    "Starting async monitor for PID {} under owner HWND 0x{:X}",
+                    child_pid, parent_hwnd
+                ));
                 let mut last_applied_rect = (0i32, 0i32, 0i32, 0i32);
 
                 while is_conn_clone.load(Ordering::SeqCst) {
@@ -487,7 +519,12 @@ impl FreeRdpSession {
                             let mut target_pt = POINT { x, y };
                             unsafe { ClientToScreen(parent_hwnd as HWND, &mut target_pt) };
 
-                            let mut client_rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                            let mut client_rect = RECT {
+                                left: 0,
+                                top: 0,
+                                right: 0,
+                                bottom: 0,
+                            };
                             unsafe { GetClientRect(parent_hwnd as HWND, &mut client_rect) };
                             let parent_w = client_rect.right - client_rect.left;
                             let parent_h = client_rect.bottom - client_rect.top;
@@ -589,7 +626,10 @@ impl FreeRdpSession {
                 if !discovered.is_null() {
                     hwnd = discovered as isize;
                     *self.child_hwnd.lock() = hwnd;
-                    log_freerdp(&format!("update_bounds discovered FreeRDP HWND: 0x{:X}", hwnd));
+                    log_freerdp(&format!(
+                        "update_bounds discovered FreeRDP HWND: 0x{:X}",
+                        hwnd
+                    ));
                 }
             }
             if hwnd != 0 && self.parent_hwnd != 0 {
@@ -659,7 +699,10 @@ impl FreeRdpSession {
                 }
             }
         }
-        info!("Disconnected FreeRDP session for {}:{}", self.host, self.port);
+        info!(
+            "Disconnected FreeRDP session for {}:{}",
+            self.host, self.port
+        );
     }
 
     pub fn is_alive(&self) -> bool {
@@ -694,16 +737,27 @@ pub fn describe_freerdp_exit(code: i32, logs: &[String]) -> RdpExitDiagnostic {
     }
 
     // Extract the most descriptive error line from recent logs
-    let raw_error = logs.iter().rev().find(|l| {
-        l.contains("[ERROR]")
-            || l.contains("ERRCONNECT_")
-            || l.contains("STATUS_")
-            || l.contains("failure")
-            || l.contains("denied")
-            || l.contains("rejected")
-    }).map(|s| s.trim().to_string());
+    let raw_error = logs
+        .iter()
+        .rev()
+        .find(|l| {
+            l.contains("[ERROR]")
+                || l.contains("ERRCONNECT_")
+                || l.contains("STATUS_")
+                || l.contains("failure")
+                || l.contains("denied")
+                || l.contains("rejected")
+        })
+        .map(|s| s.trim().to_string());
 
-    let logs_joined = logs.iter().rev().take(40).cloned().collect::<Vec<_>>().join("\n").to_lowercase();
+    let logs_joined = logs
+        .iter()
+        .rev()
+        .take(40)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_lowercase();
     let ucode = code as u32;
 
     // 1. Account Locked Out
@@ -754,7 +808,8 @@ pub fn describe_freerdp_exit(code: i32, logs: &[String]) -> RdpExitDiagnostic {
         return RdpExitDiagnostic {
             code,
             title: "Password Expired".to_string(),
-            message: "The user account password has expired and must be updated before connecting.".to_string(),
+            message: "The user account password has expired and must be updated before connecting."
+                .to_string(),
             severity: "auth".to_string(),
             raw_error,
         };
@@ -788,7 +843,8 @@ pub fn describe_freerdp_exit(code: i32, logs: &[String]) -> RdpExitDiagnostic {
         return RdpExitDiagnostic {
             code,
             title: "Account Disabled".to_string(),
-            message: "The user account is currently disabled on the remote host or domain.".to_string(),
+            message: "The user account is currently disabled on the remote host or domain."
+                .to_string(),
             severity: "security".to_string(),
             raw_error,
         };
@@ -837,7 +893,8 @@ pub fn describe_freerdp_exit(code: i32, logs: &[String]) -> RdpExitDiagnostic {
         return RdpExitDiagnostic {
             code,
             title: "Account Expired".to_string(),
-            message: "The user account has reached its expiration date and cannot be used.".to_string(),
+            message: "The user account has reached its expiration date and cannot be used."
+                .to_string(),
             severity: "security".to_string(),
             raw_error,
         };
@@ -888,7 +945,8 @@ pub fn describe_freerdp_exit(code: i32, logs: &[String]) -> RdpExitDiagnostic {
         return RdpExitDiagnostic {
             code,
             title: "TLS Connection Failed".to_string(),
-            message: "Failed to establish an encrypted TLS/SSL session with the remote host.".to_string(),
+            message: "Failed to establish an encrypted TLS/SSL session with the remote host."
+                .to_string(),
             severity: "error".to_string(),
             raw_error,
         };
@@ -993,11 +1051,11 @@ mod tests {
     #[test]
     fn test_describe_freerdp_connection_refused() {
         let logs = vec![
-            "[ERROR][com.freerdp.core] - connect: connection refused to 192.168.1.100:3389".to_string(),
+            "[ERROR][com.freerdp.core] - connect: connection refused to 192.168.1.100:3389"
+                .to_string(),
         ];
         let diag = describe_freerdp_exit(131081, &logs);
         assert_eq!(diag.title, "Connection Failed");
         assert_eq!(diag.severity, "error");
     }
 }
-

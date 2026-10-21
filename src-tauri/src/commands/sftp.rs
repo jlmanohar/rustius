@@ -19,6 +19,7 @@ use crate::state::AppState;
 pub async fn sftp_connect(
     tab_id: String,
     connection_id: String,
+    credentials_override: Option<rustius_core::connection::CredentialOverride>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     info!(
@@ -32,11 +33,13 @@ pub async fn sftp_connect(
         .get_connection(uuid)
         .await
         .map_err(|e| format!("Connection not found (ID: {connection_id}): {e}"))?;
-    let connection = state
+    let mut connection = state
         .config_manager
         .resolve_connection(&connection)
         .await
         .map_err(|e| format!("Failed to resolve credentials: {e}"))?;
+
+    connection.apply_override(credentials_override);
 
     let known_hosts_path = state.known_hosts_path();
     let client = SftpClient::connect(&connection, known_hosts_path)

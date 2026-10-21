@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { invoke, Channel } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { appState } from '../stores/appState.svelte';
   import { DisposableStore } from '../utils/disposable';
-  import type { TabSession, RdpExitDiagnostic } from '../types';
+  import { RdpWebGlRenderer } from '../utils/rdpWebGlRenderer';
+  import type { TabSession, RdpExitDiagnostic, IronRdpPointerBitmap } from '../types';
   import {
     Monitor,
     Maximize2,
@@ -26,6 +27,7 @@
 
   let containerRef: HTMLDivElement | null = $state(null);
   let viewportRef: HTMLDivElement | null = $state(null);
+  let canvasRef: HTMLCanvasElement | null = $state(null);
 
   let isConnecting = $state(true);
   let isConnected = $state(false);
@@ -35,6 +37,395 @@
   let isDocked = $state(true);
   let exitInfo = $state<RdpExitDiagnostic | null>(null);
   let copiedDetails = $state(false);
+
+  let conn = $derived(appState.findConnection(session.connectionId));
+  let rdpEngine = $derived(conn?.rdp_config?.engine || appState.config.app_settings?.default_rdp_engine || 'ironrdp');
+  let isIronRdp = $derived(rdpEngine === 'ironrdp');
+
+  let webglRenderer: RdpWebGlRenderer | null = null;
+  let useWebGl = $state(false);
+  let canvasCtx: CanvasRenderingContext2D | null = null;
+  let pendingMouseMove: { x: number; y: number } | null = null;
+  let mouseMoveRafId: number | null = null;
+  let cursorCanvas: HTMLCanvasElement | null = null;
+  const cursorCache = new Map<string, string>();
+
+  function updateCursorBitmap(bitmap: IronRdpPointerBitmap) {
+    if (!canvasRef) return;
+    if (!bitmap.width || !bitmap.height || !bitmap.data) {
+      canvasRef.style.cursor = 'default';
+      return;
+    }
+
+    try {
+      const rect = canvasRef.getBoundingClientRect();
+      const scaleX = (rect.width > 0 && canvasRef.width > 0) ? rect.width / canvasRef.width : 1;
+      const scaleY = (rect.height > 0 && canvasRef.height > 0) ? rect.height / canvasRef.height : 1;
+      const scale = (scaleX + scaleY) / 2;
+
+      // Scale cursor if the canvas display is significantly scaled
+      const isScaled = Math.abs(scale - 1) > 0.05 && scale > 0.1 && scale < 5;
+      const targetW = isScaled ? Math.max(1, Math.round(bitmap.width * scale)) : bitmap.width;
+      const targetH = isScaled ? Math.max(1, Math.round(bitmap.height * scale)) : bitmap.height;
+      const hx = isScaled
+        ? Math.min(Math.max(0, Math.round(bitmap.hotspot_x * scale)), targetW - 1)
+        : Math.min(Math.max(0, bitmap.hotspot_x), bitmap.width - 1);
+      const hy = isScaled
+        ? Math.min(Math.max(0, Math.round(bitmap.hotspot_y * scale)), targetH - 1)
+        : Math.min(Math.max(0, bitmap.hotspot_y), bitmap.height - 1);
+
+      const cacheKey = `${targetW}x${targetH}:${hx},${hy}:${bitmap.data.slice(0, 32)}:${bitmap.data.length}`;
+      const cached = cursorCache.get(cacheKey);
+      if (cached) {
+        canvasRef.style.cursor = cached;
+        return;
+      }
+
+      if (!cursorCanvas) {
+        cursorCanvas = document.createElement('canvas');
+      }
+
+      const binaryStr = atob(bitmap.data);
+      const len = binaryStr.length;
+      const bytes = new Uint8ClampedArray(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+
+      const rawCanvas = document.createElement('canvas');
+      rawCanvas.width = bitmap.width;
+      rawCanvas.height = bitmap.height;
+      const rawCtx = rawCanvas.getContext('2d');
+      if (!rawCtx) return;
+      const imgData = new ImageData(bytes, bitmap.width, bitmap.height);
+      rawCtx.putImageData(imgData, 0, 0);
+
+      cursorCanvas.width = targetW;
+      cursorCanvas.height = targetH;
+      const ctx = cursorCanvas.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, targetW, targetH);
+      ctx.drawImage(rawCanvas, 0, 0, targetW, targetH);
+
+      const dataUrl = cursorCanvas.toDataURL('image/png');
+      const cursorVal = `url("${dataUrl}") ${hx} ${hy}, default`;
+
+      if (cursorCache.size >= 64) {
+        const oldest = cursorCache.keys().next().value;
+        if (oldest !== undefined) cursorCache.delete(oldest);
+      }
+      cursorCache.set(cacheKey, cursorVal);
+
+      canvasRef.style.cursor = cursorVal;
+    } catch (err) {
+      console.warn('Failed to update cursor bitmap:', err);
+      canvasRef.style.cursor = 'default';
+    }
+  }
+
+  interface BinaryTile {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    slice: Uint8Array;
+  }
+
+  let pendingTiles: BinaryTile[] = [];
+  let pendingDesktopWidth = 0;
+  let pendingDesktopHeight = 0;
+  let frameRafId: number | null = null;
+
+  function initRenderer(): boolean {
+    if (!canvasRef) return false;
+    if (useWebGl && webglRenderer) return true;
+    if (canvasCtx) return false;
+
+    try {
+      const renderer = new RdpWebGlRenderer();
+      if (renderer.init(canvasRef)) {
+        webglRenderer = renderer;
+        useWebGl = true;
+        canvasCtx = null;
+        return true;
+      }
+      renderer.destroy();
+    } catch (err) {
+      console.warn('Failed to initialize WebGL2 in RdpView; falling back to 2D canvas:', err);
+    }
+
+    useWebGl = false;
+    webglRenderer = null;
+    canvasCtx = canvasRef.getContext('2d', { alpha: false });
+    return false;
+  }
+
+  function handleBinaryFrameBatch(raw: ArrayBuffer | Uint8Array | number[]) {
+    if (!canvasRef) return;
+
+    let buf: ArrayBuffer;
+    let byteOffset = 0;
+    let byteLength = 0;
+
+    if (raw instanceof ArrayBuffer) {
+      buf = raw;
+      byteOffset = 0;
+      byteLength = raw.byteLength;
+    } else if (ArrayBuffer.isView(raw)) {
+      buf = raw.buffer as ArrayBuffer;
+      byteOffset = raw.byteOffset;
+      byteLength = raw.byteLength;
+    } else if (Array.isArray(raw)) {
+      const u8 = new Uint8Array(raw);
+      buf = u8.buffer;
+      byteOffset = 0;
+      byteLength = u8.byteLength;
+    } else {
+      return;
+    }
+
+    if (byteLength < 6) return;
+
+    const view = new DataView(buf, byteOffset, byteLength);
+    pendingDesktopWidth = view.getUint16(0, true);
+    pendingDesktopHeight = view.getUint16(2, true);
+    const numTiles = view.getUint16(4, true);
+
+    let offset = 6;
+    for (let i = 0; i < numTiles; i++) {
+      if (offset + 12 > byteLength) break;
+      const x = view.getUint16(offset, true);
+      const y = view.getUint16(offset + 2, true);
+      const width = view.getUint16(offset + 4, true);
+      const height = view.getUint16(offset + 6, true);
+      const dataLen = view.getUint32(offset + 8, true);
+      offset += 12;
+
+      if (offset + dataLen > byteLength) break;
+      const slice = new Uint8Array(buf, byteOffset + offset, dataLen);
+      pendingTiles.push({ x, y, width, height, slice });
+      offset += dataLen;
+    }
+
+    if (frameRafId === null) {
+      frameRafId = requestAnimationFrame(flushPendingTiles);
+    }
+  }
+
+  function flushPendingTiles() {
+    frameRafId = null;
+    if (!canvasRef || pendingTiles.length === 0) return;
+
+    if (!webglRenderer && !canvasCtx) {
+      initRenderer();
+    }
+
+    if (canvasRef.width !== pendingDesktopWidth || canvasRef.height !== pendingDesktopHeight) {
+      canvasRef.width = pendingDesktopWidth;
+      canvasRef.height = pendingDesktopHeight;
+      if (useWebGl && webglRenderer) {
+        webglRenderer.ensureSize(pendingDesktopWidth, pendingDesktopHeight);
+      } else if (!useWebGl) {
+        canvasCtx = canvasRef.getContext('2d', { alpha: false });
+      }
+    }
+
+    const tilesToRender = pendingTiles;
+    pendingTiles = [];
+
+    try {
+      for (let t = 0; t < tilesToRender.length; t++) {
+        const tile = tilesToRender[t];
+
+        if (useWebGl && webglRenderer) {
+          webglRenderer.uploadTile(tile.x, tile.y, tile.width, tile.height, tile.slice);
+        } else if (canvasCtx) {
+          const slice = tile.slice;
+          const clamped = new Uint8ClampedArray(slice.length);
+          clamped.set(slice);
+          // Swizzle BGR[0] to RGB[255] for 2D canvas fallback
+          for (let p = 0; p < clamped.length; p += 4) {
+            const b = clamped[p];
+            clamped[p] = clamped[p + 2]; // Red
+            clamped[p + 2] = b;          // Blue
+            clamped[p + 3] = 255;        // Alpha
+          }
+          const imgData = new ImageData(clamped, tile.width, tile.height);
+          canvasCtx.putImageData(imgData, tile.x, tile.y);
+        }
+      }
+
+      if (useWebGl && webglRenderer) {
+        webglRenderer.render();
+      }
+    } catch (err) {
+      console.error('Failed to render IronRDP batch tiles:', err);
+    }
+  }
+
+  function getCanvasMouseCoords(e: MouseEvent): { x: number; y: number } | null {
+    if (!canvasRef) return null;
+    const rect = canvasRef.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    const scaleX = canvasRef.width / rect.width;
+    const scaleY = canvasRef.height / rect.height;
+    const x = Math.floor((e.clientX - rect.left) * scaleX);
+    const y = Math.floor((e.clientY - rect.top) * scaleY);
+    return {
+      x: Math.max(0, Math.min(canvasRef.width - 1, x)),
+      y: Math.max(0, Math.min(canvasRef.height - 1, y)),
+    };
+  }
+
+  function handleMouseMove(e: MouseEvent) {
+    if (!isConnected || !isIronRdp) return;
+    const coords = getCanvasMouseCoords(e);
+    if (!coords) return;
+    pendingMouseMove = coords;
+    if (mouseMoveRafId === null) {
+      mouseMoveRafId = requestAnimationFrame(() => {
+        mouseMoveRafId = null;
+        if (pendingMouseMove && isConnected) {
+          invoke('ironrdp_mouse_move', {
+            tabId: session.id,
+            x: pendingMouseMove.x,
+            y: pendingMouseMove.y,
+          }).catch(() => {});
+        }
+      });
+    }
+  }
+
+  function handleMouseDown(e: MouseEvent) {
+    if (!isConnected || !isIronRdp) return;
+    canvasRef?.focus();
+    const coords = getCanvasMouseCoords(e);
+    invoke('ironrdp_mouse_button', {
+      tabId: session.id,
+      button: e.button,
+      pressed: true,
+      x: coords?.x,
+      y: coords?.y,
+    }).catch(() => {});
+  }
+
+  function handleMouseUp(e: MouseEvent) {
+    if (!isConnected || !isIronRdp) return;
+    const coords = getCanvasMouseCoords(e);
+    invoke('ironrdp_mouse_button', {
+      tabId: session.id,
+      button: e.button,
+      pressed: false,
+      x: coords?.x,
+      y: coords?.y,
+    }).catch(() => {});
+  }
+
+  function handleContextMenu(e: MouseEvent) {
+    e.preventDefault();
+  }
+
+  let accumulatedWheelY = 0;
+  let accumulatedWheelX = 0;
+
+  function handleWheel(e: WheelEvent) {
+    if (!isConnected || !isIronRdp) return;
+    e.preventDefault();
+
+    let dy = e.deltaY;
+    let dx = e.deltaX;
+    if (e.deltaMode === 1) {
+      dy *= 20;
+      dx *= 20;
+    } else if (e.deltaMode === 2) {
+      dy *= 100;
+      dx *= 100;
+    }
+
+    const isVertical = Math.abs(dy) >= Math.abs(dx);
+    if (isVertical) {
+      accumulatedWheelY -= dy;
+      if (Math.abs(accumulatedWheelY) >= 20) {
+        const notches = Math.trunc(accumulatedWheelY / 40);
+        if (notches !== 0) {
+          const rotationUnits = notches * 120;
+          accumulatedWheelY -= notches * 40;
+          invoke('ironrdp_mouse_wheel', {
+            tabId: session.id,
+            isVertical: true,
+            rotationUnits,
+          }).catch(() => {});
+        }
+      }
+    } else {
+      accumulatedWheelX -= dx;
+      if (Math.abs(accumulatedWheelX) >= 20) {
+        const notches = Math.trunc(accumulatedWheelX / 40);
+        if (notches !== 0) {
+          const rotationUnits = notches * 120;
+          accumulatedWheelX -= notches * 40;
+          invoke('ironrdp_mouse_wheel', {
+            tabId: session.id,
+            isVertical: false,
+            rotationUnits,
+          }).catch(() => {});
+        }
+      }
+    }
+  }
+
+  const pressedKeys = new Set<string>();
+
+  function handleKeyDown(e: KeyboardEvent) {
+    if (!isConnected || !isIronRdp) return;
+    if (e.code !== 'F12') {
+      e.preventDefault();
+    }
+    pressedKeys.add(e.code);
+    invoke('ironrdp_key_event', {
+      tabId: session.id,
+      code: e.code,
+      pressed: true,
+    }).catch(() => {});
+  }
+
+  function handleKeyUp(e: KeyboardEvent) {
+    if (!isConnected || !isIronRdp) return;
+    if (e.code !== 'F12') {
+      e.preventDefault();
+    }
+    pressedKeys.delete(e.code);
+    invoke('ironrdp_key_event', {
+      tabId: session.id,
+      code: e.code,
+      pressed: false,
+    }).catch(() => {});
+  }
+
+  function releaseAllKeys() {
+    if (!isConnected || !isIronRdp) return;
+    if (pressedKeys.size > 0) {
+      for (const code of pressedKeys) {
+        invoke('ironrdp_key_event', {
+          tabId: session.id,
+          code,
+          pressed: false,
+        }).catch(() => {});
+      }
+      pressedKeys.clear();
+    }
+    invoke('ironrdp_release_all', { tabId: session.id }).catch(() => {});
+  }
+
+  async function sendCtrlAltDel() {
+    if (!isConnected || !isIronRdp) return;
+    for (const code of ['ControlLeft', 'AltLeft', 'Delete']) {
+      await invoke('ironrdp_key_event', { tabId: session.id, code, pressed: true }).catch(() => {});
+    }
+    for (const code of ['Delete', 'AltLeft', 'ControlLeft']) {
+      await invoke('ironrdp_key_event', { tabId: session.id, code, pressed: false }).catch(() => {});
+    }
+  }
 
   function openEditConnection() {
     if (!session.connectionId) return;
@@ -53,7 +444,7 @@
       `Exit Code: ${exitInfo.code} (0x${(exitInfo.code >>> 0).toString(16).toUpperCase()})`,
     ];
     if (exitInfo.raw_error) {
-      lines.push(`FreeRDP Log: ${exitInfo.raw_error}`);
+      lines.push(`${isIronRdp ? 'IronRDP' : 'FreeRDP'} Diagnostic: ${exitInfo.raw_error}`);
     }
     if (session.connectionId) {
       const conn = appState.findConnection(session.connectionId);
@@ -81,17 +472,15 @@
     const rect = viewportRef.getBoundingClientRect();
     const scale = window.devicePixelRatio || 1;
     const rdpCfg = appState.findConnection(session.connectionId)?.rdp_config;
-    const resMode = rdpCfg?.resolution_mode || 'auto';
+    const resMode = rdpCfg?.resolution_mode || appState.config.app_settings?.default_rdp_resolution_mode || 'auto';
 
     let desktopW: number;
     let desktopH: number;
 
     if (resMode === 'auto') {
-      // Auto (Fit Window): negotiate at docked viewport size -> larger comfortable UI (classic c6987d1 behavior)
       desktopW = Math.round(Math.max(rect.width * scale, 800));
       desktopH = Math.round(Math.max(rect.height * scale, 600));
     } else if (resMode === 'native') {
-      // Native monitor resolution
       desktopW = Math.round((window.screen?.width || 1920) * scale);
       desktopH = Math.round((window.screen?.height || 1080) * scale);
     } else if (resMode === '1080p') {
@@ -108,13 +497,11 @@
       desktopH = Math.round(Math.max(rect.height * scale, 600));
     }
 
-    // Determine remote desktop DPI scaling factor
     let desktopScale: number | undefined;
-    const cfgScale = rdpCfg?.scale_factor ?? 0;
+    const cfgScale = rdpCfg?.scale_factor ?? (appState.config.app_settings?.default_rdp_scale_factor ?? 0);
     if (cfgScale > 0) {
       desktopScale = cfgScale;
     } else {
-      // Auto: if high-res (native or >= 1440p), auto-scale using display DPI; otherwise standard 100%
       if (resMode === 'native' || desktopW >= 2560 || desktopH >= 1440) {
         desktopScale = Math.min(Math.max(Math.round(scale * 100), 100), 250);
       } else {
@@ -153,7 +540,7 @@
   }
 
   function syncBounds() {
-    if (!viewportRef || isDisconnected || !isDocked) return;
+    if (isIronRdp || !viewportRef || isDisconnected || !isDocked) return;
     if (appState.activeTabId !== session.id) return;
     const bounds = getFittedBounds();
     if (!bounds) return;
@@ -164,6 +551,46 @@
       width: bounds.width,
       height: bounds.height,
     }).catch(() => {});
+  }
+
+  let ironResizeTimer: any = null;
+  let lastIronRdpWidth = 0;
+  let lastIronRdpHeight = 0;
+
+  function handleIronRdpResize() {
+    if (!isIronRdp || !isConnected || isDisconnected || !viewportRef) return;
+    if (appState.activeTabId !== session.id) return;
+    if (ironResizeTimer) {
+      clearTimeout(ironResizeTimer);
+    }
+    ironResizeTimer = setTimeout(async () => {
+      ironResizeTimer = null;
+      if (!isIronRdp || !isConnected || isDisconnected || !viewportRef) return;
+      if (appState.activeTabId !== session.id) return;
+      const bounds = getFittedBounds();
+      if (!bounds) return;
+
+      const dwDiff = Math.abs(bounds.desktopWidth - lastIronRdpWidth);
+      const dhDiff = Math.abs(bounds.desktopHeight - lastIronRdpHeight);
+      if (
+        (dwDiff >= 12 || dhDiff >= 12 || lastIronRdpWidth === 0) &&
+        bounds.desktopWidth > 0 &&
+        bounds.desktopHeight > 0
+      ) {
+        try {
+          await invoke('ironrdp_resize', {
+            tabId: session.id,
+            width: bounds.desktopWidth,
+            height: bounds.desktopHeight,
+            scaleFactor: bounds.scaleDesktop,
+          });
+          lastIronRdpWidth = bounds.desktopWidth;
+          lastIronRdpHeight = bounds.desktopHeight;
+        } catch (err) {
+          console.warn('[RDP] Dynamic resize failed:', err);
+        }
+      }
+    }, 350);
   }
 
   async function startSession() {
@@ -178,13 +605,18 @@
     session.status = 'connecting';
 
     sessionDisposables.clear();
+    if (frameRafId !== null) {
+      cancelAnimationFrame(frameRafId);
+      frameRafId = null;
+    }
+    pendingTiles = [];
 
     const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
     if (!isTauri) {
       isConnecting = false;
       isDisconnected = true;
       session.status = 'error';
-      disconnectReason = 'Native FreeRDP acceleration requires the Rustius desktop application.';
+      disconnectReason = 'Native RDP acceleration requires the Rustius desktop application.';
       exitInfo = {
         code: -1,
         title: 'Desktop Shell Required',
@@ -209,7 +641,6 @@
     }
 
     try {
-      // 1. Calculate physical desktop size and fitted viewport coordinates
       const bounds = getFittedBounds() || {
         x: 0,
         y: 0,
@@ -220,7 +651,6 @@
         scaleDesktop: 100,
       };
 
-      // 2. Listen for session exit event
       const unlistenExit = await listen<number | RdpExitDiagnostic>(`rdp-exit-${session.id}`, (event) => {
         if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
         isConnected = false;
@@ -237,8 +667,9 @@
           }
         } else {
           const code = event.payload;
+          const engineName = isIronRdp ? 'IronRDP' : 'FreeRDP';
           if (code === 0) {
-            disconnectReason = 'FreeRDP session ended by user or server';
+            disconnectReason = `${engineName} session ended by user or server`;
             exitInfo = {
               code: 0,
               title: 'Session Disconnected',
@@ -246,7 +677,7 @@
               severity: 'info',
             };
           } else {
-            disconnectReason = `FreeRDP exited with code ${code}`;
+            disconnectReason = `${engineName} exited with code ${code}`;
             exitInfo = {
               code,
               title: 'Session Disconnected',
@@ -264,43 +695,120 @@
       }
       sessionDisposables.add(unlistenExit);
 
-      // 3. Invoke freerdp_connect backend command
-      await invoke('freerdp_connect', {
-        tabId: session.id,
-        connectionId: session.connectionId,
-        x: bounds.x,
-        y: bounds.y,
-        width: bounds.width,
-        height: bounds.height,
-        desktopWidth: bounds.desktopWidth,
-        desktopHeight: bounds.desktopHeight,
-        scaleDesktop: bounds.scaleDesktop,
-      });
-
-      if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
-        invoke('freerdp_disconnect', { tabId: session.id }).catch(() => {});
-        return;
-      }
-
-      isConnected = true;
-      isConnecting = false;
-      isDisconnected = false;
-      session.status = 'connected';
-
-      // 4. Setup viewport bounds sync on container resize or window resize
-      if (window.ResizeObserver && viewportRef) {
-        const ro = new ResizeObserver(() => {
-          syncBounds();
+      if (isIronRdp) {
+        const onFrame = new Channel<ArrayBuffer>((payload) => {
+          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
+          handleBinaryFrameBatch(payload);
         });
-        ro.observe(viewportRef);
-        sessionDisposables.add(() => ro.disconnect());
-      }
-      sessionDisposables.trackEventListener(window, 'resize', syncBounds);
 
-      const unlistenMove = await listen('window-moved', () => syncBounds());
-      sessionDisposables.add(unlistenMove);
+        const unlistenConnected = await listen(`rdp-connected-${session.id}`, () => {
+          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
+          isConnected = true;
+          isConnecting = false;
+          isDisconnected = false;
+          session.status = 'connected';
+          initRenderer();
+          setTimeout(() => {
+            canvasRef?.focus();
+          }, 100);
+        });
+        sessionDisposables.add(unlistenConnected);
+
+        const unlistenPtrDefault = await listen(`rdp-pointer-default-${session.id}`, () => {
+          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
+          if (canvasRef) canvasRef.style.cursor = 'default';
+        });
+        sessionDisposables.add(unlistenPtrDefault);
+
+        const unlistenPtrHidden = await listen(`rdp-pointer-hidden-${session.id}`, () => {
+          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
+          if (canvasRef) canvasRef.style.cursor = 'none';
+        });
+        sessionDisposables.add(unlistenPtrHidden);
+
+        const unlistenPtrBitmap = await listen<IronRdpPointerBitmap>(`rdp-pointer-bitmap-${session.id}`, (event) => {
+          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
+          updateCursorBitmap(event.payload);
+        });
+        sessionDisposables.add(unlistenPtrBitmap);
+
+        await invoke('ironrdp_connect', {
+          tabId: session.id,
+          connectionId: session.connectionId,
+          credentialsOverride: session.credentialsOverride,
+          width: bounds.desktopWidth,
+          height: bounds.desktopHeight,
+          scaleFactor: bounds.scaleDesktop,
+          onFrame,
+        });
+
+        if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
+          invoke('ironrdp_disconnect', { tabId: session.id }).catch(() => {});
+          return;
+        }
+
+        lastIronRdpWidth = bounds.desktopWidth;
+        lastIronRdpHeight = bounds.desktopHeight;
+
+        if (window.ResizeObserver && viewportRef) {
+          const ro = new ResizeObserver(() => {
+            handleIronRdpResize();
+          });
+          ro.observe(viewportRef);
+          sessionDisposables.add(() => ro.disconnect());
+        }
+        sessionDisposables.trackEventListener(window, 'resize', handleIronRdpResize);
+        sessionDisposables.trackEventListener(window, 'blur', releaseAllKeys);
+        sessionDisposables.trackEventListener(document, 'visibilitychange', () => {
+          if (document.hidden) {
+            releaseAllKeys();
+          }
+        });
+        sessionDisposables.add(() => {
+          if (ironResizeTimer) {
+            clearTimeout(ironResizeTimer);
+            ironResizeTimer = null;
+          }
+          releaseAllKeys();
+        });
+      } else {
+        await invoke('freerdp_connect', {
+          tabId: session.id,
+          connectionId: session.connectionId,
+          credentialsOverride: session.credentialsOverride,
+          x: bounds.x,
+          y: bounds.y,
+          width: bounds.width,
+          height: bounds.height,
+          desktopWidth: bounds.desktopWidth,
+          desktopHeight: bounds.desktopHeight,
+          scaleDesktop: bounds.scaleDesktop,
+        });
+
+        if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
+          invoke('freerdp_disconnect', { tabId: session.id }).catch(() => {});
+          return;
+        }
+
+        isConnected = true;
+        isConnecting = false;
+        isDisconnected = false;
+        session.status = 'connected';
+
+        if (window.ResizeObserver && viewportRef) {
+          const ro = new ResizeObserver(() => {
+            syncBounds();
+          });
+          ro.observe(viewportRef);
+          sessionDisposables.add(() => ro.disconnect());
+        }
+        sessionDisposables.trackEventListener(window, 'resize', syncBounds);
+
+        const unlistenMove = await listen('window-moved', () => syncBounds());
+        sessionDisposables.add(unlistenMove);
+      }
     } catch (err: any) {
-      console.error('FreeRDP connection error:', err);
+      console.error(`${isIronRdp ? 'IronRDP' : 'FreeRDP'} connection error:`, err);
       if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
       isConnected = false;
       isConnecting = false;
@@ -334,7 +842,8 @@
       message: 'Session disconnected by user',
       severity: 'info',
     };
-    await invoke('freerdp_disconnect', { tabId: session.id }).catch(() => {});
+    if (canvasRef) canvasRef.style.cursor = 'default';
+    await invoke('rdp_disconnect', { tabId: session.id }).catch(() => {});
   }
 
   function toggleFullscreen() {
@@ -356,7 +865,7 @@
     isConnected = false;
     isConnecting = true;
     disconnectReason = '';
-    await invoke('freerdp_disconnect', { tabId: session.id }).catch(() => {});
+    await invoke('rdp_disconnect', { tabId: session.id }).catch(() => {});
     await startSession();
   }
 
@@ -369,10 +878,16 @@
     const isTabActive = appState.activeTabId === session.id;
     const _drawerOpen = appState.isNotesDrawerOpen;
     if (isConnected) {
-      invoke('freerdp_set_visibility', { tabId: session.id, visible: isTabActive }).catch(() => {});
-      if (isTabActive && isDocked) {
+      if (!isIronRdp) {
+        invoke('freerdp_set_visibility', { tabId: session.id, visible: isTabActive }).catch(() => {});
+        if (isTabActive && isDocked) {
+          requestAnimationFrame(() => {
+            syncBounds();
+          });
+        }
+      } else if (isTabActive) {
         requestAnimationFrame(() => {
-          syncBounds();
+          canvasRef?.focus();
         });
       }
     }
@@ -388,9 +903,22 @@
   });
 
   onDestroy(() => {
+    if (mouseMoveRafId !== null) {
+      cancelAnimationFrame(mouseMoveRafId);
+    }
+    if (frameRafId !== null) {
+      cancelAnimationFrame(frameRafId);
+    }
+    pendingTiles = [];
+    if (webglRenderer) {
+      webglRenderer.destroy();
+      webglRenderer = null;
+    }
+    useWebGl = false;
+    canvasCtx = null;
     sessionDisposables.dispose();
     componentDisposables.dispose();
-    invoke('freerdp_disconnect', { tabId: session.id }).catch(() => {});
+    invoke('rdp_disconnect', { tabId: session.id }).catch(() => {});
   });
 </script>
 
@@ -412,36 +940,67 @@
         <span class="status-label">Disconnected</span>
       {/if}
 
-      <span class="acceleration-pill native" title="Direct3D Hardware-Accelerated FreeRDP Engine">
-        <Zap size={11} />
-        <span>FreeRDP · Direct3D</span>
-      </span>
+      {#if isIronRdp}
+        <span
+          class="acceleration-pill iron"
+          class:webgl={useWebGl}
+          title={useWebGl
+            ? 'Hardware-Accelerated WebGL2 GPU Texture Pipeline'
+            : 'Pure Rust IronRDP Engine with 2D Canvas Fallback'}
+        >
+          {#if useWebGl}
+            <Zap size={11} />
+            <span>IronRDP · WebGL2 GPU</span>
+          {:else}
+            <Shield size={11} />
+            <span>IronRDP · Pure Rust</span>
+          {/if}
+        </span>
+      {:else}
+        <span class="acceleration-pill native" title="Direct3D Hardware-Accelerated FreeRDP Engine">
+          <Zap size={11} />
+          <span>FreeRDP · Direct3D</span>
+        </span>
+      {/if}
 
-      {#if !isDocked}
+      {#if !isIronRdp && !isDocked}
         <span class="detached-badge">Detached Window</span>
       {/if}
     </div>
 
     <div class="header-right">
       {#if isConnected || isConnecting}
-        <button
-          class="ctrl-btn"
-          onclick={toggleDocked}
-          title={isDocked ? 'Detach to standalone native window' : 'Dock back to tab viewport'}
-        >
-          {#if isDocked}
-            <ExternalLink size={12} />
-            <span>Pop Out</span>
-          {:else}
-            <Minimize2 size={12} />
-            <span>Dock</span>
-          {/if}
-        </button>
+        {#if isIronRdp && isConnected}
+          <button
+            class="ctrl-btn"
+            onclick={sendCtrlAltDel}
+            title="Send Ctrl+Alt+Del to remote session"
+          >
+            <Key size={12} />
+            <span>Ctrl+Alt+Del</span>
+          </button>
+        {/if}
+
+        {#if !isIronRdp}
+          <button
+            class="ctrl-btn"
+            onclick={toggleDocked}
+            title={isDocked ? 'Detach to standalone native window' : 'Dock back to tab viewport'}
+          >
+            {#if isDocked}
+              <ExternalLink size={12} />
+              <span>Pop Out</span>
+            {:else}
+              <Minimize2 size={12} />
+              <span>Dock</span>
+            {/if}
+          </button>
+        {/if}
 
         <button
           class="ctrl-btn danger"
           onclick={handleDisconnect}
-          title="Disconnect FreeRDP Session"
+          title="Disconnect RDP Session"
         >
           <Power size={12} />
           <span>Disconnect</span>
@@ -515,77 +1074,106 @@
     </div>
   {/if}
 
-  <!-- RDP Viewport Surface for child window docking -->
+  <!-- RDP Viewport Surface -->
   <div class="rdp-viewport" bind:this={viewportRef}>
-    <div class="freerdp-native-backdrop">
-      {#if !isDocked && isConnected}
-        <div class="native-detached-msg">
-          <ExternalLink size={28} class="placeholder-icon" />
-          <p class="placeholder-title">Session Running in Standalone Window</p>
-          <p class="placeholder-desc">FreeRDP is running in its own native window with full OS titlebar and controls.</p>
-          <button class="action-btn" onclick={toggleDocked}>
-            <Minimize2 size={12} />
-            <span>Dock Back to Tab</span>
+    {#if isIronRdp}
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <div
+        class="ironrdp-container"
+        class:hidden={!isConnected}
+        onclick={() => canvasRef?.focus()}
+        onkeydown={(e) => { if (e.key === 'Enter') canvasRef?.focus(); }}
+        role="region"
+        aria-label="IronRDP Session Viewport"
+      >
+        <canvas
+          bind:this={canvasRef}
+          class="rdp-canvas"
+          tabindex="0"
+          onmousemove={handleMouseMove}
+          onmousedown={handleMouseDown}
+          onmouseup={handleMouseUp}
+          oncontextmenu={handleContextMenu}
+          onwheel={handleWheel}
+          onkeydown={handleKeyDown}
+          onkeyup={handleKeyUp}
+        ></canvas>
+      </div>
+    {/if}
+
+    {#if !isIronRdp}
+      <div class="freerdp-native-backdrop">
+        {#if !isDocked && isConnected}
+          <div class="native-detached-msg">
+            <ExternalLink size={28} class="placeholder-icon" />
+            <p class="placeholder-title">Session Running in Standalone Window</p>
+            <p class="placeholder-desc">FreeRDP is running in its own native window with full OS titlebar and controls.</p>
+            <button class="action-btn" onclick={toggleDocked}>
+              <Minimize2 size={12} />
+              <span>Dock Back to Tab</span>
+            </button>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    {#if isConnecting}
+      <div class="native-connecting-msg">
+        <span class="status-indicator connecting"></span>
+        <span>{isIronRdp ? 'Initializing secure IronRDP session...' : 'Initializing hardware-accelerated FreeRDP session...'}</span>
+      </div>
+    {:else if isDisconnected}
+      <div class="native-disconnected-card {exitInfo?.severity || 'info'}">
+        <div class="card-icon-container">
+          {#if exitInfo?.severity === 'security'}
+            <Lock size={30} class="card-icon security" />
+          {:else if exitInfo?.severity === 'auth'}
+            <Key size={30} class="card-icon auth" />
+          {:else if exitInfo?.severity === 'error'}
+            <AlertCircle size={30} class="card-icon error" />
+          {:else}
+            <Monitor size={30} class="card-icon info" />
+          {/if}
+        </div>
+
+        <h3 class="card-title">
+          {exitInfo?.title || session.title || 'Remote Desktop Disconnected'}
+        </h3>
+
+        <p class="card-desc">
+          {exitInfo?.message || disconnectReason || 'Remote Desktop session has ended.'}
+        </p>
+
+        {#if exitInfo?.raw_error}
+          <div class="card-error-detail">
+            <span class="detail-label">{isIronRdp ? 'IronRDP' : 'FreeRDP'} Diagnostic:</span>
+            <code class="detail-code">{exitInfo.raw_error}</code>
+          </div>
+        {/if}
+
+        <div class="card-actions">
+          {#if session.connectionId && (exitInfo?.severity === 'auth' || exitInfo?.severity === 'security')}
+            <button class="action-btn edit-btn primary" onclick={openEditConnection}>
+              <Key size={13} />
+              <span>Update Credentials</span>
+            </button>
+          {/if}
+          <button class="action-btn reconnect-btn" onclick={reconnect}>
+            <RotateCcw size={13} />
+            <span>Reconnect</span>
+          </button>
+          <button class="action-btn copy-btn" onclick={copyErrorDetails} title="Copy error details">
+            {#if copiedDetails}
+              <Check size={13} />
+              <span>Copied</span>
+            {:else}
+              <Copy size={13} />
+              <span>Copy Details</span>
+            {/if}
           </button>
         </div>
-      {:else if isConnecting}
-        <div class="native-connecting-msg">
-          <span class="status-indicator connecting"></span>
-          <span>Initializing hardware-accelerated FreeRDP session...</span>
-        </div>
-      {:else if isDisconnected}
-        <div class="native-disconnected-card {exitInfo?.severity || 'info'}">
-          <div class="card-icon-container">
-            {#if exitInfo?.severity === 'security'}
-              <Lock size={30} class="card-icon security" />
-            {:else if exitInfo?.severity === 'auth'}
-              <Key size={30} class="card-icon auth" />
-            {:else if exitInfo?.severity === 'error'}
-              <AlertCircle size={30} class="card-icon error" />
-            {:else}
-              <Monitor size={30} class="card-icon info" />
-            {/if}
-          </div>
-
-          <h3 class="card-title">
-            {exitInfo?.title || session.title || 'Remote Desktop Disconnected'}
-          </h3>
-
-          <p class="card-desc">
-            {exitInfo?.message || disconnectReason || 'Remote Desktop session has ended.'}
-          </p>
-
-          {#if exitInfo?.raw_error}
-            <div class="card-error-detail">
-              <span class="detail-label">FreeRDP Diagnostic:</span>
-              <code class="detail-code">{exitInfo.raw_error}</code>
-            </div>
-          {/if}
-
-          <div class="card-actions">
-            {#if session.connectionId && (exitInfo?.severity === 'auth' || exitInfo?.severity === 'security')}
-              <button class="action-btn edit-btn primary" onclick={openEditConnection}>
-                <Key size={13} />
-                <span>Update Credentials</span>
-              </button>
-            {/if}
-            <button class="action-btn reconnect-btn" onclick={reconnect}>
-              <RotateCcw size={13} />
-              <span>Reconnect</span>
-            </button>
-            <button class="action-btn copy-btn" onclick={copyErrorDetails} title="Copy error details">
-              {#if copiedDetails}
-                <Check size={13} />
-                <span>Copied</span>
-              {:else}
-                <Copy size={13} />
-                <span>Copy Details</span>
-              {/if}
-            </button>
-          </div>
-        </div>
-      {/if}
-    </div>
+      </div>
+    {/if}
   </div>
 
   <!-- mRemoteNG-style bottom status bar when an error or lockout occurs -->
@@ -885,6 +1473,42 @@
     overflow: hidden;
   }
 
+  .ironrdp-container {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000000;
+    position: absolute;
+    top: 0;
+    left: 0;
+    overflow: hidden;
+    cursor: default;
+  }
+
+  .ironrdp-container.hidden {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .rdp-canvas {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
+    margin: auto;
+    outline: none;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+    image-rendering: auto;
+  }
+
+  .rdp-canvas:focus {
+    outline: none;
+  }
+
   .acceleration-pill {
     display: inline-flex;
     align-items: center;
@@ -919,6 +1543,34 @@
 
   .acceleration-pill.native:hover :global(svg) {
     color: var(--ink-secondary);
+  }
+
+  .acceleration-pill.iron {
+    background: rgba(0, 112, 243, 0.08);
+    border-color: rgba(0, 112, 243, 0.25);
+    color: #79b8ff;
+  }
+
+  .acceleration-pill.iron :global(svg) {
+    color: #0070f3;
+  }
+
+  .acceleration-pill.iron:hover {
+    background: rgba(0, 112, 243, 0.15);
+    border-color: #0070f3;
+    color: #9eccff;
+  }
+
+  .acceleration-pill.iron.webgl {
+    background: rgba(0, 112, 243, 0.12);
+    border-color: rgba(0, 112, 243, 0.45);
+    color: #58a6ff;
+  }
+
+  .acceleration-pill.iron.webgl:hover {
+    background: rgba(0, 112, 243, 0.2);
+    border-color: #0070f3;
+    color: #79b8ff;
   }
 
   .detached-badge {

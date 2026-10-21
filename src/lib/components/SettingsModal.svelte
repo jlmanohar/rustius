@@ -7,6 +7,7 @@
     Sliders,
     Terminal,
     ArrowLeftRight,
+    Monitor,
     HardDrive,
     Laptop,
     Lock,
@@ -18,7 +19,7 @@
   } from '@lucide/svelte';
   import type { VaultBackend } from '$lib/types';
 
-  type SettingsCategory = 'general' | 'terminal' | 'sftp' | 'security';
+  type SettingsCategory = 'general' | 'terminal' | 'sftp' | 'rdp' | 'security';
 
   let activeCategory = $state<SettingsCategory>('general');
 
@@ -27,6 +28,11 @@
   let sftpFollowTerminal = $state(appState.config.app_settings?.sftp_follow_terminal_folder ?? true);
   let termType = $state(appState.config.app_settings?.default_terminal_type ?? 'xterm-256color');
   let fontSize = $state(appState.config.app_settings?.font_size ?? 13);
+  let defaultRdpEngine = $state<'ironrdp' | 'freerdp'>(appState.config.app_settings?.default_rdp_engine ?? 'ironrdp');
+  let defaultRdpResolutionMode = $state<'auto' | 'native' | '1080p' | '720p' | 'custom'>(appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto');
+  let defaultRdpScaleFactor = $state<number>(appState.config.app_settings?.default_rdp_scale_factor ?? 0);
+  let defaultRdpClipboardSharing = $state<boolean>(appState.config.app_settings?.default_rdp_clipboard_sharing ?? true);
+  let defaultRdpEgfx = $state<boolean>(appState.config.app_settings?.default_rdp_egfx ?? false);
   const MONOSPACE_FONTS = [
     { label: 'Geist Mono (Default)', value: 'Geist Mono' },
     { label: 'JetBrains Mono', value: 'JetBrains Mono' },
@@ -229,6 +235,11 @@
       font_size: Number(fontSize) || 13,
       font_family: fontFamily.replace(/['"]/g, '').trim() || 'Geist Mono',
       vault_backend: selectedVaultBackend,
+      default_rdp_engine: defaultRdpEngine,
+      default_rdp_resolution_mode: defaultRdpResolutionMode,
+      default_rdp_scale_factor: Number(defaultRdpScaleFactor) || 0,
+      default_rdp_clipboard_sharing: defaultRdpClipboardSharing,
+      default_rdp_egfx: defaultRdpEgfx,
     };
 
     await appState.saveAppSettings(updated);
@@ -238,7 +249,7 @@
   async function handleRestoreDefaults() {
     const confirmed = await appState.confirm({
       title: 'Restore Default Settings',
-      message: 'Are you sure you want to restore all application preferences (theme, fonts, terminal, SFTP) to factory defaults?',
+      message: 'Are you sure you want to restore all application preferences (theme, fonts, terminal, SFTP, RDP) to factory defaults?',
       confirmText: 'Restore Defaults',
     });
     if (!confirmed) return;
@@ -252,6 +263,11 @@
     customFontFamily = '';
     fontFamily = 'Geist Mono';
     selectedVaultBackend = 'auto';
+    defaultRdpEngine = 'ironrdp';
+    defaultRdpResolutionMode = 'auto';
+    defaultRdpScaleFactor = 0;
+    defaultRdpClipboardSharing = true;
+    defaultRdpEgfx = false;
 
     const updated = {
       ...appState.config.app_settings,
@@ -262,6 +278,11 @@
       font_size: 13,
       font_family: 'Geist Mono',
       vault_backend: 'auto' as VaultBackend,
+      default_rdp_engine: 'ironrdp' as const,
+      default_rdp_resolution_mode: 'auto' as const,
+      default_rdp_scale_factor: 0,
+      default_rdp_clipboard_sharing: true,
+      default_rdp_egfx: false,
     };
 
     await appState.saveAppSettings(updated);
@@ -326,6 +347,15 @@
         >
           <ArrowLeftRight size={13} />
           <span>SFTP</span>
+        </button>
+
+        <button
+          type="button"
+          class="nav-tab {activeCategory === 'rdp' ? 'active' : ''}"
+          onclick={() => (activeCategory = 'rdp')}
+        >
+          <Monitor size={13} />
+          <span>Remote Desktop</span>
         </button>
 
         <button
@@ -473,6 +503,99 @@
                     id="sftp-follow-toggle"
                     type="checkbox"
                     bind:checked={sftpFollowTerminal}
+                  />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+        {:else if activeCategory === 'rdp'}
+          <div class="category-header">
+            <h3 class="category-title">Remote Desktop</h3>
+            <p class="category-subtitle">Global defaults for RDP rendering engines, display resolution, and clipboard sharing.</p>
+          </div>
+
+          <div class="settings-group">
+            <div class="setting-field">
+              <label for="default-rdp-engine-select" class="field-label">DEFAULT RDP ENGINE</label>
+              <select
+                id="default-rdp-engine-select"
+                class="geist-select"
+                bind:value={defaultRdpEngine}
+              >
+                <option value="ironrdp">IronRDP (Cross-Platform · Canvas/GPU Render · Pure Rust)</option>
+                <option value="freerdp">FreeRDP (Direct3D Native Windows Overlay)</option>
+              </select>
+              <span class="field-hint">
+                IronRDP renders inside the tab canvas with WebGL and supports bidirectional file copy. FreeRDP uses native hardware acceleration. Individual connections can override this default.
+              </span>
+            </div>
+
+            <div class="setting-field">
+              <label for="default-rdp-res-select" class="field-label">DEFAULT DISPLAY RESOLUTION</label>
+              <select
+                id="default-rdp-res-select"
+                class="geist-select"
+                bind:value={defaultRdpResolutionMode}
+              >
+                <option value="auto">Auto (Fit Window · Larger UI)</option>
+                <option value="native">Native Monitor (1440p / 4K / High Res)</option>
+                <option value="1080p">1080p (Full HD · 1920×1080)</option>
+                <option value="720p">720p (HD · 1280×720)</option>
+              </select>
+              <span class="field-hint">Default desktop resolution for new RDP sessions.</span>
+            </div>
+
+            <div class="setting-field">
+              <label for="default-rdp-scale-select" class="field-label">DEFAULT DESKTOP SCALING (DPI)</label>
+              <select
+                id="default-rdp-scale-select"
+                class="geist-select"
+                bind:value={defaultRdpScaleFactor}
+              >
+                <option value={0}>Auto (Recommended · System DPI)</option>
+                <option value={100}>100% (Standard 96 DPI)</option>
+                <option value={125}>125%</option>
+                <option value={150}>150% (Recommended for 1440p)</option>
+                <option value={175}>175%</option>
+                <option value={200}>200% (Recommended for 4K)</option>
+              </select>
+              <span class="field-hint">Controls remote Windows desktop scale factor (MS-RDPBCGR DPI negotiation).</span>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-meta">
+                <label for="default-rdp-clipboard-toggle" class="setting-title">Clipboard sharing enabled by default</label>
+                <p class="setting-desc">
+                  Enable bidirectional text and file copy-paste synchronization between local machine and remote RDP desktop.
+                </p>
+              </div>
+              <div class="setting-control">
+                <label class="switch">
+                  <input
+                    id="default-rdp-clipboard-toggle"
+                    type="checkbox"
+                    bind:checked={defaultRdpClipboardSharing}
+                  />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Setting: Default EGFX Pipeline -->
+            <div class="setting-row">
+              <div class="setting-meta">
+                <label for="default-rdp-egfx-toggle" class="setting-title">Enable EGFX graphics pipeline (Experimental)</label>
+                <p class="setting-desc">
+                  Enable Microsoft Remote Desktop Graphics Pipeline (MS-RDPEGFX). Keep disabled (recommended) for maximum stability; activate to test progressive ClearCodec rendering.
+                </p>
+              </div>
+              <div class="setting-control">
+                <label class="switch">
+                  <input
+                    id="default-rdp-egfx-toggle"
+                    type="checkbox"
+                    bind:checked={defaultRdpEgfx}
                   />
                   <span class="slider"></span>
                 </label>

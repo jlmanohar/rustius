@@ -59,7 +59,9 @@ impl Handler for RustiusSshHandler {
         let public_key = public_key_cow.as_ref();
 
         let check_res = if let Some(ref path) = self.known_hosts_path {
-            russh::keys::known_hosts::check_known_hosts_path(&self.host, self.port, public_key, path)
+            russh::keys::known_hosts::check_known_hosts_path(
+                &self.host, self.port, public_key, path,
+            )
         } else {
             russh::keys::known_hosts::check_known_hosts(&self.host, self.port, public_key)
         };
@@ -70,25 +72,39 @@ impl Handler for RustiusSshHandler {
                 Ok(true)
             }
             Ok(false) => {
-                info!("New SSH host detected for {}:{}. Learning key (TOFU policy)...", self.host, self.port);
+                info!(
+                    "New SSH host detected for {}:{}. Learning key (TOFU policy)...",
+                    self.host, self.port
+                );
                 let learn_res = if let Some(ref path) = self.known_hosts_path {
                     if let Some(parent) = path.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
-                    russh::keys::known_hosts::learn_known_hosts_path(&self.host, self.port, public_key, path)
+                    russh::keys::known_hosts::learn_known_hosts_path(
+                        &self.host, self.port, public_key, path,
+                    )
                 } else {
                     russh::keys::known_hosts::learn_known_hosts(&self.host, self.port, public_key)
                 };
 
                 if let Err(e) = learn_res {
-                    warn!("Failed to append {}:{} to known_hosts: {}", self.host, self.port, e);
+                    warn!(
+                        "Failed to append {}:{} to known_hosts: {}",
+                        self.host, self.port, e
+                    );
                 } else {
-                    info!("Successfully recorded host key for {}:{} in known_hosts", self.host, self.port);
+                    info!(
+                        "Successfully recorded host key for {}:{} in known_hosts",
+                        self.host, self.port
+                    );
                 }
                 Ok(true)
             }
             Err(e) => {
-                warn!("CRITICAL: SSH host key verification failed for {}:{}: {}", self.host, self.port, e);
+                warn!(
+                    "CRITICAL: SSH host key verification failed for {}:{}: {}",
+                    self.host, self.port, e
+                );
                 Err(anyhow!("SSH host key verification failed for {}:{}: {}. Possible Man-In-The-Middle (MITM) attack!", self.host, self.port, e))
             }
         }

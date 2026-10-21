@@ -3,10 +3,10 @@
 // This module provides shared authentication logic used by both
 // the SSH client and SFTP client.
 
-use std::sync::Arc;
 use anyhow::{Context, Result};
-use russh::client::{AuthResult, Handler, Handle};
+use russh::client::{AuthResult, Handle, Handler};
 use rustius_core::connection::AuthMethod;
+use std::sync::Arc;
 
 /// Determine the authentication strategy based on the AuthMethod.
 pub fn describe_auth_method(method: &AuthMethod) -> &'static str {
@@ -20,7 +20,9 @@ pub fn describe_auth_method(method: &AuthMethod) -> &'static str {
 /// Authenticate an active russh client handle against the specified `AuthMethod`.
 pub async fn authenticate<H: Handler>(handle: &mut Handle<H>, auth: &AuthMethod) -> Result<()> {
     match auth {
-        AuthMethod::Password { username, password, .. } => {
+        AuthMethod::Password {
+            username, password, ..
+        } => {
             let pass = password.as_deref().unwrap_or("");
             let res = handle.authenticate_password(username, pass).await?;
             if !matches!(res, AuthResult::Success) {
@@ -34,10 +36,10 @@ pub async fn authenticate<H: Handler>(handle: &mut Handle<H>, auth: &AuthMethod)
             ..
         } => {
             let resolved_path = rustius_core::connection::resolve_key_path(key_path, None);
-            let key = russh::keys::load_secret_key(&resolved_path, passphrase.as_deref())
-                .context(format!("Failed to load key from {}", resolved_path.display()))?;
-            let key_with_alg =
-                russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None);
+            let key = russh::keys::load_secret_key(&resolved_path, passphrase.as_deref()).context(
+                format!("Failed to load key from {}", resolved_path.display()),
+            )?;
+            let key_with_alg = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None);
             let res = handle
                 .authenticate_publickey(username, key_with_alg)
                 .await?;
@@ -79,4 +81,3 @@ mod tests {
         assert_eq!(describe_auth_method(&ag), "ssh-agent");
     }
 }
-

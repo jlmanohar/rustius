@@ -1,8 +1,8 @@
-use std::path::Path;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use anyhow::{bail, Context, Result};
 use rand::RngCore;
+use std::path::Path;
 
 use crate::storage::ConfigStorage;
 
@@ -54,7 +54,8 @@ impl EncryptedStorage {
             .encrypt(nonce, plaintext.as_bytes())
             .map_err(|e| anyhow::anyhow!("Encryption failed: {e}"))?;
 
-        let mut payload = Vec::with_capacity(MAGIC_HEADER.len() + SALT_LEN + NONCE_LEN + ciphertext.len());
+        let mut payload =
+            Vec::with_capacity(MAGIC_HEADER.len() + SALT_LEN + NONCE_LEN + ciphertext.len());
         payload.extend_from_slice(MAGIC_HEADER);
         payload.extend_from_slice(&salt);
         payload.extend_from_slice(&nonce_bytes);
@@ -89,12 +90,11 @@ impl EncryptedStorage {
             .map_err(|e| anyhow::anyhow!("Failed to initialize AES-GCM cipher: {e}"))?;
         let nonce = Nonce::from_slice(nonce_bytes);
 
-        let decrypted_bytes = cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|_| anyhow::anyhow!("Decryption failed: incorrect master password or corrupted file"))?;
+        let decrypted_bytes = cipher.decrypt(nonce, ciphertext).map_err(|_| {
+            anyhow::anyhow!("Decryption failed: incorrect master password or corrupted file")
+        })?;
 
-        String::from_utf8(decrypted_bytes)
-            .context("Decrypted content is not valid UTF-8 string")
+        String::from_utf8(decrypted_bytes).context("Decrypted content is not valid UTF-8 string")
     }
 }
 
@@ -120,8 +120,12 @@ impl ConfigStorage for EncryptedStorage {
                 let _ = std::fs::remove_file(path);
             }
         }
-        std::fs::rename(&tmp_path, path)
-            .with_context(|| format!("Failed to atomically rename encrypted file: {}", path.display()))?;
+        std::fs::rename(&tmp_path, path).with_context(|| {
+            format!(
+                "Failed to atomically rename encrypted file: {}",
+                path.display()
+            )
+        })?;
         Ok(())
     }
 
@@ -171,7 +175,9 @@ mod tests {
         let plaintext_toml = "[app_settings]\ntheme = \"light\"\n";
 
         // Raw bytes without magic header
-        let decrypted = storage.decrypt(plaintext_toml.as_bytes()).expect("Fallback failed");
+        let decrypted = storage
+            .decrypt(plaintext_toml.as_bytes())
+            .expect("Fallback failed");
         assert_eq!(decrypted, plaintext_toml);
     }
 }

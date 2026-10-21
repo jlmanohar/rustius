@@ -75,18 +75,25 @@ impl SecretManager {
     /// If no vault exists yet on disk, initializes a fresh encrypted vault.
     pub fn unlock_vault(&self, master_password: &str) -> Result<bool> {
         if self.vault_path.exists() {
-            let bytes = std::fs::read(&self.vault_path)
-                .with_context(|| format!("Failed to read vault file: {}", self.vault_path.display()))?;
+            let bytes = std::fs::read(&self.vault_path).with_context(|| {
+                format!("Failed to read vault file: {}", self.vault_path.display())
+            })?;
             let storage = EncryptedStorage::new(master_password);
             match storage.decrypt(&bytes) {
                 Ok(json) => {
                     let secrets: HashMap<String, String> = serde_json::from_str(&json)
                         .context("Failed to deserialize decrypted vault contents")?;
-                    let mut guard = self.vault_state.write().map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
+                    let mut guard = self
+                        .vault_state
+                        .write()
+                        .map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
                     guard.is_unlocked = true;
                     guard.master_password = Some(master_password.to_string());
                     guard.secrets = secrets;
-                    info!("Successfully unlocked encrypted vault from {:?}", self.vault_path);
+                    info!(
+                        "Successfully unlocked encrypted vault from {:?}",
+                        self.vault_path
+                    );
                     Ok(true)
                 }
                 Err(e) => {
@@ -104,7 +111,10 @@ impl SecretManager {
             }
             std::fs::write(&self.vault_path, bytes)?;
 
-            let mut guard = self.vault_state.write().map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
+            let mut guard = self
+                .vault_state
+                .write()
+                .map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
             guard.is_unlocked = true;
             guard.master_password = Some(master_password.to_string());
             guard.secrets = HashMap::new();
@@ -141,7 +151,10 @@ impl SecretManager {
 
     /// Set or update the master password, re-encrypting all existing secrets on disk.
     pub fn set_master_password(&self, new_password: &str) -> Result<()> {
-        let mut guard = self.vault_state.write().map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
+        let mut guard = self
+            .vault_state
+            .write()
+            .map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
         if self.vault_path.exists() && !guard.is_unlocked {
             bail!("Vault is locked. Unlock vault before changing master password.");
         }
@@ -154,7 +167,10 @@ impl SecretManager {
 
     /// Store a secret string into the encrypted vault for the given key/account.
     pub fn set_vault_secret(&self, key: &str, secret: &str) -> Result<()> {
-        let mut guard = self.vault_state.write().map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
+        let mut guard = self
+            .vault_state
+            .write()
+            .map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
         if !guard.is_unlocked {
             bail!("Vault is locked. Unlock vault before storing credentials.");
         }
@@ -170,7 +186,10 @@ impl SecretManager {
         if entries.is_empty() {
             return Ok(());
         }
-        let mut guard = self.vault_state.write().map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
+        let mut guard = self
+            .vault_state
+            .write()
+            .map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
         if !guard.is_unlocked {
             bail!("Vault is locked. Unlock vault before storing credentials.");
         }
@@ -184,7 +203,10 @@ impl SecretManager {
 
     /// Retrieve a secret string from the encrypted vault for the given key/account.
     pub fn get_vault_secret(&self, key: &str) -> Result<Option<String>> {
-        let guard = self.vault_state.read().map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
+        let guard = self
+            .vault_state
+            .read()
+            .map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
         if !guard.is_unlocked {
             bail!("Vault is locked. Master password required to access credentials.");
         }
@@ -193,7 +215,10 @@ impl SecretManager {
 
     /// Delete a secret from the encrypted vault for the given key/account.
     pub fn delete_vault_secret(&self, key: &str) -> Result<()> {
-        let mut guard = self.vault_state.write().map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
+        let mut guard = self
+            .vault_state
+            .write()
+            .map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
         if !guard.is_unlocked {
             bail!("Vault is locked.");
         }
@@ -206,7 +231,10 @@ impl SecretManager {
 
     /// Return all secrets currently stored in the vault (used during migrations).
     pub fn list_vault_secrets(&self) -> Result<HashMap<String, String>> {
-        let guard = self.vault_state.read().map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
+        let guard = self
+            .vault_state
+            .read()
+            .map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
         if !guard.is_unlocked {
             bail!("Vault is locked. Unlock vault to read credentials.");
         }
@@ -217,11 +245,23 @@ impl SecretManager {
     pub fn set_secret(&self, key: &str, secret: &str) -> Result<()> {
         let entry = keyring::Entry::new(&self.service, key)
             .map_err(|e| anyhow::anyhow!("Failed to create keyring entry for key {key}: {e}"))?;
-        entry
-            .set_password(secret)
-            .map_err(|e| anyhow::anyhow!("Failed to save credential to OS keyring for key {key}: {e}"))?;
-        debug!("Stored secret in OS keyring for key: {}", key);
-        Ok(())
+        let mut last_err = None;
+        for attempt in 0..5 {
+            match entry.set_password(secret) {
+                Ok(()) => {
+                    debug!("Stored secret in OS keyring for key: {}", key);
+                    return Ok(());
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    std::thread::sleep(std::time::Duration::from_millis(15 * (attempt + 1)));
+                }
+            }
+        }
+        Err(anyhow::anyhow!(
+            "Failed to save credential to OS keyring for key {key}: {:?}",
+            last_err
+        ))
     }
 
     /// Retrieve a secret string from the OS keyring for the given key/account.
@@ -229,17 +269,23 @@ impl SecretManager {
     pub fn get_secret(&self, key: &str) -> Result<Option<String>> {
         let entry = keyring::Entry::new(&self.service, key)
             .map_err(|e| anyhow::anyhow!("Failed to access keyring entry for key {key}: {e}"))?;
-        match entry.get_password() {
-            Ok(pass) => Ok(Some(pass)),
-            Err(keyring::Error::NoEntry) => {
-                debug!("No secret found in OS keyring for key: {}", key);
-                Ok(None)
-            }
-            Err(e) => {
-                warn!("Error retrieving secret from OS keyring for key {key}: {e}");
-                Err(anyhow::anyhow!("Keyring lookup failed for key {key}: {e}"))
+        for attempt in 0..5 {
+            match entry.get_password() {
+                Ok(pass) => return Ok(Some(pass)),
+                Err(keyring::Error::NoEntry) => {
+                    debug!("No secret found in OS keyring for key: {}", key);
+                    return Ok(None);
+                }
+                Err(e) => {
+                    if attempt == 4 {
+                        warn!("Error retrieving secret from OS keyring for key {key}: {e}");
+                        return Err(anyhow::anyhow!("Keyring lookup failed for key {key}: {e}"));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(15 * (attempt + 1)));
+                }
             }
         }
+        Ok(None)
     }
 
     /// Delete a secret from the OS keyring for the given key/account.
@@ -257,7 +303,9 @@ impl SecretManager {
             }
             Err(e) => {
                 warn!("Failed to delete secret from OS keyring for key {key}: {e}");
-                Err(anyhow::anyhow!("Failed to delete keyring credential for key {key}: {e}"))
+                Err(anyhow::anyhow!(
+                    "Failed to delete keyring credential for key {key}: {e}"
+                ))
             }
         }
     }
@@ -269,9 +317,9 @@ impl SecretManager {
             SecretRef::Vault { key } => self.get_vault_secret(key),
             SecretRef::Plaintext { value } => Ok(Some(value.clone())),
             SecretRef::AskOnConnect => Ok(None),
-            SecretRef::External { provider, id } => {
-                Err(anyhow::anyhow!("External vault provider '{provider}' (ID: {id}) resolution not yet configured"))
-            }
+            SecretRef::External { provider, id } => Err(anyhow::anyhow!(
+                "External vault provider '{provider}' (ID: {id}) resolution not yet configured"
+            )),
         }
     }
 }
@@ -305,7 +353,8 @@ mod tests {
 
     #[test]
     fn test_vault_roundtrip() {
-        let temp_dir = std::env::temp_dir().join(format!("rustius-vault-test-{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("rustius-vault-test-{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let vault_file = temp_dir.join("vault.enc");
 
@@ -321,10 +370,15 @@ mod tests {
 
         // Store and retrieve secret
         manager.set_vault_secret("conn:1", "pass123").unwrap();
-        assert_eq!(manager.get_vault_secret("conn:1").unwrap().as_deref(), Some("pass123"));
+        assert_eq!(
+            manager.get_vault_secret("conn:1").unwrap().as_deref(),
+            Some("pass123")
+        );
 
         // Resolve via SecretRef::Vault
-        let sref = SecretRef::Vault { key: "conn:1".into() };
+        let sref = SecretRef::Vault {
+            key: "conn:1".into(),
+        };
         assert_eq!(manager.resolve(&sref).unwrap().as_deref(), Some("pass123"));
 
         // Lock vault
@@ -339,13 +393,22 @@ mod tests {
         // Unlock with right password
         assert!(manager.unlock_vault(master).unwrap());
         assert!(manager.is_vault_unlocked());
-        assert_eq!(manager.get_vault_secret("conn:1").unwrap().as_deref(), Some("pass123"));
+        assert_eq!(
+            manager.get_vault_secret("conn:1").unwrap().as_deref(),
+            Some("pass123")
+        );
 
         // Test batch insertion
         let batch = [("conn:2", "pass2"), ("conn:3", "pass3")];
         manager.set_vault_secrets_batch(&batch).unwrap();
-        assert_eq!(manager.get_vault_secret("conn:2").unwrap().as_deref(), Some("pass2"));
-        assert_eq!(manager.get_vault_secret("conn:3").unwrap().as_deref(), Some("pass3"));
+        assert_eq!(
+            manager.get_vault_secret("conn:2").unwrap().as_deref(),
+            Some("pass2")
+        );
+        assert_eq!(
+            manager.get_vault_secret("conn:3").unwrap().as_deref(),
+            Some("pass3")
+        );
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -358,20 +421,30 @@ mod tests {
         let test_val = "super-secret-password-123!";
 
         // Store
-        manager.set_secret(&test_key, test_val).expect("Failed to store secret");
+        manager
+            .set_secret(&test_key, test_val)
+            .expect("Failed to store secret");
 
         // Retrieve
         let retrieved = manager.get_secret(&test_key).expect("Failed to get secret");
         assert_eq!(retrieved.as_deref(), Some(test_val));
 
         // Resolve via SecretRef
-        let secret_ref = SecretRef::Keyring { key: test_key.clone() };
-        let resolved = manager.resolve(&secret_ref).expect("Failed to resolve secret");
+        let secret_ref = SecretRef::Keyring {
+            key: test_key.clone(),
+        };
+        let resolved = manager
+            .resolve(&secret_ref)
+            .expect("Failed to resolve secret");
         assert_eq!(resolved.as_deref(), Some(test_val));
 
         // Cleanup
-        manager.delete_secret(&test_key).expect("Failed to delete secret");
-        let after_delete = manager.get_secret(&test_key).expect("Failed to check after delete");
+        manager
+            .delete_secret(&test_key)
+            .expect("Failed to delete secret");
+        let after_delete = manager
+            .get_secret(&test_key)
+            .expect("Failed to check after delete");
         assert_eq!(after_delete, None);
     }
 }
