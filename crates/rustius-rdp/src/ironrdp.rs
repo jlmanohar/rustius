@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use base64::Engine;
 pub use ironrdp::input::MouseButton;
 use ironrdp::input::{Database, MousePosition, Operation, Scancode, WheelRotations};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ironrdp_client::config::{ClipboardType, ConfigBuilder, Destination};
@@ -9,7 +10,6 @@ use ironrdp_client::output_channel::output_channel;
 use ironrdp_client::rdp::{RdpClient, RdpInputEvent, RdpInputSender, RdpOutputEvent};
 use ironrdp_cliprdr::backend::{ClipboardMessage, ClipboardMessageProxy};
 use ironrdp_pdu::rdp::capability_sets::MajorPlatformType;
-use ironrdp_tls::CertificateValidation;
 
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
@@ -30,36 +30,113 @@ pub struct IronRdpConfig {
     pub scale_factor: Option<u32>,
     pub egfx: Option<bool>,
     pub clipboard_sharing: Option<bool>,
+    #[serde(default)]
+    pub known_hosts_path: Option<PathBuf>,
 }
 
-/// A single dirty rectangle tile within a frame update.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct IronRdpTile {
-    pub x: u16,
-    pub y: u16,
-    pub width: u16,
-    pub height: u16,
-    pub data: String, // Base64 encoded RGBA pixel bytes
-}
+/// Verifies peer TLS certificate fingerprint against rdp_known_hosts store (TOFU policy).
+fn verify_or_learn_rdp_certificate(
+    der: &[u8],
+    endpoint: &str,
+    error: &str,
+    known_hosts_path: Option<&Path>,
+) -> bool {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(der);
+    let digest = hasher.finalize();
+    let fingerprint: String = digest
+        .iter()
+        .map(|b| format!("{:02X}", b))
+        .collect::<Vec<_>>()
+        .join(":");
 
-/// A batch of dirty tiles emitted atomically for a single screen update.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct IronRdpFrameBatch {
-    pub desktop_width: u16,
-    pub desktop_height: u16,
-    pub tiles: Vec<IronRdpTile>,
-}
+    info!(
+        endpoint,
+        tls_error = error,
+        fingerprint = %fingerprint,
+        "Validating peer TLS certificate for RDP connection"
+    );
 
-/// Dirty rectangle or full image frame sent to the frontend.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct IronRdpFrame {
-    pub x: u16,
-    pub y: u16,
-    pub width: u16,
-    pub height: u16,
-    pub desktop_width: u16,
-    pub desktop_height: u16,
-    pub data: String, // Base64 encoded RGBA pixel bytes
+    let path = match known_hosts_path {
+        Some(p) => p.to_path_buf(),
+        None => {
+            let base = if let Ok(appdata) = std::env::var("APPDATA") {
+                PathBuf::from(appdata).join("rustius")
+            } else if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+                PathBuf::from(home).join(".config").join("rustius")
+            } else {
+                PathBuf::from("rustius-data")
+            };
+            base.join("rdp_known_hosts")
+        }
+    };
+
+    let mut entries = Vec::new();
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                let mut parts = line.split_whitespace();
+                if let (Some(stored_host), Some(stored_fp)) = (parts.next(), parts.next()) {
+                    if stored_host.eq_ignore_ascii_case(endpoint) {
+                        if stored_fp.eq_ignore_ascii_case(&fingerprint) {
+                            info!(
+                                endpoint,
+                                "RDP certificate fingerprint verified successfully against known_hosts"
+                            );
+                            return true;
+                        } else {
+                            error!(
+                                endpoint,
+                                expected = stored_fp,
+                                actual = %fingerprint,
+                                "RDP certificate fingerprint MISMATCH! Potential Man-in-the-Middle attack detected."
+                            );
+                            return false;
+                        }
+                    }
+                    entries.push((stored_host.to_string(), stored_fp.to_string()));
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // First time connection to any host
+        }
+        Err(e) => {
+            error!(
+                endpoint,
+                path = %path.display(),
+                error = %e,
+                "Failed to read rdp_known_hosts; failing closed for security"
+            );
+            return false;
+        }
+    }
+
+    info!(
+        endpoint,
+        fingerprint = %fingerprint,
+        "New RDP host detected; recording certificate fingerprint (TOFU policy)"
+    );
+
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    use std::io::Write;
+    entries.push((endpoint.to_string(), fingerprint.clone()));
+    if let Ok(mut file) = std::fs::File::create(&path) {
+        for (h, fp) in entries {
+            let _ = writeln!(file, "{} {}", h, fp);
+        }
+    } else {
+        warn!(path = %path.display(), "Failed to write rdp_known_hosts entry");
+    }
+
+    true
 }
 
 /// Efficient binary frame batch builder that packs desktop updates into a single byte buffer.
@@ -68,6 +145,7 @@ pub struct IronRdpFrame {
 /// - Offset 0..2: desktop_width (u16 LE)
 /// - Offset 2..4: desktop_height (u16 LE)
 /// - Offset 4..6: tile_count (u16 LE)
+///
 /// For each tile:
 ///   - 0..2: x (u16 LE)
 ///   - 2..4: y (u16 LE)
@@ -100,7 +178,8 @@ impl BinaryFrameBatchBuilder {
     pub fn add_tile(&mut self, x: u16, y: u16, width: u16, height: u16, u32_buffer: &[u32]) {
         self.tile_count += 1;
         let pixel_count = (width as usize) * (height as usize);
-        let byte_len = (pixel_count * 4) as u32;
+        let valid_len = pixel_count.min(u32_buffer.len());
+        let byte_len = (valid_len * 4) as u32;
 
         self.buffer.extend_from_slice(&x.to_le_bytes());
         self.buffer.extend_from_slice(&y.to_le_bytes());
@@ -108,13 +187,13 @@ impl BinaryFrameBatchBuilder {
         self.buffer.extend_from_slice(&height.to_le_bytes());
         self.buffer.extend_from_slice(&byte_len.to_le_bytes());
 
-        self.buffer.reserve(pixel_count * 4);
-        for &pixel in u32_buffer.iter().take(pixel_count) {
-            let r = ((pixel >> 16) & 0xFF) as u8;
-            let g = ((pixel >> 8) & 0xFF) as u8;
-            let b = (pixel & 0xFF) as u8;
-            self.buffer.extend_from_slice(&[r, g, b, 255]);
-        }
+        // Zero-copy: 0x00RRGGBB in LE memory is [B, G, R, 0].
+        // Copy raw bytes directly and let GPU fragment shader perform 0-overhead swizzling.
+        let safe_slice = &u32_buffer[..valid_len];
+        let raw_bytes = unsafe {
+            std::slice::from_raw_parts(safe_slice.as_ptr() as *const u8, valid_len * 4)
+        };
+        self.buffer.extend_from_slice(raw_bytes);
     }
 
     pub fn finish(mut self) -> Vec<u8> {
@@ -143,7 +222,6 @@ pub struct IronRdpPointerBitmap {
 #[derive(Clone, Debug)]
 pub enum IronRdpEvent {
     Connected,
-    FrameBatch(IronRdpFrameBatch),
     BinaryFrameBatch(Vec<u8>),
     PointerDefault,
     PointerHidden,
@@ -204,6 +282,11 @@ impl IronRdpSession {
             ClipboardType::Disable
         };
 
+        let known_hosts_path = config.known_hosts_path.clone();
+        let cert_callback = Arc::new(move |der: &[u8], endpoint: &str, error: &str| -> bool {
+            verify_or_learn_rdp_certificate(der, endpoint, error, known_hosts_path.as_deref())
+        });
+
         let mut builder = ConfigBuilder::new()
             .with_destination(dest)
             .with_username(config.username.clone())
@@ -217,7 +300,7 @@ impl IronRdpSession {
             .with_desktop_scale_factor(config.scale_factor.unwrap_or(100))
             .with_tls(true)
             .with_credssp(true)
-            .with_certificate_validation(CertificateValidation::DangerouslyAcceptInvalidCertificate)
+            .with_certificate_validation_callback(cert_callback)
             .with_pointer_software_rendering(false)
             .with_graphics_pipeline(egfx_enabled)
             .with_clipboard(clipboard_type);
@@ -269,7 +352,9 @@ impl IronRdpSession {
             .build()
             .context("Failed to build IronRDP configuration")?;
 
-        let (output_tx, mut output_rx) = output_channel(256);
+        // Capacity bounded to 16 pending frames to prevent multi-gigabyte memory bloat
+        // and allow natural RDP server backpressure.
+        let (output_tx, mut output_rx) = output_channel(16);
         let mut client = RdpClient::new(client_config, output_tx).with_desktop_updates();
         let input_sender = client.input_sender();
 
@@ -499,11 +584,9 @@ impl IronRdpSession {
                         let rh = (region.bottom.saturating_sub(region.top) + 1).max(1);
                         builder.add_tile(left, top, rw, rh, &buffer);
 
-                        // Coalesce additional tiles arriving in the same burst (within 4ms)
-                        // up to a maximum batch size of 64 tiles.
-                        let batch_timeout = std::time::Duration::from_millis(4);
+                        // Coalesce any additional tiles already queued in the channel without adding artificial latency.
                         while builder.tile_count < 64 {
-                            match tokio::time::timeout(batch_timeout, output_rx.recv()).await {
+                            match tokio::time::timeout(std::time::Duration::ZERO, output_rx.recv()).await {
                                 Ok(Some(RdpOutputEvent::DesktopUpdate(next_update))) => {
                                     let (next_buffer, next_fw, next_fh, next_region) =
                                         next_update.into_parts();
@@ -574,7 +657,8 @@ impl IronRdpSession {
                                     break 'outer;
                                 }
                                 Err(_) => {
-                                    // 4ms batching window completed; flush gathered tiles
+                                    // Duration::ZERO elapsed: channel has no more pending tiles.
+                                    // Flush gathered tiles immediately with 0 ms wait!
                                     break;
                                 }
                             }
@@ -608,14 +692,18 @@ impl IronRdpSession {
         self.apply_and_send_operations([op]);
     }
 
-    /// Forward mouse button down / up
-    pub fn mouse_button(&self, button: MouseButton, pressed: bool) {
-        let op = if pressed {
+    /// Forward mouse button down / up with optional atomic coordinate update
+    pub fn mouse_button(&self, button: MouseButton, pressed: bool, coords: Option<(u16, u16)>) {
+        let mut ops = Vec::with_capacity(2);
+        if let Some((x, y)) = coords {
+            ops.push(Operation::MouseMove(MousePosition { x, y }));
+        }
+        ops.push(if pressed {
             Operation::MouseButtonPressed(button)
         } else {
             Operation::MouseButtonReleased(button)
-        };
-        self.apply_and_send_operations([op]);
+        });
+        self.apply_and_send_operations(ops);
     }
 
     /// Forward mouse wheel delta
@@ -625,6 +713,18 @@ impl IronRdpSession {
             rotation_units,
         });
         self.apply_and_send_operations([op]);
+    }
+
+    /// Release all currently held keys and mouse buttons (e.g. on window blur or focus loss)
+    pub fn release_all(&self) {
+        let Ok(permit) = self.input_sender.try_reserve() else {
+            return;
+        };
+        let mut db = self.input_database.lock();
+        let events = db.release_all();
+        if !events.is_empty() {
+            permit.send(RdpInputEvent::FastPath(events));
+        }
     }
 
     /// Forward keyboard key based on web KeyboardEvent.code
@@ -642,14 +742,17 @@ impl IronRdpSession {
     }
 
     /// Dynamically resize the desktop
-    pub fn resize(&self, width: u16, height: u16, scale_factor: u32) {
+    pub fn resize(&self, width: u16, height: u16, scale_factor: u32) -> Result<(), String> {
+        self.input_sender
+            .try_send(RdpInputEvent::Resize {
+                width,
+                height,
+                scale_factor,
+                physical_size: None,
+            })
+            .map_err(|e| format!("Failed to send resize event: {}", e))?;
         *self.desktop_size.write() = (width, height);
-        let _ = self.input_sender.try_send(RdpInputEvent::Resize {
-            width,
-            height,
-            scale_factor,
-            physical_size: None,
-        });
+        Ok(())
     }
 
     /// Request session shutdown
@@ -699,16 +802,9 @@ fn handle_non_desktop_event(event: RdpOutputEvent, on_event: &impl Fn(IronRdpEve
             on_event(IronRdpEvent::Connected);
             false
         }
-        RdpOutputEvent::Image {
-            buffer,
-            width,
-            height,
-        } => {
-            let w = width.get();
-            let h = height.get();
-            let mut builder = BinaryFrameBatchBuilder::new(w, h);
-            builder.add_tile(0, 0, w, h, &buffer);
-            on_event(IronRdpEvent::BinaryFrameBatch(builder.finish()));
+        RdpOutputEvent::Image { .. } => {
+            // Note: RdpOutputEvent::Image is only emitted by upstream vmconnect redirection, which is unused
+            debug!("Ignored unexpected Image output event");
             false
         }
         RdpOutputEvent::ConnectionFailure(error) => {
@@ -806,35 +902,7 @@ fn handle_non_desktop_event(event: RdpOutputEvent, on_event: &impl Fn(IronRdpEve
     }
 }
 
-/// Convert packed 0x00RRGGBB pixels to RGBA and encode to Base64 tile
-#[allow(dead_code)]
-fn encode_u32_buffer_to_tile(
-    x: u16,
-    y: u16,
-    width: u16,
-    height: u16,
-    buffer: &[u32],
-) -> IronRdpTile {
-    let pixel_count = (width as usize) * (height as usize);
-    let mut rgba = Vec::with_capacity(pixel_count * 4);
 
-    for &pixel in buffer.iter().take(pixel_count) {
-        let r = ((pixel >> 16) & 0xFF) as u8;
-        let g = ((pixel >> 8) & 0xFF) as u8;
-        let b = (pixel & 0xFF) as u8;
-        rgba.extend_from_slice(&[r, g, b, 255]);
-    }
-
-    let data = base64::engine::general_purpose::STANDARD.encode(&rgba);
-
-    IronRdpTile {
-        x,
-        y,
-        width,
-        height,
-        data,
-    }
-}
 
 /// Convert DOM / Web `KeyboardEvent.code` to PC/AT set-1 `Scancode`
 fn map_web_code_to_scancode(code: &str) -> Option<Scancode> {
@@ -924,6 +992,13 @@ fn map_web_code_to_scancode(code: &str) -> Option<Scancode> {
         "NumpadDecimal" => (false, 0x53),
         "F11" => (false, 0x57),
         "F12" => (false, 0x58),
+        "PrintScreen" => (true, 0x37),
+        "Pause" => (false, 0x45),
+        "NumpadEqual" => (false, 0x59),
+        "NumpadComma" => (false, 0x7E),
+        "IntlBackslash" => (false, 0x56),
+        "IntlRo" => (false, 0x73),
+        "IntlYen" => (false, 0x7D),
         // Extended keys (E0 prefix)
         "NumpadEnter" => (true, 0x1C),
         "ControlRight" => (true, 0x1D),
@@ -972,68 +1047,73 @@ mod tests {
         assert!(map_web_code_to_scancode("ArrowDown").is_some());
         assert!(map_web_code_to_scancode("MetaLeft").is_some());
 
+        // Finding #17 extended scancodes
+        assert!(map_web_code_to_scancode("PrintScreen").is_some());
+        assert!(map_web_code_to_scancode("Pause").is_some());
+        assert!(map_web_code_to_scancode("NumpadEqual").is_some());
+        assert!(map_web_code_to_scancode("NumpadComma").is_some());
+        assert!(map_web_code_to_scancode("IntlBackslash").is_some());
+        assert!(map_web_code_to_scancode("IntlRo").is_some());
+        assert!(map_web_code_to_scancode("IntlYen").is_some());
+
         // Unknown key returns None
         assert!(map_web_code_to_scancode("NonExistentKey123").is_none());
     }
 
     #[test]
-    fn test_ironrdp_frame_serialization() {
-        let frame = IronRdpFrame {
-            x: 10,
-            y: 20,
-            width: 100,
-            height: 50,
-            desktop_width: 1920,
-            desktop_height: 1080,
-            data: "AQIDBA==".to_string(),
-        };
+    fn test_binary_frame_batch_safe_bounds() {
+        let mut builder = BinaryFrameBatchBuilder::new(1920, 1080);
+        // Request tile size 10x10 = 100 pixels, but buffer only has 2 pixels
+        let short_buffer = vec![0x00FF0000, 0x0000FF00];
+        builder.add_tile(0, 0, 10, 10, &short_buffer);
+        let bytes = builder.finish();
 
-        let json = serde_json::to_string(&frame).expect("Failed to serialize frame");
-        let decoded: IronRdpFrame =
-            serde_json::from_str(&json).expect("Failed to deserialize frame");
-
-        assert_eq!(decoded.x, 10);
-        assert_eq!(decoded.y, 20);
-        assert_eq!(decoded.width, 100);
-        assert_eq!(decoded.height, 50);
-        assert_eq!(decoded.desktop_width, 1920);
-        assert_eq!(decoded.desktop_height, 1080);
-        assert_eq!(decoded.data, "AQIDBA==");
+        // Must clamp to short_buffer.len() (2 pixels = 8 bytes) rather than reading out of bounds
+        let len = u32::from_le_bytes([bytes[14], bytes[15], bytes[16], bytes[17]]);
+        assert_eq!(len, 8);
+        assert_eq!(bytes.len(), 6 + 12 + 8);
     }
 
     #[test]
-    fn test_ironrdp_frame_batch_serialization() {
-        let batch = IronRdpFrameBatch {
-            desktop_width: 1920,
-            desktop_height: 1080,
-            tiles: vec![
-                IronRdpTile {
-                    x: 0,
-                    y: 0,
-                    width: 64,
-                    height: 64,
-                    data: "AQIDBA==".to_string(),
-                },
-                IronRdpTile {
-                    x: 64,
-                    y: 0,
-                    width: 64,
-                    height: 64,
-                    data: "BQYHCA==".to_string(),
-                },
-            ],
-        };
+    fn test_tofu_whitespace_and_fail_closed() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("rustius_test_tofu_{}", nanos));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rdp_known_hosts");
 
-        let json = serde_json::to_string(&batch).expect("Failed to serialize frame batch");
-        let decoded: IronRdpFrameBatch =
-            serde_json::from_str(&json).expect("Failed to deserialize frame batch");
+        let cert = b"test_certificate_der_bytes";
+        let endpoint = "rdp.example.com:3389";
 
-        assert_eq!(decoded.desktop_width, 1920);
-        assert_eq!(decoded.desktop_height, 1080);
-        assert_eq!(decoded.tiles.len(), 2);
-        assert_eq!(decoded.tiles[0].x, 0);
-        assert_eq!(decoded.tiles[1].x, 64);
-        assert_eq!(decoded.tiles[1].data, "BQYHCA==");
+        // 1. Initial connect: learns certificate (TOFU)
+        let ok1 = verify_or_learn_rdp_certificate(cert, endpoint, "None", Some(&path));
+        assert!(ok1, "First-time connection should succeed under TOFU policy");
+
+        // 2. Second connect: verifies against known_hosts
+        let ok2 = verify_or_learn_rdp_certificate(cert, endpoint, "None", Some(&path));
+        assert!(ok2, "Second connection with identical certificate must succeed");
+
+        // 3. Different cert for same host: rejected (MITM detection)
+        let fake_cert = b"attacker_mitm_cert_der_bytes";
+        let ok3 = verify_or_learn_rdp_certificate(fake_cert, endpoint, "None", Some(&path));
+        assert!(!ok3, "Different certificate for known host must be rejected");
+
+        // 4. Test whitespace robustness: edit file to contain multiple spaces and tabs
+        let content = std::fs::read_to_string(&path).unwrap();
+        let mangled = content.replace(' ', "   \t  ");
+        std::fs::write(&path, mangled).unwrap();
+        let ok4 = verify_or_learn_rdp_certificate(cert, endpoint, "None", Some(&path));
+        assert!(ok4, "Parsing must handle multiple spaces and tabs gracefully");
+
+        // 5. Fail-closed test: if path is a directory, read fails with IsADirectory / PermissionDenied
+        let dir_path = dir.join("sub_dir_store");
+        std::fs::create_dir_all(&dir_path).unwrap();
+        let ok5 = verify_or_learn_rdp_certificate(cert, endpoint, "None", Some(&dir_path));
+        assert!(!ok5, "Read errors other than NotFound must fail closed");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1061,8 +1141,10 @@ mod tests {
         assert_eq!(w, 2);
         assert_eq!(h, 1);
         assert_eq!(len, 8);
-        assert_eq!(&bytes[18..22], &[255, 0, 0, 255]);
-        assert_eq!(&bytes[22..26], &[0, 255, 0, 255]);
+        // Zero-copy: 0x00FF0000 in little-endian RAM is [0, 0, 255, 0] (B, G, R, 0)
+        assert_eq!(&bytes[18..22], &[0, 0, 255, 0]);
+        // Zero-copy: 0x0000FF00 in little-endian RAM is [0, 255, 0, 0] (B, G, R, 0)
+        assert_eq!(&bytes[22..26], &[0, 255, 0, 0]);
     }
 
     #[test]

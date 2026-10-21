@@ -333,6 +333,7 @@ pub async fn ironrdp_connect(
         scale_factor: scale,
         egfx,
         clipboard_sharing,
+        known_hosts_path: Some(state.rdp_known_hosts_path()),
     };
 
     let app_clone = app_handle.clone();
@@ -345,9 +346,6 @@ pub async fn ironrdp_connect(
         }
         IronRdpEvent::BinaryFrameBatch(bytes) => {
             let _ = on_frame_clone.send(tauri::ipc::Response::new(bytes));
-        }
-        IronRdpEvent::FrameBatch(batch) => {
-            let _ = app_clone.emit(&format!("rdp-frame-batch-{}", tab_id_clone), batch);
         }
         IronRdpEvent::PointerDefault => {
             let _ = app_clone.emit(&format!("rdp-pointer-default-{}", tab_id_clone), ());
@@ -405,6 +403,8 @@ pub async fn ironrdp_mouse_button(
     tab_id: String,
     button: u8,
     pressed: bool,
+    x: Option<u16>,
+    y: Option<u16>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let mouse_btn = match button {
@@ -421,7 +421,27 @@ pub async fn ironrdp_mouse_button(
         map.get(&tab_id).cloned()
     };
     if let Some(s) = sess {
-        s.mouse_button(mouse_btn, pressed);
+        let coords = match (x, y) {
+            (Some(x), Some(y)) => Some((x, y)),
+            _ => None,
+        };
+        s.mouse_button(mouse_btn, pressed, coords);
+    }
+    Ok(())
+}
+
+/// Release all held keys and mouse buttons (e.g. on window blur or visibility loss).
+#[tauri::command]
+pub async fn ironrdp_release_all(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let sess = {
+        let map = state.ironrdp_sessions.read().await;
+        map.get(&tab_id).cloned()
+    };
+    if let Some(s) = sess {
+        s.release_all();
     }
     Ok(())
 }
@@ -476,9 +496,11 @@ pub async fn ironrdp_resize(
         map.get(&tab_id).cloned()
     };
     if let Some(s) = sess {
-        s.resize(width, height, scale_factor.unwrap_or(100));
+        s.resize(width, height, scale_factor.unwrap_or(100))?;
+        Ok(())
+    } else {
+        Err(format!("No active IronRDP session found for tab {}", tab_id))
     }
-    Ok(())
 }
 
 /// Terminate the active IronRDP session for the specified tab.

@@ -152,6 +152,11 @@ impl AppState {
             None
         }
     }
+
+    /// Returns the path to the RDP known hosts store for TLS certificate pinning (TOFU).
+    pub fn rdp_known_hosts_path(&self) -> PathBuf {
+        self.data_dir.join("rdp_known_hosts")
+    }
 }
 
 #[cfg(test)]

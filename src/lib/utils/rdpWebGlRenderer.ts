@@ -12,6 +12,7 @@ export class RdpWebGlRenderer {
   private vao: WebGLVertexArrayObject | null = null;
   private vbo: WebGLBuffer | null = null;
   private texture: WebGLTexture | null = null;
+  private textureUniformLocation: WebGLUniformLocation | null = null;
 
   private textureWidth = 0;
   private textureHeight = 0;
@@ -32,8 +33,9 @@ export class RdpWebGlRenderer {
       depth: false,
       stencil: false,
       antialias: false,
-      preserveDrawingBuffer: true,
+      preserveDrawingBuffer: false,
       powerPreference: 'high-performance',
+      desynchronized: true,
     });
 
     if (!gl) {
@@ -62,14 +64,14 @@ export class RdpWebGlRenderer {
       }
     `;
 
-    // Fragment shader: texture lookup
+    // Fragment shader: texture lookup with GPU-accelerated BGR to RGB swizzle
     const fsSource = `#version 300 es
       precision highp float;
       uniform sampler2D u_desktopTexture;
       in vec2 v_texCoord;
       out vec4 fragColor;
       void main() {
-        fragColor = texture(u_desktopTexture, v_texCoord);
+        fragColor = vec4(texture(u_desktopTexture, v_texCoord).bgr, 1.0);
       }
     `;
 
@@ -93,6 +95,7 @@ export class RdpWebGlRenderer {
     gl.deleteShader(vs);
     gl.deleteShader(fs);
     this.program = program;
+    this.textureUniformLocation = gl.getUniformLocation(program, 'u_desktopTexture');
 
     // Full screen triangle strip quad
     // Quad vertices: position [x, y], texCoord [u, v]
@@ -188,6 +191,18 @@ export class RdpWebGlRenderer {
         gl.UNSIGNED_BYTE,
         null
       );
+
+      // Clear newly allocated texture to black to prevent flashing uninitialized GPU memory
+      const fbo = gl.createFramebuffer();
+      if (fbo) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.texture, 0);
+        gl.viewport(0, 0, desktopWidth, desktopHeight);
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.deleteFramebuffer(fbo);
+      }
     }
   }
 
@@ -232,8 +247,9 @@ export class RdpWebGlRenderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
 
-    const texUniform = gl.getUniformLocation(this.program, 'u_desktopTexture');
-    gl.uniform1i(texUniform, 0);
+    if (this.textureUniformLocation !== null) {
+      gl.uniform1i(this.textureUniformLocation, 0);
+    }
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
@@ -249,6 +265,8 @@ export class RdpWebGlRenderer {
   private handleContextRestored(): void {
     console.info('WebGL2 context restored; recreating pipeline');
     this.isContextLost = false;
+    this.textureWidth = 0;
+    this.textureHeight = 0;
     this.setupPipeline();
   }
 
@@ -272,6 +290,7 @@ export class RdpWebGlRenderer {
     }
 
     this.program = null;
+    this.textureUniformLocation = null;
     this.vao = null;
     this.vbo = null;
     this.texture = null;

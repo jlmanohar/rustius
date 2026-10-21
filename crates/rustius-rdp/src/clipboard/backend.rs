@@ -289,23 +289,36 @@ impl CliprdrBackend for RustiusCliprdrBackend {
                 ChunkedFetchProgress::Complete => {
                     let data = fetch.into_data();
                     if let Some(file_info) = self.current_remote_file.take() {
-                        let dest_path = self.remote_staging_dir.join(&file_info.name);
-                        let _ = std::fs::create_dir_all(&self.remote_staging_dir);
-                        match std::fs::write(&dest_path, &data) {
-                            Ok(_) => {
-                                info!(
-                                    ?dest_path,
-                                    "Remote file downloaded to local staging directory"
-                                );
-                                self.downloaded_paths.push(dest_path);
+                        let raw_name = &file_info.name;
+                        let safe_name = std::path::Path::new(raw_name)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .filter(|n| !n.is_empty() && *n != "." && *n != ".." && !raw_name.contains(':'));
+
+                        if let Some(safe_name) = safe_name {
+                            let dest_path = self.remote_staging_dir.join(safe_name);
+                            let _ = std::fs::create_dir_all(&self.remote_staging_dir);
+                            match std::fs::write(&dest_path, &data) {
+                                Ok(_) => {
+                                    info!(
+                                        ?dest_path,
+                                        "Remote file downloaded to local staging directory"
+                                    );
+                                    self.downloaded_paths.push(dest_path);
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        ?e,
+                                        ?dest_path,
+                                        "Failed to write downloaded remote file to staging directory"
+                                    );
+                                }
                             }
-                            Err(e) => {
-                                warn!(
-                                    ?e,
-                                    ?dest_path,
-                                    "Failed to write downloaded remote file to staging directory"
-                                );
-                            }
+                        } else {
+                            warn!(
+                                ?raw_name,
+                                "Rejected untrusted or invalid clipboard file name from remote desktop"
+                            );
                         }
                     }
                     self.fetch_next_remote_file();

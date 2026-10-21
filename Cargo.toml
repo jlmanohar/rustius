@@ -63,6 +63,7 @@ cbc = "0.1"
 cfb-mode = "0.8"
 md-5 = "0.10"
 sha1 = "0.10"
+sha2 = "0.10"
 hmac = "0.12"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 
@@ -79,6 +80,10 @@ opt-level = 0            # No optimizations on workspace crates for instant comp
 debug = 1                # Line tables only (slashes MSVC link time and PDB size)
 incremental = true       # Incremental compilation caching
 codegen-units = 256      # Maximum parallelism across all available CPU threads
+
+# Optimize rustius-rdp in dev mode to ensure smooth 60fps frame decode
+[profile.dev.package.rustius-rdp]
+opt-level = 2
 
 # Optimize external dependencies (crypto, ssh, tokio) even in dev mode so
 # cryptographic handshakes and SSH connections run at full speed without

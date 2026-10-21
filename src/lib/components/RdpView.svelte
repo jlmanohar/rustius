@@ -5,7 +5,7 @@
   import { appState } from '../stores/appState.svelte';
   import { DisposableStore } from '../utils/disposable';
   import { RdpWebGlRenderer } from '../utils/rdpWebGlRenderer';
-  import type { TabSession, RdpExitDiagnostic, IronRdpFrameBatch, IronRdpTile, IronRdpPointerBitmap } from '../types';
+  import type { TabSession, RdpExitDiagnostic, IronRdpPointerBitmap } from '../types';
   import {
     Monitor,
     Maximize2,
@@ -48,6 +48,7 @@
   let pendingMouseMove: { x: number; y: number } | null = null;
   let mouseMoveRafId: number | null = null;
   let cursorCanvas: HTMLCanvasElement | null = null;
+  const cursorCache = new Map<string, string>();
 
   function updateCursorBitmap(bitmap: IronRdpPointerBitmap) {
     if (!canvasRef) return;
@@ -57,13 +58,32 @@
     }
 
     try {
+      const rect = canvasRef.getBoundingClientRect();
+      const scaleX = (rect.width > 0 && canvasRef.width > 0) ? rect.width / canvasRef.width : 1;
+      const scaleY = (rect.height > 0 && canvasRef.height > 0) ? rect.height / canvasRef.height : 1;
+      const scale = (scaleX + scaleY) / 2;
+
+      // Scale cursor if the canvas display is significantly scaled
+      const isScaled = Math.abs(scale - 1) > 0.05 && scale > 0.1 && scale < 5;
+      const targetW = isScaled ? Math.max(1, Math.round(bitmap.width * scale)) : bitmap.width;
+      const targetH = isScaled ? Math.max(1, Math.round(bitmap.height * scale)) : bitmap.height;
+      const hx = isScaled
+        ? Math.min(Math.max(0, Math.round(bitmap.hotspot_x * scale)), targetW - 1)
+        : Math.min(Math.max(0, bitmap.hotspot_x), bitmap.width - 1);
+      const hy = isScaled
+        ? Math.min(Math.max(0, Math.round(bitmap.hotspot_y * scale)), targetH - 1)
+        : Math.min(Math.max(0, bitmap.hotspot_y), bitmap.height - 1);
+
+      const cacheKey = `${targetW}x${targetH}:${hx},${hy}:${bitmap.data.slice(0, 32)}:${bitmap.data.length}`;
+      const cached = cursorCache.get(cacheKey);
+      if (cached) {
+        canvasRef.style.cursor = cached;
+        return;
+      }
+
       if (!cursorCanvas) {
         cursorCanvas = document.createElement('canvas');
       }
-      cursorCanvas.width = bitmap.width;
-      cursorCanvas.height = bitmap.height;
-      const ctx = cursorCanvas.getContext('2d');
-      if (!ctx) return;
 
       const binaryStr = atob(bitmap.data);
       const len = binaryStr.length;
@@ -72,13 +92,31 @@
         bytes[i] = binaryStr.charCodeAt(i);
       }
 
+      const rawCanvas = document.createElement('canvas');
+      rawCanvas.width = bitmap.width;
+      rawCanvas.height = bitmap.height;
+      const rawCtx = rawCanvas.getContext('2d');
+      if (!rawCtx) return;
       const imgData = new ImageData(bytes, bitmap.width, bitmap.height);
-      ctx.putImageData(imgData, 0, 0);
+      rawCtx.putImageData(imgData, 0, 0);
+
+      cursorCanvas.width = targetW;
+      cursorCanvas.height = targetH;
+      const ctx = cursorCanvas.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, targetW, targetH);
+      ctx.drawImage(rawCanvas, 0, 0, targetW, targetH);
 
       const dataUrl = cursorCanvas.toDataURL('image/png');
-      const hx = Math.min(Math.max(0, bitmap.hotspot_x), bitmap.width - 1);
-      const hy = Math.min(Math.max(0, bitmap.hotspot_y), bitmap.height - 1);
-      canvasRef.style.cursor = `url("${dataUrl}") ${hx} ${hy}, default`;
+      const cursorVal = `url("${dataUrl}") ${hx} ${hy}, default`;
+
+      if (cursorCache.size >= 64) {
+        const oldest = cursorCache.keys().next().value;
+        if (oldest !== undefined) cursorCache.delete(oldest);
+      }
+      cursorCache.set(cacheKey, cursorVal);
+
+      canvasRef.style.cursor = cursorVal;
     } catch (err) {
       console.warn('Failed to update cursor bitmap:', err);
       canvasRef.style.cursor = 'default';
@@ -202,11 +240,16 @@
         if (useWebGl && webglRenderer) {
           webglRenderer.uploadTile(tile.x, tile.y, tile.width, tile.height, tile.slice);
         } else if (canvasCtx) {
-          const clamped = new Uint8ClampedArray(
-            tile.slice.buffer as ArrayBuffer,
-            tile.slice.byteOffset,
-            tile.slice.byteLength
-          );
+          const slice = tile.slice;
+          const clamped = new Uint8ClampedArray(slice.length);
+          clamped.set(slice);
+          // Swizzle BGR[0] to RGB[255] for 2D canvas fallback
+          for (let p = 0; p < clamped.length; p += 4) {
+            const b = clamped[p];
+            clamped[p] = clamped[p + 2]; // Red
+            clamped[p + 2] = b;          // Blue
+            clamped[p + 3] = 255;        // Alpha
+          }
           const imgData = new ImageData(clamped, tile.width, tile.height);
           canvasCtx.putImageData(imgData, tile.x, tile.y);
         }
@@ -257,26 +300,24 @@
     if (!isConnected || !isIronRdp) return;
     canvasRef?.focus();
     const coords = getCanvasMouseCoords(e);
-    if (coords) {
-      invoke('ironrdp_mouse_move', { tabId: session.id, x: coords.x, y: coords.y }).catch(() => {});
-    }
     invoke('ironrdp_mouse_button', {
       tabId: session.id,
       button: e.button,
       pressed: true,
+      x: coords?.x,
+      y: coords?.y,
     }).catch(() => {});
   }
 
   function handleMouseUp(e: MouseEvent) {
     if (!isConnected || !isIronRdp) return;
     const coords = getCanvasMouseCoords(e);
-    if (coords) {
-      invoke('ironrdp_mouse_move', { tabId: session.id, x: coords.x, y: coords.y }).catch(() => {});
-    }
     invoke('ironrdp_mouse_button', {
       tabId: session.id,
       button: e.button,
       pressed: false,
+      x: coords?.x,
+      y: coords?.y,
     }).catch(() => {});
   }
 
@@ -284,24 +325,63 @@
     e.preventDefault();
   }
 
+  let accumulatedWheelY = 0;
+  let accumulatedWheelX = 0;
+
   function handleWheel(e: WheelEvent) {
     if (!isConnected || !isIronRdp) return;
     e.preventDefault();
-    const isVertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
-    const delta = isVertical ? -e.deltaY : -e.deltaX;
-    const rotationUnits = Math.round(Math.sign(delta) * 120);
-    invoke('ironrdp_mouse_wheel', {
-      tabId: session.id,
-      isVertical,
-      rotationUnits,
-    }).catch(() => {});
+
+    let dy = e.deltaY;
+    let dx = e.deltaX;
+    if (e.deltaMode === 1) {
+      dy *= 20;
+      dx *= 20;
+    } else if (e.deltaMode === 2) {
+      dy *= 100;
+      dx *= 100;
+    }
+
+    const isVertical = Math.abs(dy) >= Math.abs(dx);
+    if (isVertical) {
+      accumulatedWheelY -= dy;
+      if (Math.abs(accumulatedWheelY) >= 20) {
+        const notches = Math.trunc(accumulatedWheelY / 40);
+        if (notches !== 0) {
+          const rotationUnits = notches * 120;
+          accumulatedWheelY -= notches * 40;
+          invoke('ironrdp_mouse_wheel', {
+            tabId: session.id,
+            isVertical: true,
+            rotationUnits,
+          }).catch(() => {});
+        }
+      }
+    } else {
+      accumulatedWheelX -= dx;
+      if (Math.abs(accumulatedWheelX) >= 20) {
+        const notches = Math.trunc(accumulatedWheelX / 40);
+        if (notches !== 0) {
+          const rotationUnits = notches * 120;
+          accumulatedWheelX -= notches * 40;
+          invoke('ironrdp_mouse_wheel', {
+            tabId: session.id,
+            isVertical: false,
+            rotationUnits,
+          }).catch(() => {});
+        }
+      }
+    }
   }
+
+  const pressedKeys = new Set<string>();
 
   function handleKeyDown(e: KeyboardEvent) {
     if (!isConnected || !isIronRdp) return;
-    if (['Tab', 'F5', 'AltLeft', 'AltRight', 'ContextMenu', 'MetaLeft', 'MetaRight'].includes(e.code)) {
+    if (e.code !== 'F12') {
       e.preventDefault();
     }
+    pressedKeys.add(e.code);
     invoke('ironrdp_key_event', {
       tabId: session.id,
       code: e.code,
@@ -311,14 +391,30 @@
 
   function handleKeyUp(e: KeyboardEvent) {
     if (!isConnected || !isIronRdp) return;
-    if (['Tab', 'F5', 'AltLeft', 'AltRight', 'ContextMenu', 'MetaLeft', 'MetaRight'].includes(e.code)) {
+    if (e.code !== 'F12') {
       e.preventDefault();
     }
+    pressedKeys.delete(e.code);
     invoke('ironrdp_key_event', {
       tabId: session.id,
       code: e.code,
       pressed: false,
     }).catch(() => {});
+  }
+
+  function releaseAllKeys() {
+    if (!isConnected || !isIronRdp) return;
+    if (pressedKeys.size > 0) {
+      for (const code of pressedKeys) {
+        invoke('ironrdp_key_event', {
+          tabId: session.id,
+          code,
+          pressed: false,
+        }).catch(() => {});
+      }
+      pressedKeys.clear();
+    }
+    invoke('ironrdp_release_all', { tabId: session.id }).catch(() => {});
   }
 
   async function sendCtrlAltDel() {
@@ -455,6 +551,46 @@
       width: bounds.width,
       height: bounds.height,
     }).catch(() => {});
+  }
+
+  let ironResizeTimer: any = null;
+  let lastIronRdpWidth = 0;
+  let lastIronRdpHeight = 0;
+
+  function handleIronRdpResize() {
+    if (!isIronRdp || !isConnected || isDisconnected || !viewportRef) return;
+    if (appState.activeTabId !== session.id) return;
+    if (ironResizeTimer) {
+      clearTimeout(ironResizeTimer);
+    }
+    ironResizeTimer = setTimeout(async () => {
+      ironResizeTimer = null;
+      if (!isIronRdp || !isConnected || isDisconnected || !viewportRef) return;
+      if (appState.activeTabId !== session.id) return;
+      const bounds = getFittedBounds();
+      if (!bounds) return;
+
+      const dwDiff = Math.abs(bounds.desktopWidth - lastIronRdpWidth);
+      const dhDiff = Math.abs(bounds.desktopHeight - lastIronRdpHeight);
+      if (
+        (dwDiff >= 12 || dhDiff >= 12 || lastIronRdpWidth === 0) &&
+        bounds.desktopWidth > 0 &&
+        bounds.desktopHeight > 0
+      ) {
+        try {
+          await invoke('ironrdp_resize', {
+            tabId: session.id,
+            width: bounds.desktopWidth,
+            height: bounds.desktopHeight,
+            scaleFactor: bounds.scaleDesktop,
+          });
+          lastIronRdpWidth = bounds.desktopWidth;
+          lastIronRdpHeight = bounds.desktopHeight;
+        } catch (err) {
+          console.warn('[RDP] Dynamic resize failed:', err);
+        }
+      }
+    }, 350);
   }
 
   async function startSession() {
@@ -604,6 +740,36 @@
           height: bounds.desktopHeight,
           scaleFactor: bounds.scaleDesktop,
           onFrame,
+        });
+
+        if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
+          invoke('ironrdp_disconnect', { tabId: session.id }).catch(() => {});
+          return;
+        }
+
+        lastIronRdpWidth = bounds.desktopWidth;
+        lastIronRdpHeight = bounds.desktopHeight;
+
+        if (window.ResizeObserver && viewportRef) {
+          const ro = new ResizeObserver(() => {
+            handleIronRdpResize();
+          });
+          ro.observe(viewportRef);
+          sessionDisposables.add(() => ro.disconnect());
+        }
+        sessionDisposables.trackEventListener(window, 'resize', handleIronRdpResize);
+        sessionDisposables.trackEventListener(window, 'blur', releaseAllKeys);
+        sessionDisposables.trackEventListener(document, 'visibilitychange', () => {
+          if (document.hidden) {
+            releaseAllKeys();
+          }
+        });
+        sessionDisposables.add(() => {
+          if (ironResizeTimer) {
+            clearTimeout(ironResizeTimer);
+            ironResizeTimer = null;
+          }
+          releaseAllKeys();
         });
       } else {
         await invoke('freerdp_connect', {

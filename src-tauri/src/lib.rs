@@ -10,7 +10,7 @@ use commands::config::{
 use commands::rdp::{
     freerdp_connect, freerdp_disconnect, freerdp_set_docked, freerdp_set_visibility,
     freerdp_update_bounds, ironrdp_connect, ironrdp_disconnect, ironrdp_key_event,
-    ironrdp_mouse_button, ironrdp_mouse_move, ironrdp_mouse_wheel, ironrdp_resize, rdp_disconnect,
+    ironrdp_mouse_button, ironrdp_mouse_move, ironrdp_mouse_wheel, ironrdp_release_all, ironrdp_resize, rdp_disconnect,
 };
 
 use commands::sftp::{
@@ -177,6 +177,7 @@ pub fn run() {
             ironrdp_mouse_button,
             ironrdp_mouse_wheel,
             ironrdp_key_event,
+            ironrdp_release_all,
             ironrdp_resize,
             window_minimize,
             window_toggle_maximize,

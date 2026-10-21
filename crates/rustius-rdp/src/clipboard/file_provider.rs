@@ -177,6 +177,7 @@ pub unsafe fn write_hdrop_to_clipboard(
     use windows_sys::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
     };
+    use windows_sys::Win32::Foundation::GlobalFree;
     use windows_sys::Win32::System::Memory::{
         GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
     };
@@ -218,6 +219,7 @@ pub unsafe fn write_hdrop_to_clipboard(
 
         let ptr = GlobalLock(h_mem) as *mut u8;
         if ptr.is_null() {
+            GlobalFree(h_mem);
             return Err(anyhow!("GlobalLock failed for DROPFILES"));
         }
 
@@ -247,12 +249,14 @@ pub unsafe fn write_hdrop_to_clipboard(
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         if !opened {
+            GlobalFree(h_mem);
             return Err(anyhow!("OpenClipboard failed after retries"));
         }
 
         EmptyClipboard();
         const CF_HDROP: u32 = 15;
         if SetClipboardData(CF_HDROP, h_mem as _).is_null() {
+            GlobalFree(h_mem);
             CloseClipboard();
             return Err(anyhow!("SetClipboardData(CF_HDROP) failed"));
         }
