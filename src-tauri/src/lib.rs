@@ -4,13 +4,15 @@ pub mod state;
 use commands::config::{
     add_connection, add_credential, add_folder, delete_credential, get_config,
     get_connection_password, get_credential_password, import_sessions, import_sessions_content,
-    remove_node, save_app_settings, update_credential, vault_change_backend, vault_get_status,
-    vault_lock, vault_set_master_password, vault_unlock,
+    move_node, remove_node, save_app_settings, update_credential, vault_change_backend,
+    vault_get_status, vault_lock, vault_set_master_password, vault_unlock,
 };
 use commands::rdp::{
     freerdp_connect, freerdp_disconnect, freerdp_set_docked, freerdp_set_visibility,
-    freerdp_update_bounds, rdp_disconnect,
+    freerdp_update_bounds, ironrdp_connect, ironrdp_disconnect, ironrdp_key_event,
+    ironrdp_mouse_button, ironrdp_mouse_move, ironrdp_mouse_wheel, ironrdp_release_all, ironrdp_resize, rdp_disconnect,
 };
+
 use commands::sftp::{
     local_get_home_dir, local_list_dir, local_mkdir, local_remove, local_rename, sftp_connect,
     sftp_disconnect, sftp_download, sftp_download_bytes, sftp_download_to_downloads, sftp_list_dir,
@@ -18,19 +20,35 @@ use commands::sftp::{
 };
 use commands::ssh::{ssh_connect, ssh_disconnect, ssh_resize, ssh_write};
 use commands::terminal::{pty_close, pty_resize, pty_spawn, pty_write};
-use commands::window::{window_close, window_is_maximized, window_minimize, window_toggle_maximize};
+use commands::window::{
+    window_close, window_is_maximized, window_minimize, window_toggle_maximize,
+};
 use state::AppState;
 use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,rustius=debug")),
-        )
-        .init();
+    // Initialize tracing to both disk log file and stdout
+    let log_dir = std::env::temp_dir().join("rustius");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("rustius.log"));
+
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new("info,rustius=debug,ironrdp=debug,ironrdp_cliprdr=debug")
+    });
+
+    if let Ok(file) = log_file {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(std::sync::Mutex::new(file))
+            .with_ansi(false)
+            .init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter(filter).init();
+    }
 
     let app_state = match AppState::new() {
         Ok(state) => state,
@@ -55,7 +73,9 @@ pub fn run() {
                         let target_w = (logical_w * 0.88).clamp(840.0, 1600.0);
                         let target_h = (logical_h * 0.85).clamp(500.0, 1000.0);
 
-                        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(target_w, target_h)));
+                        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+                            target_w, target_h,
+                        )));
                         let _ = window.center();
                     }
                 }
@@ -63,7 +83,10 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
+            if matches!(
+                event,
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+            ) {
                 let _ = window.emit("window-moved", ());
                 let state = window.state::<AppState>();
                 let sessions: Vec<_> = {
@@ -79,8 +102,14 @@ pub fn run() {
             } else if matches!(event, tauri::WindowEvent::Destroyed) {
                 let state = window.state::<AppState>();
                 let freerdp = state.freerdp_sessions.clone();
+                let ironrdp = state.ironrdp_sessions.clone();
                 let pty = state.local_terminals.clone();
                 if let Ok(mut guard) = freerdp.try_write() {
+                    for (_, session) in guard.drain() {
+                        session.disconnect();
+                    }
+                };
+                if let Ok(mut guard) = ironrdp.try_write() {
                     for (_, session) in guard.drain() {
                         session.disconnect();
                     }
@@ -99,6 +128,7 @@ pub fn run() {
             add_connection,
             add_folder,
             remove_node,
+            move_node,
             add_credential,
             update_credential,
             delete_credential,
@@ -141,6 +171,14 @@ pub fn run() {
             freerdp_set_docked,
             freerdp_update_bounds,
             freerdp_set_visibility,
+            ironrdp_connect,
+            ironrdp_disconnect,
+            ironrdp_mouse_move,
+            ironrdp_mouse_button,
+            ironrdp_mouse_wheel,
+            ironrdp_key_event,
+            ironrdp_release_all,
+            ironrdp_resize,
             window_minimize,
             window_toggle_maximize,
             window_close,

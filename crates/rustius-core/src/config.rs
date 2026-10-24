@@ -76,8 +76,8 @@ impl ConfigManager {
 
             // 2. Load connections.json
             let c_str = storage.read(&connections_path)?;
-            let mut store: ConnectionsStore = serde_json::from_str(&c_str)
-                .context("Failed to parse connections.json")?;
+            let mut store: ConnectionsStore =
+                serde_json::from_str(&c_str).context("Failed to parse connections.json")?;
 
             // 3. Load Markdown runbooks from notes/ directory
             Self::populate_notes_in_tree(&mut store.tree, &notes_dir, storage.as_ref());
@@ -119,7 +119,10 @@ impl ConfigManager {
             info!("Migration to modular storage completed successfully");
             legacy
         } else {
-            info!("No config found, creating modular defaults at: {:?}", config_dir);
+            info!(
+                "No config found, creating modular defaults at: {:?}",
+                config_dir
+            );
             let config = RustiusConfig::default();
 
             // Save default settings.json
@@ -214,12 +217,11 @@ impl ConfigManager {
                 };
             }
             AuthMethod::KeyFile {
-                username,
-                key_path,
-                ..
+                username, key_path, ..
             } => {
                 let passphrase = cred.auth.resolve_passphrase(&self.secret_manager)?;
-                let resolved_path = crate::connection::resolve_key_path(key_path, Some(&self.config_dir));
+                let resolved_path =
+                    crate::connection::resolve_key_path(key_path, Some(&self.config_dir));
                 resolved.auth = AuthMethod::KeyFile {
                     username: username.clone(),
                     key_path: resolved_path.to_string_lossy().into_owned(),
@@ -288,7 +290,8 @@ impl ConfigManager {
                 username, key_path, ..
             } => {
                 let passphrase = conn.auth.resolve_passphrase(&self.secret_manager)?;
-                let resolved_path = crate::connection::resolve_key_path(key_path, Some(&self.config_dir));
+                let resolved_path =
+                    crate::connection::resolve_key_path(key_path, Some(&self.config_dir));
                 resolved.auth = AuthMethod::KeyFile {
                     username: username.clone(),
                     key_path: resolved_path.to_string_lossy().into_owned(),
@@ -301,22 +304,22 @@ impl ConfigManager {
         Ok(resolved)
     }
 
-    /// Helper: extracts mutable reference to the secret_ref in Password or KeyFile variants.
-    fn get_auth_secret_ref_mut(auth: &mut AuthMethod) -> Option<&mut Option<SecretRef>> {
-        match auth {
-            AuthMethod::Password { secret_ref, .. } => Some(secret_ref),
-            AuthMethod::KeyFile { secret_ref, .. } => Some(secret_ref),
-            _ => None,
-        }
-    }
 
     /// Helper: extracts plaintext passwords/passphrases from an AuthMethod, stores them
     /// into the active secret backend under `key`, and points `secret_ref` to the storage.
     pub fn secure_auth_method(&self, auth: &mut AuthMethod, key: &str, entity_type: &str) {
         let backend = self.effective_vault_backend_sync();
         let (secret_opt, target_ref) = match auth {
-            AuthMethod::Password { password, secret_ref, .. } => (password, secret_ref),
-            AuthMethod::KeyFile { passphrase, secret_ref, .. } => (passphrase, secret_ref),
+            AuthMethod::Password {
+                password,
+                secret_ref,
+                ..
+            } => (password, secret_ref),
+            AuthMethod::KeyFile {
+                passphrase,
+                secret_ref,
+                ..
+            } => (passphrase, secret_ref),
             _ => return,
         };
 
@@ -325,18 +328,28 @@ impl ConfigManager {
                 match backend {
                     VaultBackend::MasterPassword => {
                         if let Err(e) = self.secret_manager.set_vault_secret(key, &p) {
-                            warn!("Failed to store {} secret in vault for {}: {}", entity_type, key, e);
+                            warn!(
+                                "Failed to store {} secret in vault for {}: {}",
+                                entity_type, key, e
+                            );
                             *secret_opt = Some(p);
                         } else {
-                            *target_ref = Some(SecretRef::Vault { key: key.to_string() });
+                            *target_ref = Some(SecretRef::Vault {
+                                key: key.to_string(),
+                            });
                         }
                     }
                     _ => {
                         if let Err(e) = self.secret_manager.set_secret(key, &p) {
-                            warn!("Failed to store {} secret in OS keyring for {}: {}", entity_type, key, e);
+                            warn!(
+                                "Failed to store {} secret in OS keyring for {}: {}",
+                                entity_type, key, e
+                            );
                             *secret_opt = Some(p);
                         } else {
-                            *target_ref = Some(SecretRef::Keyring { key: key.to_string() });
+                            *target_ref = Some(SecretRef::Keyring {
+                                key: key.to_string(),
+                            });
                         }
                     }
                 }
@@ -445,7 +458,11 @@ impl ConfigManager {
 
         // 2. Save notes to notes/ and strip them for connections.json
         let mut clean_tree = config.tree.clone();
-        Self::sync_and_strip_notes_in_tree(&mut clean_tree, &self.notes_dir, self.storage.as_ref())?;
+        Self::sync_and_strip_notes_in_tree(
+            &mut clean_tree,
+            &self.notes_dir,
+            self.storage.as_ref(),
+        )?;
 
         // 3. Save connections.json
         let connections_store = ConnectionsStore {
@@ -455,7 +472,8 @@ impl ConfigManager {
         };
         let connections_json = serde_json::to_string_pretty(&connections_store)
             .context("Failed to serialize connections.json")?;
-        self.storage.write(&self.connections_path, &connections_json)?;
+        self.storage
+            .write(&self.connections_path, &connections_json)?;
 
         debug!(
             "Modular config saved (settings: {:?}, connections: {:?})",
@@ -606,6 +624,68 @@ impl ConfigManager {
         .await
     }
 
+    /// Move a node (connection or folder) to a new position in the tree hierarchy.
+    ///
+    /// - `node_id`: The ID of the node to move.
+    /// - `target_parent_id`: `None` if moving to the root tree, or `Some(folder_id)` if moving inside a folder.
+    /// - `target_index`: The 0-based position in the destination parent's children list.
+    ///
+    /// Prevents moving a folder into itself or any of its own descendants.
+    pub async fn move_node(
+        &self,
+        node_id: Uuid,
+        target_parent_id: Option<Uuid>,
+        target_index: usize,
+    ) -> Result<()> {
+        if let Some(target_parent) = target_parent_id {
+            if target_parent == node_id {
+                anyhow::bail!("Cannot move a folder into itself");
+            }
+        }
+
+        {
+            let mut config = self.config.write().await;
+
+            // 1. Verify cycle if moving a folder
+            if let Some(target_parent) = target_parent_id {
+                if let Some(folder) = Self::find_folder_ref(&config.tree, node_id) {
+                    if Self::folder_contains_descendant(folder, target_parent) {
+                        anyhow::bail!("Cannot move a folder into its own subfolder");
+                    }
+                }
+                if Self::find_folder_ref(&config.tree, target_parent).is_none() {
+                    anyhow::bail!("Target folder not found: {}", target_parent);
+                }
+            }
+
+            // 2. Extract node from tree
+            let mut extracted = Self::extract_from_tree(&mut config.tree, node_id)
+                .ok_or_else(|| anyhow::anyhow!("Node not found: {}", node_id))?;
+
+            // 3. If it's a folder, update its parent_id
+            if let TreeNode::Folder(ref mut folder) = extracted {
+                folder.parent_id = target_parent_id;
+            }
+
+            // 4. Insert into destination
+            if let Some(target_parent) = target_parent_id {
+                if !Self::insert_into_folder_at(
+                    &mut config.tree,
+                    target_parent,
+                    extracted,
+                    target_index,
+                ) {
+                    anyhow::bail!("Failed to insert into target folder {}", target_parent);
+                }
+            } else {
+                let idx = target_index.min(config.tree.len());
+                config.tree.insert(idx, extracted);
+            }
+        }
+
+        self.save().await
+    }
+
     /// Migrate secrets between OS Keyring and Encrypted Master Password Vault.
     pub async fn migrate_vault_backend(
         &self,
@@ -635,6 +715,47 @@ impl ConfigManager {
                 let mut vault_batch = Vec::new();
                 let mut keyring_keys_to_delete = Vec::new();
 
+                fn migrate_auth_to_vault(
+                    auth: &mut AuthMethod,
+                    key: &str,
+                    sm: &SecretManager,
+                    batch: &mut Vec<(String, String)>,
+                    to_delete: &mut Vec<String>,
+                ) {
+                    let (secret_opt, target_ref) = match auth {
+                        AuthMethod::Password { password, secret_ref, .. } => (password, secret_ref),
+                        AuthMethod::KeyFile { passphrase, secret_ref, .. } => (passphrase, secret_ref),
+                        _ => return,
+                    };
+
+                    // 1. Plaintext password or passphrase directly on struct
+                    if let Some(plain) = secret_opt.take() {
+                        if !plain.is_empty() {
+                            batch.push((key.to_string(), plain));
+                            *target_ref = Some(SecretRef::Vault { key: key.to_string() });
+                            return;
+                        }
+                    }
+
+                    // 2. Existing Keyring secret
+                    if let Some(SecretRef::Keyring { key: k }) = target_ref.as_ref() {
+                        let k = k.clone();
+                        if let Ok(Some(secret)) = sm.get_secret(&k) {
+                            batch.push((k.clone(), secret));
+                            to_delete.push(k.clone());
+                            *target_ref = Some(SecretRef::Vault { key: k });
+                            return;
+                        }
+                    }
+
+                    // 3. Plaintext SecretRef
+                    if let Some(SecretRef::Plaintext { value }) = target_ref.as_ref() {
+                        let val = value.clone();
+                        batch.push((key.to_string(), val));
+                        *target_ref = Some(SecretRef::Vault { key: key.to_string() });
+                    }
+                }
+
                 fn collect_node_secrets_for_vault(
                     nodes: &mut [TreeNode],
                     sm: &SecretManager,
@@ -644,19 +765,16 @@ impl ConfigManager {
                     for node in nodes {
                         match node {
                             TreeNode::Connection(c) => {
-                                if let Some(secret_ref) = ConfigManager::get_auth_secret_ref_mut(&mut c.auth) {
-                                    if let Some(SecretRef::Keyring { key }) = secret_ref.as_ref() {
-                                        let key = key.clone();
-                                        if let Ok(Some(secret)) = sm.get_secret(&key) {
-                                            batch.push((key.clone(), secret));
-                                            to_delete.push(key.clone());
-                                            *secret_ref = Some(SecretRef::Vault { key });
-                                        }
-                                    }
-                                }
+                                let key = format!("connection:{}", c.id);
+                                migrate_auth_to_vault(&mut c.auth, &key, sm, batch, to_delete);
                             }
                             TreeNode::Folder(f) => {
-                                collect_node_secrets_for_vault(&mut f.children, sm, batch, to_delete);
+                                collect_node_secrets_for_vault(
+                                    &mut f.children,
+                                    sm,
+                                    batch,
+                                    to_delete,
+                                );
                             }
                         }
                     }
@@ -664,24 +782,27 @@ impl ConfigManager {
 
                 // 1. Reusable credentials
                 for cred in &mut config.credentials {
-                    if let Some(secret_ref) = ConfigManager::get_auth_secret_ref_mut(&mut cred.auth) {
-                        if let Some(SecretRef::Keyring { key }) = secret_ref.as_ref() {
-                            let key = key.clone();
-                            if let Ok(Some(secret)) = self.secret_manager.get_secret(&key) {
-                                vault_batch.push((key.clone(), secret));
-                                keyring_keys_to_delete.push(key.clone());
-                                *secret_ref = Some(SecretRef::Vault { key });
-                            }
-                        }
-                    }
+                    let key = format!("credential:{}", cred.id);
+                    migrate_auth_to_vault(&mut cred.auth, &key, &self.secret_manager, &mut vault_batch, &mut keyring_keys_to_delete);
                 }
 
                 // 2. Tree connections
-                collect_node_secrets_for_vault(&mut config.tree, &self.secret_manager, &mut vault_batch, &mut keyring_keys_to_delete);
+                collect_node_secrets_for_vault(
+                    &mut config.tree,
+                    &self.secret_manager,
+                    &mut vault_batch,
+                    &mut keyring_keys_to_delete,
+                );
 
-                let batch_refs: Vec<(&str, &str)> = vault_batch.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+                let batch_refs: Vec<(&str, &str)> = vault_batch
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
                 if let Err(e) = self.secret_manager.set_vault_secrets_batch(&batch_refs) {
-                    warn!("Failed to batch write secrets to vault during migration: {}", e);
+                    warn!(
+                        "Failed to batch write secrets to vault during migration: {}",
+                        e
+                    );
                 }
                 for k in keyring_keys_to_delete {
                     let _ = self.secret_manager.delete_secret(&k);
@@ -693,20 +814,61 @@ impl ConfigManager {
         } else {
             // Migrating to Keyring
             self.update_config(|config| {
+                fn migrate_auth_to_keyring(
+                    auth: &mut AuthMethod,
+                    key: &str,
+                    sm: &SecretManager,
+                ) {
+                    let (secret_opt, target_ref) = match auth {
+                        AuthMethod::Password { password, secret_ref, .. } => (password, secret_ref),
+                        AuthMethod::KeyFile { passphrase, secret_ref, .. } => (passphrase, secret_ref),
+                        _ => return,
+                    };
+
+                    // 1. Plaintext password or passphrase directly on struct
+                    if let Some(plain) = secret_opt.take() {
+                        if !plain.is_empty() {
+                            if let Err(e) = sm.set_secret(key, &plain) {
+                                warn!("Failed to write secret to keyring for key {key}: {e}");
+                                *secret_opt = Some(plain);
+                            } else {
+                                *target_ref = Some(SecretRef::Keyring { key: key.to_string() });
+                            }
+                            return;
+                        }
+                    }
+
+                    // 2. Existing Vault secret
+                    if let Some(SecretRef::Vault { key: k }) = target_ref.as_ref() {
+                        let k = k.clone();
+                        if let Ok(Some(secret)) = sm.get_vault_secret(&k) {
+                            if let Err(e) = sm.set_secret(&k, &secret) {
+                                warn!("Failed to write secret to keyring for key {k}: {e}");
+                            } else {
+                                let _ = sm.delete_vault_secret(&k);
+                                *target_ref = Some(SecretRef::Keyring { key: k });
+                            }
+                            return;
+                        }
+                    }
+
+                    // 3. Plaintext SecretRef
+                    if let Some(SecretRef::Plaintext { value }) = target_ref.as_ref() {
+                        let val = value.clone();
+                        if let Err(e) = sm.set_secret(key, &val) {
+                            warn!("Failed to write plaintext secret to keyring for key {key}: {e}");
+                        } else {
+                            *target_ref = Some(SecretRef::Keyring { key: key.to_string() });
+                        }
+                    }
+                }
+
                 fn migrate_tree_to_keyring(nodes: &mut [TreeNode], sm: &SecretManager) {
                     for node in nodes {
                         match node {
                             TreeNode::Connection(c) => {
-                                if let Some(secret_ref) = ConfigManager::get_auth_secret_ref_mut(&mut c.auth) {
-                                    if let Some(SecretRef::Vault { key }) = secret_ref.as_ref() {
-                                        let key = key.clone();
-                                        if let Ok(Some(secret)) = sm.get_vault_secret(&key) {
-                                            let _ = sm.set_secret(&key, &secret);
-                                            let _ = sm.delete_vault_secret(&key);
-                                            *secret_ref = Some(SecretRef::Keyring { key });
-                                        }
-                                    }
-                                }
+                                let key = format!("connection:{}", c.id);
+                                migrate_auth_to_keyring(&mut c.auth, &key, sm);
                             }
                             TreeNode::Folder(f) => {
                                 migrate_tree_to_keyring(&mut f.children, sm);
@@ -717,16 +879,8 @@ impl ConfigManager {
 
                 // 1. Reusable credentials
                 for cred in &mut config.credentials {
-                    if let Some(secret_ref) = ConfigManager::get_auth_secret_ref_mut(&mut cred.auth) {
-                        if let Some(SecretRef::Vault { key }) = secret_ref.as_ref() {
-                            let key = key.clone();
-                            if let Ok(Some(secret)) = self.secret_manager.get_vault_secret(&key) {
-                                let _ = self.secret_manager.set_secret(&key, &secret);
-                                let _ = self.secret_manager.delete_vault_secret(&key);
-                                *secret_ref = Some(SecretRef::Keyring { key });
-                            }
-                        }
-                    }
+                    let key = format!("credential:{}", cred.id);
+                    migrate_auth_to_keyring(&mut cred.auth, &key, &self.secret_manager);
                 }
 
                 // 2. Tree connections
@@ -736,8 +890,134 @@ impl ConfigManager {
             .await?;
         }
 
-        info!("Successfully migrated vault backend to {:?}", target_backend);
+        info!(
+            "Successfully migrated vault backend to {:?}",
+            target_backend
+        );
         Ok(())
+    }
+
+    /// Secure any unencrypted plaintext passwords across all credentials and connections
+    /// into the active vault backend (if unlocked).
+    pub async fn secure_all_unencrypted_secrets(&self) -> Result<()> {
+        let backend = self.effective_vault_backend().await;
+        if backend == VaultBackend::MasterPassword && !self.secret_manager.is_vault_unlocked() {
+            // Cannot secure into master password vault while locked
+            return Ok(());
+        }
+
+        self.update_config(|config| {
+            let mut vault_batch = Vec::new();
+
+            fn secure_node_plaintext(
+                nodes: &mut [TreeNode],
+                sm: &SecretManager,
+                backend: VaultBackend,
+                batch: &mut Vec<(String, String)>,
+            ) {
+                for node in nodes {
+                    match node {
+                        TreeNode::Connection(c) => {
+                            let key = format!("connection:{}", c.id);
+                            let (secret_opt, target_ref) = match &mut c.auth {
+                                AuthMethod::Password { password, secret_ref, .. } => (password, secret_ref),
+                                AuthMethod::KeyFile { passphrase, secret_ref, .. } => (passphrase, secret_ref),
+                                _ => continue,
+                            };
+                            if let Some(plain) = secret_opt.take() {
+                                if !plain.is_empty() {
+                                    match backend {
+                                        VaultBackend::MasterPassword => {
+                                            batch.push((key.clone(), plain));
+                                            *target_ref = Some(SecretRef::Vault { key });
+                                        }
+                                        _ => {
+                                            if sm.set_secret(&key, &plain).is_ok() {
+                                                *target_ref = Some(SecretRef::Keyring { key });
+                                            } else {
+                                                *secret_opt = Some(plain);
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if let Some(SecretRef::Plaintext { value }) = target_ref.as_ref() {
+                                let val = value.clone();
+                                match backend {
+                                    VaultBackend::MasterPassword => {
+                                        batch.push((key.clone(), val));
+                                        *target_ref = Some(SecretRef::Vault { key });
+                                    }
+                                    _ => {
+                                        if sm.set_secret(&key, &val).is_ok() {
+                                            *target_ref = Some(SecretRef::Keyring { key });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        TreeNode::Folder(f) => {
+                            secure_node_plaintext(&mut f.children, sm, backend, batch);
+                        }
+                    }
+                }
+            }
+
+            // 1. Credentials
+            for cred in &mut config.credentials {
+                let key = format!("credential:{}", cred.id);
+                let (secret_opt, target_ref) = match &mut cred.auth {
+                    AuthMethod::Password { password, secret_ref, .. } => (password, secret_ref),
+                    AuthMethod::KeyFile { passphrase, secret_ref, .. } => (passphrase, secret_ref),
+                    _ => continue,
+                };
+                if let Some(plain) = secret_opt.take() {
+                    if !plain.is_empty() {
+                        match backend {
+                            VaultBackend::MasterPassword => {
+                                vault_batch.push((key.clone(), plain));
+                                *target_ref = Some(SecretRef::Vault { key });
+                            }
+                            _ => {
+                                if self.secret_manager.set_secret(&key, &plain).is_ok() {
+                                    *target_ref = Some(SecretRef::Keyring { key });
+                                } else {
+                                    *secret_opt = Some(plain);
+                                }
+                            }
+                        }
+                    }
+                } else if let Some(SecretRef::Plaintext { value }) = target_ref.as_ref() {
+                    let val = value.clone();
+                    match backend {
+                        VaultBackend::MasterPassword => {
+                            vault_batch.push((key.clone(), val));
+                            *target_ref = Some(SecretRef::Vault { key });
+                        }
+                        _ => {
+                            if self.secret_manager.set_secret(&key, &val).is_ok() {
+                                *target_ref = Some(SecretRef::Keyring { key });
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Tree
+            secure_node_plaintext(&mut config.tree, &self.secret_manager, backend, &mut vault_batch);
+
+            if !vault_batch.is_empty() {
+                let batch_refs: Vec<(&str, &str)> = vault_batch
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
+                if let Err(e) = self.secret_manager.set_vault_secrets_batch(&batch_refs) {
+                    warn!("Failed to batch write plaintext secrets to vault: {}", e);
+                } else {
+                    info!("Successfully secured {} plaintext secrets into vault", vault_batch.len());
+                }
+            }
+        })
+        .await
     }
 
     /// Find a connection by ID anywhere in the tree.
@@ -837,6 +1117,75 @@ impl ConfigManager {
         for item in tree.iter_mut() {
             if let TreeNode::Folder(ref mut folder) = item {
                 if Self::remove_from_tree(&mut folder.children, node_id) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Recursively find a folder reference in the tree by ID.
+    fn find_folder_ref(tree: &[TreeNode], id: Uuid) -> Option<&Folder> {
+        for node in tree {
+            if let TreeNode::Folder(folder) = node {
+                if folder.id == id {
+                    return Some(folder);
+                }
+                if let Some(found) = Self::find_folder_ref(&folder.children, id) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    /// Check if target_id is a child or any nested descendant of folder.
+    fn folder_contains_descendant(folder: &Folder, target_id: Uuid) -> bool {
+        for child in &folder.children {
+            if let TreeNode::Folder(sub) = child {
+                if sub.id == target_id || Self::folder_contains_descendant(sub, target_id) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Recursively find and remove a node from the tree, returning it.
+    fn extract_from_tree(tree: &mut Vec<TreeNode>, id: Uuid) -> Option<TreeNode> {
+        if let Some(pos) = tree.iter().position(|n| n.id() == id) {
+            return Some(tree.remove(pos));
+        }
+        for node in tree.iter_mut() {
+            if let TreeNode::Folder(ref mut folder) = node {
+                if let Some(extracted) = Self::extract_from_tree(&mut folder.children, id) {
+                    return Some(extracted);
+                }
+            }
+        }
+        None
+    }
+
+    /// Recursively insert a node into the specified folder at target_index.
+    fn insert_into_folder_at(
+        tree: &mut [TreeNode],
+        folder_id: Uuid,
+        node: TreeNode,
+        target_index: usize,
+    ) -> bool {
+        for item in tree.iter_mut() {
+            if let TreeNode::Folder(ref mut folder) = item {
+                if folder.id == folder_id {
+                    let idx = target_index.min(folder.children.len());
+                    folder.children.insert(idx, node);
+                    return true;
+                }
+                if Self::insert_into_folder_at(
+                    &mut folder.children,
+                    folder_id,
+                    node.clone(),
+                    target_index,
+                ) {
                     return true;
                 }
             }
@@ -1097,10 +1446,7 @@ password = "secretpassword"
         );
 
         let reloaded_conn = manager.get_connection(conn_id).await.unwrap();
-        assert_eq!(
-            reloaded_conn.notes.as_deref(),
-            Some("# Updated Runbook v2")
-        );
+        assert_eq!(reloaded_conn.notes.as_deref(), Some("# Updated Runbook v2"));
 
         // 3. Remove connection -> note file should be cleaned up automatically!
         manager.remove_node(conn_id).await.unwrap();
@@ -1227,7 +1573,10 @@ password = "secretpassword"
         let test_service = format!("rustius-test-{}", Uuid::new_v4());
         let manager = ConfigManager::new(dir.clone(), Box::new(PlaintextStorage))
             .expect("Failed to create ConfigManager")
-            .with_secret_manager(Arc::new(SecretManager::new(test_service, dir.join("vault.enc"))));
+            .with_secret_manager(Arc::new(SecretManager::new(
+                test_service,
+                dir.join("vault.enc"),
+            )));
 
         let plain_pass = "top-secret-password-xyz";
         let conn = Connection::new(
@@ -1274,7 +1623,10 @@ password = "secretpassword"
         let test_service = format!("rustius-test-{}", Uuid::new_v4());
         let manager = ConfigManager::new(dir.clone(), Box::new(PlaintextStorage))
             .expect("Failed to create ConfigManager")
-            .with_secret_manager(Arc::new(SecretManager::new(test_service, dir.join("vault.enc"))));
+            .with_secret_manager(Arc::new(SecretManager::new(
+                test_service,
+                dir.join("vault.enc"),
+            )));
 
         // 1. Create a reusable credential profile with domain + password
         let profile = CredentialProfile::new(
@@ -1376,12 +1728,19 @@ password = "secretpassword"
     async fn test_portable_vault_backend_and_migration() {
         let dir = test_config_dir();
         let test_service = format!("rustius-test-{}", Uuid::new_v4());
-        let manager = ConfigManager::new_with_portable(dir.clone(), true, Box::new(PlaintextStorage))
-            .expect("Failed to create portable ConfigManager")
-            .with_secret_manager(Arc::new(SecretManager::new(test_service, dir.join("vault.enc"))));
+        let manager =
+            ConfigManager::new_with_portable(dir.clone(), true, Box::new(PlaintextStorage))
+                .expect("Failed to create portable ConfigManager")
+                .with_secret_manager(Arc::new(SecretManager::new(
+                    test_service,
+                    dir.join("vault.enc"),
+                )));
 
         assert!(manager.is_portable());
-        assert_eq!(manager.effective_vault_backend().await, VaultBackend::MasterPassword);
+        assert_eq!(
+            manager.effective_vault_backend().await,
+            VaultBackend::MasterPassword
+        );
 
         // Unlock vault with master password
         let master = "VaultPassword2026!";
@@ -1401,7 +1760,10 @@ password = "secretpassword"
         // Check that secret was stored as Vault reference
         let stored = manager.get_connection(conn_id).await.unwrap();
         if let AuthMethod::Password { secret_ref, .. } = &stored.auth {
-            assert!(matches!(secret_ref, Some(SecretRef::Vault { .. })), "Must use SecretRef::Vault in portable mode");
+            assert!(
+                matches!(secret_ref, Some(SecretRef::Vault { .. })),
+                "Must use SecretRef::Vault in portable mode"
+            );
         } else {
             panic!("Expected password auth");
         }
@@ -1415,10 +1777,16 @@ password = "secretpassword"
         }
 
         // Migrate from Vault to Keyring
-        manager.migrate_vault_backend(VaultBackend::Keyring, None).await.unwrap();
+        manager
+            .migrate_vault_backend(VaultBackend::Keyring, None)
+            .await
+            .unwrap();
         let migrated_stored = manager.get_connection(conn_id).await.unwrap();
         if let AuthMethod::Password { secret_ref, .. } = &migrated_stored.auth {
-            assert!(matches!(secret_ref, Some(SecretRef::Keyring { .. })), "Must be migrated to SecretRef::Keyring");
+            assert!(
+                matches!(secret_ref, Some(SecretRef::Keyring { .. })),
+                "Must be migrated to SecretRef::Keyring"
+            );
         } else {
             panic!("Expected password auth");
         }
@@ -1432,6 +1800,185 @@ password = "secretpassword"
 
         // Cleanup
         manager.remove_node(conn_id).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_move_node_operations() {
+        let dir = test_config_dir();
+        let manager = ConfigManager::new(dir.clone(), Box::new(PlaintextStorage))
+            .expect("Failed to create ConfigManager");
+
+        // 1. Create root connections A and B
+        let conn_a = Connection::new(
+            "Server A".into(),
+            ConnectionType::Ssh,
+            "10.0.0.1".into(),
+            22,
+            AuthMethod::password("user", Some("pass".into())),
+        );
+        let id_a = conn_a.id;
+        manager.add_connection(conn_a, None).await.unwrap();
+
+        let conn_b = Connection::new(
+            "Server B".into(),
+            ConnectionType::Ssh,
+            "10.0.0.2".into(),
+            22,
+            AuthMethod::password("user", Some("pass".into())),
+        );
+        let id_b = conn_b.id;
+        manager.add_connection(conn_b, None).await.unwrap();
+
+        // Currently root tree is [A, B]
+        let cfg = manager.get_config().await;
+        assert_eq!(cfg.tree.len(), 2);
+        assert_eq!(cfg.tree[0].id(), id_a);
+        assert_eq!(cfg.tree[1].id(), id_b);
+
+        // Reorder B to index 0 (before A)
+        manager.move_node(id_b, None, 0).await.unwrap();
+        let cfg = manager.get_config().await;
+        assert_eq!(cfg.tree[0].id(), id_b);
+        assert_eq!(cfg.tree[1].id(), id_a);
+
+        // 2. Create folders F1 and F2
+        let f1_id = manager.add_folder("Folder 1".into(), None).await.unwrap();
+        let f2_id = manager.add_folder("Folder 2".into(), None).await.unwrap();
+
+        // Tree is now [B, A, F1, F2]
+        // Move connection A into Folder 1
+        manager.move_node(id_a, Some(f1_id), 0).await.unwrap();
+        let cfg = manager.get_config().await;
+        assert_eq!(cfg.tree.len(), 3); // B, F1, F2 at root
+        if let TreeNode::Folder(f1) = cfg.tree.iter().find(|n| n.id() == f1_id).unwrap() {
+            assert_eq!(f1.children.len(), 1);
+            assert_eq!(f1.children[0].id(), id_a);
+        } else {
+            panic!("Expected folder");
+        }
+
+        // Move connection A from Folder 1 into Folder 2
+        manager.move_node(id_a, Some(f2_id), 0).await.unwrap();
+        let cfg = manager.get_config().await;
+        let f1 = cfg.tree.iter().find(|n| n.id() == f1_id).unwrap();
+        if let TreeNode::Folder(f) = f1 {
+            assert_eq!(f.children.len(), 0);
+        }
+        let f2 = cfg.tree.iter().find(|n| n.id() == f2_id).unwrap();
+        if let TreeNode::Folder(f) = f2 {
+            assert_eq!(f.children.len(), 1);
+            assert_eq!(f.children[0].id(), id_a);
+        }
+
+        // Move connection A out of Folder 2 back to root at index 0
+        manager.move_node(id_a, None, 0).await.unwrap();
+        let cfg = manager.get_config().await;
+        assert_eq!(cfg.tree[0].id(), id_a);
+
+        // 3. Move folder F2 into folder F1
+        manager.move_node(f2_id, Some(f1_id), 0).await.unwrap();
+        let cfg = manager.get_config().await;
+        let f1 = cfg.tree.iter().find(|n| n.id() == f1_id).unwrap();
+        if let TreeNode::Folder(f) = f1 {
+            assert_eq!(f.children.len(), 1);
+            assert_eq!(f.children[0].id(), f2_id);
+            if let TreeNode::Folder(ref sub) = f.children[0] {
+                assert_eq!(sub.parent_id, Some(f1_id));
+            }
+        }
+
+        // 4. Verify cycle prevention: moving F1 into F2 (its own child) must fail
+        let err = manager.move_node(f1_id, Some(f2_id), 0).await;
+        assert!(
+            err.is_err(),
+            "Moving folder into its own subfolder must fail"
+        );
+
+        // Moving F1 into itself must fail
+        let err_self = manager.move_node(f1_id, Some(f1_id), 0).await;
+        assert!(err_self.is_err(), "Moving folder into itself must fail");
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_migration_moves_plaintext_secrets_to_vault() {
+        let dir = test_config_dir();
+        let test_service = format!("rustius-test-{}", Uuid::new_v4());
+        let manager = ConfigManager::new(dir.clone(), Box::new(PlaintextStorage))
+            .expect("Failed to create ConfigManager")
+            .with_secret_manager(Arc::new(SecretManager::new(
+                test_service,
+                dir.join("vault.enc"),
+            )));
+
+        // Create connection with an inline plaintext password (not yet secured)
+        let conn = Connection::new(
+            "Legacy Plaintext Node".into(),
+            ConnectionType::Ssh,
+            "10.0.0.1".into(),
+            22,
+            AuthMethod::password("user1", Some("plain_pwd_123".into())),
+        );
+        let conn_id = conn.id;
+
+        // Directly insert connection without secure_connection (simulating legacy/unsecured data)
+        manager
+            .update_config(|config| {
+                config.tree.push(TreeNode::Connection(conn));
+            })
+            .await
+            .unwrap();
+
+        // Verify it currently has inline plaintext password and no secret_ref
+        let stored = manager.get_connection(conn_id).await.unwrap();
+        if let AuthMethod::Password {
+            password,
+            secret_ref,
+            ..
+        } = &stored.auth
+        {
+            assert_eq!(password.as_deref(), Some("plain_pwd_123"));
+            assert!(secret_ref.is_none());
+        } else {
+            panic!("Expected password auth");
+        }
+
+        // Now migrate to MasterPassword vault
+        let master = "MasterKey2026!";
+        manager
+            .migrate_vault_backend(VaultBackend::MasterPassword, Some(master.to_string()))
+            .await
+            .unwrap();
+
+        // Check that plaintext password was cleared and replaced with SecretRef::Vault
+        let migrated = manager.get_connection(conn_id).await.unwrap();
+        if let AuthMethod::Password {
+            password,
+            secret_ref,
+            ..
+        } = &migrated.auth
+        {
+            assert_eq!(password, &None, "Plaintext password must be removed");
+            assert!(
+                matches!(secret_ref, Some(SecretRef::Vault { .. })),
+                "SecretRef::Vault must be assigned"
+            );
+        } else {
+            panic!("Expected password auth");
+        }
+
+        // Resolving connection must return the decrypted plaintext password
+        let resolved = manager.resolve_connection(&migrated).await.unwrap();
+        if let AuthMethod::Password { password, .. } = &resolved.auth {
+            assert_eq!(password.as_deref(), Some("plain_pwd_123"));
+        } else {
+            panic!("Expected password auth");
+        }
+
+        // Cleanup
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

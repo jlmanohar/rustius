@@ -23,6 +23,11 @@ export class AppStore {
       default_terminal_type: 'xterm-256color',
       show_sidebar: true,
       sidebar_width: 280,
+      default_rdp_engine: 'ironrdp',
+      default_rdp_resolution_mode: 'auto',
+      default_rdp_scale_factor: 0,
+      default_rdp_clipboard_sharing: true,
+      default_rdp_egfx: false,
     },
     credentials: [],
     tree: [],
@@ -103,13 +108,16 @@ export class AppStore {
       this._initPromise = (async () => {
         await this.loadConfig();
         const status = await this.fetchVaultStatus();
-        if (
-          status &&
-          status.effective_backend === 'master_password' &&
-          status.has_vault_file &&
-          !status.is_unlocked
-        ) {
-          this.isVaultUnlockModalOpen = true;
+        if (status) {
+          if (!status.has_vault_file) {
+            // App onboarding: Master password must always be set on initial run
+            this.isVaultUnlockModalOpen = true;
+          } else if (
+            status.effective_backend === 'master_password' &&
+            !status.is_unlocked
+          ) {
+            this.isVaultUnlockModalOpen = true;
+          }
         }
       })();
     }
@@ -159,6 +167,13 @@ export class AppStore {
     await invoke('vault_change_backend', { target, masterPassword: masterPassword || null });
     await this.fetchVaultStatus();
     await this.loadConfig();
+  }
+
+  async setupMasterPassword(password: string): Promise<void> {
+    await invoke('vault_change_backend', { target: 'master_password', masterPassword: password });
+    await this.fetchVaultStatus();
+    await this.loadConfig();
+    this.isVaultUnlockModalOpen = false;
   }
 
   async loadConfig() {
@@ -284,6 +299,24 @@ export class AppStore {
     }
   }
 
+  async moveNode(nodeId: string, targetParentId: string | null, targetIndex: number) {
+    try {
+      await invoke('move_node', {
+        nodeId,
+        targetParentId: targetParentId || null,
+        targetIndex,
+      });
+      await this.loadConfig();
+    } catch (err) {
+      console.error('Failed to move node via Tauri:', err);
+      const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+      if (isTauri) {
+        throw err;
+      }
+      this.moveNodeLocally(nodeId, targetParentId, targetIndex);
+    }
+  }
+
   async addCredential(cred: CredentialProfile): Promise<string> {
     try {
       const id = await invoke<string>('add_credential', { credential: cred });
@@ -338,6 +371,40 @@ export class AppStore {
       }
     }
     return false;
+  }
+
+  moveNodeLocally(nodeId: string, targetParentId: string | null, targetIndex: number) {
+    const extracted = this.extractNodeLocally(this.config.tree, nodeId);
+    if (!extracted) return;
+
+    if (extracted.node_type === 'folder') {
+      extracted.parent_id = targetParentId || undefined;
+    }
+
+    if (targetParentId) {
+      const folder = this.findFolder(this.config.tree, targetParentId);
+      if (folder) {
+        const idx = Math.min(Math.max(0, targetIndex), folder.children.length);
+        folder.children.splice(idx, 0, extracted);
+      }
+    } else {
+      const idx = Math.min(Math.max(0, targetIndex), this.config.tree.length);
+      this.config.tree.splice(idx, 0, extracted);
+    }
+  }
+
+  private extractNodeLocally(nodes: TreeNode[], id: string): TreeNode | null {
+    const idx = nodes.findIndex((n) => n.id === id);
+    if (idx !== -1) {
+      return nodes.splice(idx, 1)[0];
+    }
+    for (const n of nodes) {
+      if (n.node_type === 'folder') {
+        const found = this.extractNodeLocally(n.children, id);
+        if (found) return found;
+      }
+    }
+    return null;
   }
 
   private findFolder(nodes: TreeNode[], folderId: string): Folder | null {
@@ -396,6 +463,22 @@ export class AppStore {
     this.activeTabId = id;
   }
 
+  moveTab(sourceTabId: string, targetTabId: string, position: 'before' | 'after') {
+    if (sourceTabId === targetTabId) return;
+    const sourceIdx = this.tabs.findIndex((t) => t.id === sourceTabId);
+    if (sourceIdx === -1) return;
+
+    const [tab] = this.tabs.splice(sourceIdx, 1);
+    const targetIdx = this.tabs.findIndex((t) => t.id === targetTabId);
+    if (targetIdx === -1) {
+      this.tabs.splice(sourceIdx, 0, tab);
+      return;
+    }
+
+    const insertIdx = position === 'before' ? targetIdx : targetIdx + 1;
+    this.tabs.splice(insertIdx, 0, tab);
+  }
+
   closeTab(tabId: string) {
     const idx = this.tabs.findIndex((t) => t.id === tabId);
     if (idx !== -1) {
@@ -442,6 +525,7 @@ export class AppStore {
   private terminateSession(tab: TabSession) {
     if (tab.type === 'ssh') {
       invoke('ssh_disconnect', { tabId: tab.id }).catch(() => {});
+      invoke('sftp_disconnect', { tabId: tab.id }).catch(() => {});
     } else if (tab.type === 'sftp') {
       invoke('sftp_disconnect', { tabId: tab.id }).catch(() => {});
     } else if (tab.type === 'local_terminal') {

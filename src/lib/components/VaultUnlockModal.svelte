@@ -1,65 +1,141 @@
 <script lang="ts">
   import { appState } from '../stores/appState.svelte';
-  import { Shield, Lock, Eye, EyeOff, KeyRound, AlertCircle } from '@lucide/svelte';
+  import { Shield, ShieldCheck, ShieldAlert, Lock, Eye, EyeOff, KeyRound, AlertCircle } from '@lucide/svelte';
 
   let masterPassword = $state('');
+  let confirmPassword = $state('');
   let showPassword = $state(false);
+  let showConfirmPassword = $state(false);
   let errorMessage = $state('');
   let isSubmitting = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
 
+  let isSetupMode = $derived(!appState.vaultStatus?.has_vault_file);
+
   $effect(() => {
-    if (appState.isVaultUnlockModalOpen && inputRef) {
-      inputRef.focus();
+    if (appState.isVaultUnlockModalOpen) {
+      errorMessage = '';
+      masterPassword = '';
+      confirmPassword = '';
+      showPassword = false;
+      showConfirmPassword = false;
+      if (inputRef) {
+        setTimeout(() => inputRef?.focus(), 50);
+      }
     }
   });
 
-  async function handleUnlock(e: SubmitEvent) {
+  async function handleSubmit(e: SubmitEvent) {
     e.preventDefault();
-    if (!masterPassword) {
-      errorMessage = 'Please enter your master password.';
-      return;
-    }
-
-    isSubmitting = true;
     errorMessage = '';
 
-    try {
-      const ok = await appState.unlockVault(masterPassword);
-      if (!ok) {
-        errorMessage = 'Incorrect master password. Please try again.';
-      } else {
-        masterPassword = '';
+    if (isSetupMode) {
+      if (!masterPassword) {
+        errorMessage = 'Please enter a master password.';
+        return;
       }
-    } catch (err: any) {
-      errorMessage = err?.message || 'Failed to unlock vault';
-    } finally {
-      isSubmitting = false;
+      if (masterPassword.length < 6) {
+        errorMessage = 'Master password must be at least 6 characters.';
+        return;
+      }
+      if (masterPassword !== confirmPassword) {
+        errorMessage = 'Passwords do not match. Please verify and try again.';
+        return;
+      }
+
+      isSubmitting = true;
+      try {
+        await appState.setupMasterPassword(masterPassword);
+        masterPassword = '';
+        confirmPassword = '';
+      } catch (err: any) {
+        errorMessage = err?.message || 'Failed to initialize master password vault.';
+      } finally {
+        isSubmitting = false;
+      }
+    } else {
+      if (!masterPassword) {
+        errorMessage = 'Please enter your master password.';
+        return;
+      }
+
+      isSubmitting = true;
+      try {
+        const ok = await appState.unlockVault(masterPassword);
+        if (!ok) {
+          errorMessage = 'Incorrect master password. Please try again.';
+        } else {
+          masterPassword = '';
+        }
+      } catch (err: any) {
+        errorMessage = err?.message || 'Failed to unlock vault';
+      } finally {
+        isSubmitting = false;
+      }
+    }
+  }
+
+  function handleKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      if (!isSetupMode) {
+        appState.isVaultUnlockModalOpen = false;
+      }
+      e.stopPropagation();
     }
   }
 </script>
 
 {#if appState.isVaultUnlockModalOpen}
-  <div class="modal-scrim" role="presentation">
+  <div
+    class="modal-scrim"
+    role="presentation"
+    onclick={() => {
+      if (!isSetupMode) {
+        appState.isVaultUnlockModalOpen = false;
+      }
+    }}
+  >
     <div
-      class="modal-card"
+      class="modal-card {isSetupMode ? 'modal-card-setup' : ''}"
       role="dialog"
       aria-modal="true"
       tabindex="-1"
       onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
+      onkeydown={handleKeyDown}
     >
       <div class="unlock-header">
-        <div class="icon-badge">
-          <Lock size={22} class="lock-icon" />
+        <div class="icon-badge {isSetupMode ? 'icon-badge-setup' : ''}">
+          {#if isSetupMode}
+            <ShieldCheck size={24} class="lock-icon" />
+          {:else}
+            <Lock size={22} class="lock-icon" />
+          {/if}
         </div>
-        <h2 class="dialog-heading">Unlock Credential Vault</h2>
+        <h2 class="dialog-heading">
+          {isSetupMode ? 'Set Up Master Password' : 'Unlock Credential Vault'}
+        </h2>
         <p class="dialog-subtitle">
-          Rustius is operating in <strong>Portable Mode</strong> with master password protection. Enter your master password to decrypt your saved credentials.
+          {#if isSetupMode}
+            Welcome to Rustius! Set a Master Password to encrypt and protect your SSH, SFTP, and RDP credentials.
+          {:else}
+            Rustius is operating in <strong>{appState.vaultStatus?.is_portable ? 'Portable Mode' : 'Vault Mode'}</strong> with master password protection. Enter your master password to decrypt your saved credentials.
+          {/if}
         </p>
       </div>
 
-      <form onsubmit={handleUnlock} class="unlock-form">
+      {#if isSetupMode}
+        <div class="security-callout">
+          <ShieldAlert size={16} class="callout-icon" />
+          <div class="callout-content">
+            <span class="callout-title">Zero-Knowledge Local Encryption</span>
+            <p class="callout-desc">
+              Your credentials are encrypted locally with Argon2id and AES-256-GCM. Rustius cannot recover your data if you forget this password.
+            </p>
+          </div>
+        </div>
+      {/if}
+
+      <form onsubmit={handleSubmit} class="unlock-form">
         {#if errorMessage}
           <div class="error-banner">
             <AlertCircle size={14} />
@@ -67,43 +143,90 @@
           </div>
         {/if}
 
-        <div class="input-wrapper">
-          <KeyRound size={14} class="field-icon" />
-          <input
-            bind:this={inputRef}
-            type={showPassword ? 'text' : 'password'}
-            class="password-input"
-            placeholder="Enter master password..."
-            bind:value={masterPassword}
-          />
-          <button
-            type="button"
-            class="toggle-visibility-btn"
-            title={showPassword ? 'Hide password' : 'Show password'}
-            onclick={() => (showPassword = !showPassword)}
-          >
-            {#if showPassword}
-              <EyeOff size={14} />
-            {:else}
-              <Eye size={14} />
-            {/if}
-          </button>
+        <div class="field-group">
+          {#if isSetupMode}
+            <label for="master-password-input" class="field-label">MASTER PASSWORD</label>
+          {/if}
+          <div class="input-wrapper">
+            <KeyRound size={14} class="field-icon" />
+            <input
+              id="master-password-input"
+              bind:this={inputRef}
+              type={showPassword ? 'text' : 'password'}
+              class="password-input"
+              placeholder={isSetupMode ? 'Choose master password (min. 6 characters)...' : 'Enter master password...'}
+              bind:value={masterPassword}
+              autocomplete="new-password"
+            />
+            <button
+              type="button"
+              class="toggle-visibility-btn"
+              title={showPassword ? 'Hide password' : 'Show password'}
+              onclick={() => (showPassword = !showPassword)}
+            >
+              {#if showPassword}
+                <EyeOff size={14} />
+              {:else}
+                <Eye size={14} />
+              {/if}
+            </button>
+          </div>
         </div>
 
-        <div class="actions-row">
+        {#if isSetupMode}
+          <div class="field-group">
+            <label for="confirm-password-input" class="field-label">CONFIRM MASTER PASSWORD</label>
+            <div class="input-wrapper">
+              <KeyRound size={14} class="field-icon" />
+              <input
+                id="confirm-password-input"
+                type={showConfirmPassword ? 'text' : 'password'}
+                class="password-input"
+                placeholder="Re-enter master password to confirm..."
+                bind:value={confirmPassword}
+                autocomplete="new-password"
+              />
+              <button
+                type="button"
+                class="toggle-visibility-btn"
+                title={showConfirmPassword ? 'Hide password' : 'Show password'}
+                onclick={() => (showConfirmPassword = !showConfirmPassword)}
+              >
+                {#if showConfirmPassword}
+                  <EyeOff size={14} />
+                {:else}
+                  <Eye size={14} />
+                {/if}
+              </button>
+            </div>
+          </div>
+        {/if}
+
+        <div class="actions-row {isSetupMode ? 'actions-row-setup' : ''}">
+          {#if !isSetupMode}
+            <button
+              type="button"
+              class="btn btn-secondary"
+              onclick={() => (appState.isVaultUnlockModalOpen = false)}
+            >
+              Skip for now
+            </button>
+          {/if}
           <button
-            type="button"
-            class="btn btn-secondary"
-            onclick={() => (appState.isVaultUnlockModalOpen = false)}
+            type="submit"
+            class="btn btn-primary {isSetupMode ? 'btn-full' : ''}"
+            disabled={isSubmitting}
           >
-            Skip for now
-          </button>
-          <button type="submit" class="btn btn-primary" disabled={isSubmitting}>
             {#if isSubmitting}
-              Unlocking...
+              <span>{isSetupMode ? 'Creating Secure Vault...' : 'Unlocking...'}</span>
             {:else}
-              <Shield size={14} />
-              <span>Unlock Vault</span>
+              {#if isSetupMode}
+                <ShieldCheck size={14} />
+                <span>Create Secure Vault</span>
+              {:else}
+                <Shield size={14} />
+                <span>Unlock Vault</span>
+              {/if}
             {/if}
           </button>
         </div>
@@ -135,6 +258,10 @@
     color: #ededed;
   }
 
+  .modal-card-setup {
+    width: 460px;
+  }
+
   .unlock-header {
     text-align: center;
     margin-bottom: 20px;
@@ -151,6 +278,12 @@
     align-items: center;
     justify-content: center;
     color: #ffffff;
+  }
+
+  .icon-badge-setup {
+    background: rgba(16, 185, 129, 0.1);
+    border-color: rgba(16, 185, 129, 0.3);
+    color: #10b981;
   }
 
   .dialog-heading {
@@ -172,10 +305,59 @@
     color: #ffffff;
   }
 
+  .security-callout {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid #222222;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+  }
+
+  :global(.callout-icon) {
+    color: #f59e0b;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .callout-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .callout-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #e5e5e5;
+  }
+
+  .callout-desc {
+    font-size: 0.73rem;
+    color: #888888;
+    line-height: 1.4;
+    margin: 0;
+  }
+
   .unlock-form {
     display: flex;
     flex-direction: column;
     gap: 16px;
+  }
+
+  .field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .field-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: #737373;
   }
 
   .error-banner {
@@ -247,6 +429,10 @@
     margin-top: 4px;
   }
 
+  .actions-row-setup {
+    margin-top: 8px;
+  }
+
   .btn {
     display: inline-flex;
     align-items: center;
@@ -257,6 +443,12 @@
     border-radius: 6px;
     cursor: pointer;
     transition: all 0.15s ease;
+  }
+
+  .btn-full {
+    width: 100%;
+    justify-content: center;
+    padding: 10px 16px;
   }
 
   .btn-secondary {

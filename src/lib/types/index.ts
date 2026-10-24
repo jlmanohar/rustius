@@ -59,6 +59,16 @@ export interface RdpConfig {
   domain?: string;
   resolution_mode?: 'auto' | 'native' | '1080p' | '720p' | 'custom';
   scale_factor?: number;
+  engine?: 'ironrdp' | 'freerdp';
+  egfx?: boolean;
+}
+
+export interface IronRdpPointerBitmap {
+  width: number;
+  height: number;
+  hotspot_x: number;
+  hotspot_y: number;
+  data: string; // Base64 encoded RGBA pixel bytes
 }
 
 export interface RdpExitDiagnostic {
@@ -68,6 +78,7 @@ export interface RdpExitDiagnostic {
   severity: 'security' | 'auth' | 'error' | 'info';
   raw_error?: string;
 }
+
 
 export interface CredentialProfile {
   id: string;
@@ -120,6 +131,11 @@ export interface AppSettings {
   close_tab_on_exit?: boolean;
   sftp_follow_terminal_folder?: boolean;
   vault_backend?: VaultBackend;
+  default_rdp_engine?: 'ironrdp' | 'freerdp';
+  default_rdp_resolution_mode?: 'auto' | 'native' | '1080p' | '720p' | 'custom';
+  default_rdp_scale_factor?: number;
+  default_rdp_clipboard_sharing?: boolean;
+  default_rdp_egfx?: boolean;
 }
 
 export interface RustiusConfig {
@@ -131,6 +147,12 @@ export interface RustiusConfig {
 
 export type TabType = 'ssh' | 'sftp' | 'rdp' | 'local_terminal';
 
+export interface CredentialOverride {
+  username?: string;
+  password?: string;
+  domain?: string;
+}
+
 export interface TabSession {
   id: string;
   title: string;
@@ -138,6 +160,7 @@ export interface TabSession {
   connectionId?: string;
   status: 'connecting' | 'connected' | 'disconnected' | 'error';
   badge?: string;
+  credentialsOverride?: CredentialOverride;
 }
 
 export interface FileEntry {

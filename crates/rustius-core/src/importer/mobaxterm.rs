@@ -292,7 +292,10 @@ fn parse_session_entry(
     let (domain, final_username) = if conn_type == ConnectionType::Rdp && username.contains('\\') {
         let parts: Vec<&str> = username.splitn(2, '\\').collect();
         if parts.len() == 2 && !parts[0].trim().is_empty() {
-            (Some(parts[0].trim().to_string()), parts[1].trim().to_string())
+            (
+                Some(parts[0].trim().to_string()),
+                parts[1].trim().to_string(),
+            )
         } else {
             (None, username)
         }

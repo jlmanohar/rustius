@@ -156,6 +156,7 @@
       const initialPath = await invoke<string>('sftp_connect', {
         tabId: session.id,
         connectionId: session.connectionId,
+        credentialsOverride: session.credentialsOverride,
       });
       isConnected = true;
       await loadRemoteDir(initialPath);

@@ -146,7 +146,10 @@ pub fn resolve_key_path(raw_path: &str, base_dir: Option<&std::path::Path>) -> s
 
     let candidate = if trimmed == "~" {
         get_user_home_dir().unwrap_or_else(|| std::path::PathBuf::from(trimmed))
-    } else if let Some(rest) = trimmed.strip_prefix("~/").or_else(|| trimmed.strip_prefix("~\\")) {
+    } else if let Some(rest) = trimmed
+        .strip_prefix("~/")
+        .or_else(|| trimmed.strip_prefix("~\\"))
+    {
         if let Some(home) = get_user_home_dir() {
             home.join(rest)
         } else {
@@ -303,6 +306,81 @@ pub struct Connection {
     pub credential_id: Option<Uuid>,
 }
 
+/// Temporary credential overrides for a one-off connection session.
+/// Never saved to persistent storage.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct CredentialOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+}
+
+impl Connection {
+    /// Apply temporary credentials override for this session in memory only.
+    pub fn apply_override(&mut self, creds: Option<CredentialOverride>) {
+        let Some(creds) = creds else {
+            return;
+        };
+
+        if let Some(username) = creds.username {
+            let trimmed = username.trim();
+            if !trimmed.is_empty() {
+                match &mut self.auth {
+                    AuthMethod::Password { username: u, .. } => *u = trimmed.to_string(),
+                    AuthMethod::KeyFile { username: u, .. } => *u = trimmed.to_string(),
+                    AuthMethod::Agent { username: u } => *u = trimmed.to_string(),
+                }
+            }
+        }
+
+        if let Some(password) = creds.password {
+            match &mut self.auth {
+                AuthMethod::Password {
+                    password: p,
+                    secret_ref,
+                    ..
+                } => {
+                    *p = Some(password);
+                    *secret_ref = None;
+                }
+                AuthMethod::KeyFile { username, .. } => {
+                    self.auth = AuthMethod::Password {
+                        username: username.clone(),
+                        password: Some(password),
+                        secret_ref: None,
+                    };
+                }
+                AuthMethod::Agent { username } => {
+                    self.auth = AuthMethod::Password {
+                        username: username.clone(),
+                        password: Some(password),
+                        secret_ref: None,
+                    };
+                }
+            }
+        }
+
+        if let Some(domain) = creds.domain {
+            let domain_val = if domain.trim().is_empty() {
+                None
+            } else {
+                Some(domain.trim().to_string())
+            };
+            if let Some(ref mut rdp) = self.rdp_config {
+                rdp.domain = domain_val;
+            } else {
+                self.rdp_config = Some(RdpConfig {
+                    domain: domain_val,
+                    ..Default::default()
+                });
+            }
+        }
+    }
+}
+
 /// SSH-specific configuration for a connection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SshConfig {
@@ -372,6 +450,12 @@ pub struct RdpConfig {
     /// Remote desktop DPI scale percentage: 100, 125, 150, 175, 200, or 0 (auto)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale_factor: Option<u32>,
+    /// RDP engine: "ironrdp" (default) or "freerdp"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    /// Optional MS-RDPEGFX graphics pipeline (defaults to false for stability)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egfx: Option<bool>,
 }
 
 impl Default for RdpConfig {
@@ -385,6 +469,8 @@ impl Default for RdpConfig {
             domain: None,
             resolution_mode: None,
             scale_factor: None,
+            engine: None,
+            egfx: None,
         }
     }
 }
@@ -417,6 +503,16 @@ pub struct Folder {
 pub enum TreeNode {
     Folder(Folder),
     Connection(Connection),
+}
+
+impl TreeNode {
+    /// Retrieve the unique identifier of this tree node.
+    pub fn id(&self) -> Uuid {
+        match self {
+            TreeNode::Folder(f) => f.id,
+            TreeNode::Connection(c) => c.id,
+        }
+    }
 }
 
 /// A reusable credential profile for authenticating across multiple connections.
@@ -488,6 +584,14 @@ pub enum VaultBackend {
     Keyring,
 }
 
+fn default_rdp_engine() -> String {
+    "ironrdp".to_string()
+}
+
+fn default_rdp_resolution_mode() -> String {
+    "auto".to_string()
+}
+
 /// Application-wide settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -506,6 +610,21 @@ pub struct AppSettings {
     /// Credential storage backend (Auto, MasterPassword, Keyring).
     #[serde(default)]
     pub vault_backend: VaultBackend,
+    /// Default RDP engine: "ironrdp" or "freerdp"
+    #[serde(default = "default_rdp_engine")]
+    pub default_rdp_engine: String,
+    /// Default RDP resolution mode: "auto", "native", "1080p", "720p", "custom"
+    #[serde(default = "default_rdp_resolution_mode")]
+    pub default_rdp_resolution_mode: String,
+    /// Default RDP scaling factor: 0 (auto), 100, 125, 150, 175, 200
+    #[serde(default)]
+    pub default_rdp_scale_factor: u32,
+    /// Default RDP clipboard sharing enabled
+    #[serde(default = "default_true")]
+    pub default_rdp_clipboard_sharing: bool,
+    /// Default RDP EGFX graphics pipeline enabled (MS-RDPEGFX, defaults to false)
+    #[serde(default)]
+    pub default_rdp_egfx: bool,
 }
 
 impl Default for AppSettings {
@@ -520,6 +639,11 @@ impl Default for AppSettings {
             close_tab_on_exit: false,
             sftp_follow_terminal_folder: true,
             vault_backend: VaultBackend::default(),
+            default_rdp_engine: default_rdp_engine(),
+            default_rdp_resolution_mode: default_rdp_resolution_mode(),
+            default_rdp_scale_factor: 0,
+            default_rdp_clipboard_sharing: true,
+            default_rdp_egfx: false,
         }
     }
 }
@@ -819,12 +943,16 @@ mod tests {
         assert!(toml_str.contains("CORP Domain Admin"));
         assert!(toml_str.contains("CORP"));
 
-        let parsed: RustiusConfig = toml::from_str(&toml_str).expect("Should deserialize from TOML");
+        let parsed: RustiusConfig =
+            toml::from_str(&toml_str).expect("Should deserialize from TOML");
         assert_eq!(parsed.credentials.len(), 1);
         let loaded = &parsed.credentials[0];
         assert_eq!(loaded.name, "CORP Domain Admin");
         assert_eq!(loaded.domain.as_deref(), Some("CORP"));
-        if let AuthMethod::Password { username, password, .. } = &loaded.auth {
+        if let AuthMethod::Password {
+            username, password, ..
+        } = &loaded.auth
+        {
             assert_eq!(username, "administrator");
             assert_eq!(password.as_deref(), Some("P@ssw0rd123"));
         } else {
@@ -861,7 +989,8 @@ mod tests {
 
     #[test]
     fn test_resolve_key_path_relative_with_base_dir() {
-        let temp_base = std::env::temp_dir().join(format!("rustius-key-test-{}", uuid::Uuid::new_v4()));
+        let temp_base =
+            std::env::temp_dir().join(format!("rustius-key-test-{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_base);
 
         let res = resolve_key_path("keys/id_ed25519", Some(&temp_base));
@@ -886,5 +1015,60 @@ mod tests {
             let abs = "/etc/hosts";
             assert_eq!(resolve_key_path(abs, None), std::path::PathBuf::from(abs));
         }
+    }
+
+    #[test]
+    fn test_apply_override() {
+        let mut conn = Connection {
+            id: Uuid::new_v4(),
+            name: "Test SSH".to_string(),
+            connection_type: ConnectionType::Ssh,
+            host: "example.com".to_string(),
+            port: 22,
+            auth: AuthMethod::password("original_user", Some("orig_pass".to_string())),
+            tags: vec![],
+            environment: None,
+            description: None,
+            notes: None,
+            created_at: default_timestamp(),
+            updated_at: default_timestamp(),
+            ssh_config: None,
+            rdp_config: None,
+            credential_id: None,
+        };
+
+        // None override leaves it unchanged
+        conn.apply_override(None);
+        if let AuthMethod::Password {
+            username, password, ..
+        } = &conn.auth
+        {
+            assert_eq!(username, "original_user");
+            assert_eq!(password.as_deref(), Some("orig_pass"));
+        } else {
+            panic!("Expected password auth");
+        }
+
+        // Apply override
+        conn.apply_override(Some(CredentialOverride {
+            username: Some("temp_admin".to_string()),
+            password: Some("temporary_secret".to_string()),
+            domain: Some("CORP".to_string()),
+        }));
+
+        if let AuthMethod::Password {
+            username, password, ..
+        } = &conn.auth
+        {
+            assert_eq!(username, "temp_admin");
+            assert_eq!(password.as_deref(), Some("temporary_secret"));
+        } else {
+            panic!("Expected password auth");
+        }
+
+        assert_eq!(
+            conn.rdp_config.as_ref().and_then(|r| r.domain.as_deref()),
+            Some("CORP")
+        );
     }
 }
