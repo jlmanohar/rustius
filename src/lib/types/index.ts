@@ -59,7 +59,6 @@ export interface RdpConfig {
   domain?: string;
   resolution_mode?: 'auto' | 'native' | '1080p' | '720p' | 'custom';
   scale_factor?: number;
-  engine?: 'ironrdp' | 'freerdp';
   egfx?: boolean;
 }
 
@@ -131,7 +130,6 @@ export interface AppSettings {
   close_tab_on_exit?: boolean;
   sftp_follow_terminal_folder?: boolean;
   vault_backend?: VaultBackend;
-  default_rdp_engine?: 'ironrdp' | 'freerdp';
   default_rdp_resolution_mode?: 'auto' | 'native' | '1080p' | '720p' | 'custom';
   default_rdp_scale_factor?: number;
   default_rdp_clipboard_sharing?: boolean;

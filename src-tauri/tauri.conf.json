@@ -37,8 +37,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "../resources/binaries/freerdp/wfreerdp.exe"
-    ]
+    "resources": []
   }
 }

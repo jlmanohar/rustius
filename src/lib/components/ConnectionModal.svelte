@@ -210,10 +210,8 @@
         domain = c.rdp_config.domain || '';
         rdpResolutionMode = (c.rdp_config.resolution_mode as any) || (appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto');
         rdpScaleFactor = c.rdp_config.scale_factor ?? (appState.config.app_settings?.default_rdp_scale_factor ?? 0);
-        rdpEngine = (c.rdp_config.engine as any) || (appState.config.app_settings?.default_rdp_engine ?? 'ironrdp');
         rdpEgfx = c.rdp_config.egfx ?? (appState.config.app_settings?.default_rdp_egfx ?? false);
         overrideRdpSettings = !!(
-          c.rdp_config.engine ||
           c.rdp_config.resolution_mode ||
           (c.rdp_config.scale_factor !== undefined && c.rdp_config.scale_factor > 0) ||
           c.rdp_config.egfx !== undefined
@@ -223,7 +221,6 @@
         domain = '';
         rdpResolutionMode = appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto';
         rdpScaleFactor = appState.config.app_settings?.default_rdp_scale_factor ?? 0;
-        rdpEngine = appState.config.app_settings?.default_rdp_engine ?? 'ironrdp';
         rdpEgfx = appState.config.app_settings?.default_rdp_egfx ?? false;
         clipboardSharing = appState.config.app_settings?.default_rdp_clipboard_sharing ?? true;
       }
@@ -244,7 +241,6 @@
       overrideRdpSettings = false;
       rdpResolutionMode = appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto';
       rdpScaleFactor = appState.config.app_settings?.default_rdp_scale_factor ?? 0;
-      rdpEngine = appState.config.app_settings?.default_rdp_engine ?? 'ironrdp';
       rdpEgfx = appState.config.app_settings?.default_rdp_egfx ?? false;
       clipboardSharing = appState.config.app_settings?.default_rdp_clipboard_sharing ?? true;
     }
@@ -257,7 +253,6 @@
 
   // RDP options
   let overrideRdpSettings = $state(false);
-  let rdpEngine = $state<'ironrdp' | 'freerdp'>(appState.config.app_settings?.default_rdp_engine ?? 'ironrdp');
   let rdpEgfx = $state(appState.config.app_settings?.default_rdp_egfx ?? false);
   let rdpResolutionMode = $state<'auto' | 'native' | '1080p' | '720p' | 'custom'>(appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto');
   let rdpScaleFactor = $state<number>(appState.config.app_settings?.default_rdp_scale_factor ?? 0);
@@ -265,9 +260,6 @@
   let rdpHeight = $state(1080);
   let clipboardSharing = $state(appState.config.app_settings?.default_rdp_clipboard_sharing ?? true);
 
-  let defaultEngineLabel = $derived(
-    appState.config.app_settings?.default_rdp_engine === 'freerdp' ? 'FreeRDP (Native Windows)' : 'IronRDP (Pure Rust)'
-  );
   let defaultResolutionLabel = $derived(
     (() => {
       const mode = appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto';
@@ -498,8 +490,7 @@
               domain: finalDomain || undefined,
               resolution_mode: overrideRdpSettings ? rdpResolutionMode : undefined,
               scale_factor: (overrideRdpSettings && rdpScaleFactor > 0) ? rdpScaleFactor : undefined,
-              engine: overrideRdpSettings ? rdpEngine : undefined,
-              egfx: (overrideRdpSettings && rdpEngine === 'ironrdp') ? rdpEgfx : undefined,
+              egfx: overrideRdpSettings ? rdpEgfx : undefined,
             }
           : undefined,
     };
@@ -930,10 +921,6 @@
             <div class="defaults-summary-card">
               <div class="defaults-summary-grid">
                 <div class="defaults-item">
-                  <span class="defaults-label">Engine</span>
-                  <span class="defaults-val">{defaultEngineLabel}</span>
-                </div>
-                <div class="defaults-item">
                   <span class="defaults-label">Resolution</span>
                   <span class="defaults-val">{defaultResolutionLabel}</span>
                 </div>
@@ -956,14 +943,6 @@
             </div>
           {:else}
             <div class="form-grid rdp-override-grid">
-              <div class="form-cell col-2">
-                <label for="rdp-engine">RDP Engine</label>
-                <select id="rdp-engine" bind:value={rdpEngine} class="input-field">
-                  <option value="ironrdp">IronRDP (Cross-Platform · Canvas/GPU Render · Pure Rust)</option>
-                  <option value="freerdp">FreeRDP (Direct3D Native Windows Overlay)</option>
-                </select>
-              </div>
-
               <div class="form-cell col-2">
                 <label for="rdp-resolution-mode">Display Resolution</label>
                 <select id="rdp-resolution-mode" bind:value={rdpResolutionMode} class="input-field">
@@ -1005,14 +984,12 @@
                 </label>
               </div>
 
-              {#if rdpEngine === 'ironrdp'}
-                <div class="form-cell col-2">
-                  <label class="check-row" title="Enable Microsoft Remote Desktop Graphics Pipeline (MS-RDPEGFX). Keep disabled (recommended) for maximum stability.">
-                    <input type="checkbox" bind:checked={rdpEgfx} />
-                    <span class="check-title">Enable EGFX Graphics Pipeline (Experimental)</span>
-                  </label>
-                </div>
-              {/if}
+              <div class="form-cell col-2">
+                <label class="check-row" title="Enable Microsoft Remote Desktop Graphics Pipeline (MS-RDPEGFX). Keep disabled (recommended) for maximum stability.">
+                  <input type="checkbox" bind:checked={rdpEgfx} />
+                  <span class="check-title">Enable EGFX Graphics Pipeline (Experimental)</span>
+                </label>
+              </div>
             </div>
           {/if}
         </div>

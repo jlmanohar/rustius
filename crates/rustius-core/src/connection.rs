@@ -450,9 +450,6 @@ pub struct RdpConfig {
     /// Remote desktop DPI scale percentage: 100, 125, 150, 175, 200, or 0 (auto)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale_factor: Option<u32>,
-    /// RDP engine: "ironrdp" (default) or "freerdp"
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub engine: Option<String>,
     /// Optional MS-RDPEGFX graphics pipeline (defaults to false for stability)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egfx: Option<bool>,
@@ -469,7 +466,6 @@ impl Default for RdpConfig {
             domain: None,
             resolution_mode: None,
             scale_factor: None,
-            engine: None,
             egfx: None,
         }
     }
@@ -584,10 +580,6 @@ pub enum VaultBackend {
     Keyring,
 }
 
-fn default_rdp_engine() -> String {
-    "ironrdp".to_string()
-}
-
 fn default_rdp_resolution_mode() -> String {
     "auto".to_string()
 }
@@ -610,9 +602,6 @@ pub struct AppSettings {
     /// Credential storage backend (Auto, MasterPassword, Keyring).
     #[serde(default)]
     pub vault_backend: VaultBackend,
-    /// Default RDP engine: "ironrdp" or "freerdp"
-    #[serde(default = "default_rdp_engine")]
-    pub default_rdp_engine: String,
     /// Default RDP resolution mode: "auto", "native", "1080p", "720p", "custom"
     #[serde(default = "default_rdp_resolution_mode")]
     pub default_rdp_resolution_mode: String,
@@ -639,7 +628,6 @@ impl Default for AppSettings {
             close_tab_on_exit: false,
             sftp_follow_terminal_folder: true,
             vault_backend: VaultBackend::default(),
-            default_rdp_engine: default_rdp_engine(),
             default_rdp_resolution_mode: default_rdp_resolution_mode(),
             default_rdp_scale_factor: 0,
             default_rdp_clipboard_sharing: true,

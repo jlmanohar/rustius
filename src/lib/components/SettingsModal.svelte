@@ -28,7 +28,6 @@
   let sftpFollowTerminal = $state(appState.config.app_settings?.sftp_follow_terminal_folder ?? true);
   let termType = $state(appState.config.app_settings?.default_terminal_type ?? 'xterm-256color');
   let fontSize = $state(appState.config.app_settings?.font_size ?? 13);
-  let defaultRdpEngine = $state<'ironrdp' | 'freerdp'>(appState.config.app_settings?.default_rdp_engine ?? 'ironrdp');
   let defaultRdpResolutionMode = $state<'auto' | 'native' | '1080p' | '720p' | 'custom'>(appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto');
   let defaultRdpScaleFactor = $state<number>(appState.config.app_settings?.default_rdp_scale_factor ?? 0);
   let defaultRdpClipboardSharing = $state<boolean>(appState.config.app_settings?.default_rdp_clipboard_sharing ?? true);
@@ -235,7 +234,6 @@
       font_size: Number(fontSize) || 13,
       font_family: fontFamily.replace(/['"]/g, '').trim() || 'Geist Mono',
       vault_backend: selectedVaultBackend,
-      default_rdp_engine: defaultRdpEngine,
       default_rdp_resolution_mode: defaultRdpResolutionMode,
       default_rdp_scale_factor: Number(defaultRdpScaleFactor) || 0,
       default_rdp_clipboard_sharing: defaultRdpClipboardSharing,
@@ -263,7 +261,6 @@
     customFontFamily = '';
     fontFamily = 'Geist Mono';
     selectedVaultBackend = 'auto';
-    defaultRdpEngine = 'ironrdp';
     defaultRdpResolutionMode = 'auto';
     defaultRdpScaleFactor = 0;
     defaultRdpClipboardSharing = true;
@@ -278,7 +275,6 @@
       font_size: 13,
       font_family: 'Geist Mono',
       vault_backend: 'auto' as VaultBackend,
-      default_rdp_engine: 'ironrdp' as const,
       default_rdp_resolution_mode: 'auto' as const,
       default_rdp_scale_factor: 0,
       default_rdp_clipboard_sharing: true,
@@ -512,25 +508,10 @@
         {:else if activeCategory === 'rdp'}
           <div class="category-header">
             <h3 class="category-title">Remote Desktop</h3>
-            <p class="category-subtitle">Global defaults for RDP rendering engines, display resolution, and clipboard sharing.</p>
+            <p class="category-subtitle">Global defaults for display resolution, scaling, and clipboard sharing.</p>
           </div>
 
           <div class="settings-group">
-            <div class="setting-field">
-              <label for="default-rdp-engine-select" class="field-label">DEFAULT RDP ENGINE</label>
-              <select
-                id="default-rdp-engine-select"
-                class="geist-select"
-                bind:value={defaultRdpEngine}
-              >
-                <option value="ironrdp">IronRDP (Cross-Platform · Canvas/GPU Render · Pure Rust)</option>
-                <option value="freerdp">FreeRDP (Direct3D Native Windows Overlay)</option>
-              </select>
-              <span class="field-hint">
-                IronRDP renders inside the tab canvas with WebGL and supports bidirectional file copy. FreeRDP uses native hardware acceleration. Individual connections can override this default.
-              </span>
-            </div>
-
             <div class="setting-field">
               <label for="default-rdp-res-select" class="field-label">DEFAULT DISPLAY RESOLUTION</label>
               <select

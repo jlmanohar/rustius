@@ -15,7 +15,15 @@ use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
-use crate::freerdp::RdpExitDiagnostic;
+/// Diagnostic information explaining why an RDP session ended or failed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RdpExitDiagnostic {
+    pub code: i32,
+    pub title: String,
+    pub message: String,
+    pub severity: String, // "security", "auth", "error", "info"
+    pub raw_error: Option<String>,
+}
 
 /// Configuration for an IronRDP connection.
 #[derive(Clone, Debug, Serialize, Deserialize)]

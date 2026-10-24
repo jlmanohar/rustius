@@ -41,12 +41,9 @@ Powered by a native **Rust** backend and an **OS Webview** frontend with **Svelt
 - **File Operations**: Upload, download, create folders, rename, delete, and download directly to your system Downloads folder.
 
 ### 🪟 Remote Desktop (RDP)
-- **Dual RDP Engines**:
-  - **IronRDP (Default)**: Pure-Rust, memory-safe, cross-platform RDP client rendered directly into an accelerated HTML5 Canvas. Supports dirty-rect rendering, FastPath mouse/keyboard input, and zero native window hacks.
-  - **FreeRDP**: Native Direct3D child-window overlay engine with hardware acceleration.
+- **Pure-Rust IronRDP Engine**: Memory-safe, cross-platform RDP client rendered directly into an accelerated HTML5 Canvas / WebGL2 GPU texture pipeline. Supports dirty-rect rendering, FastPath mouse/keyboard input, bidirectional clipboard, and file transfer.
 - **Dynamic Resolution & Smart Sizing**: Presets for Fit Viewport, 1080p, 1440p, 4K, and Ultrawide resolutions.
 - **Desktop DPI Scaling**: Custom client-side DPI scaling (100%–300%) with automatic high-DPI calculation for razor-sharp text and icons on 2K/4K displays.
-- **Docked or Detached Mode**: Keep sessions seamlessly embedded inside tabs or pop them out into detached native windows for multi-monitor setups.
 - **Roadmap Note (MS-RDPEGFX)**: The MS-RDPEGFX graphics pipeline is currently optional and disabled by default due to an upstream RemoteFX progressive tile decoder issue in IronRDP (`rfx progressive decode failed`). Standard planar bitmap decoding is active and stable. When upstream resolves the progressive wavelet decoder, EGFX will be enabled by default to unlock ClearCodec text sharpening, H.264 video streaming, and true 60 FPS frame-pacing.
 
 ### 🔐 Secure Credential Management & Profiles
@@ -80,7 +77,7 @@ rustius/
 ├── crates/
 │   ├── rustius-core       # Config storage, connection models, vault & session importers
 │   ├── rustius-ssh        # SSH sessions (russh) & SFTP operations (russh-sftp)
-│   ├── rustius-rdp        # RDP session orchestration and FreeRDP embedding
+│   ├── rustius-rdp        # Pure-Rust IronRDP session client & WebGL/Canvas rendering pipeline
 │   └── rustius-terminal   # Cross-platform local PTY management (portable-pty)
 ├── src-tauri/             # Tauri v2 application shell, commands, and window orchestration
 └── src/                   # Svelte 5 frontend (SvelteKit SPA, xterm.js, UI components)

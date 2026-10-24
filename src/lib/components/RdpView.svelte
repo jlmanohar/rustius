@@ -14,7 +14,6 @@
     X,
     Zap,
     Power,
-    ExternalLink,
     Lock,
     Shield,
     Key,
@@ -34,13 +33,10 @@
   let isDisconnected = $state(false);
   let disconnectReason = $state('');
   let isFullscreen = $state(false);
-  let isDocked = $state(true);
   let exitInfo = $state<RdpExitDiagnostic | null>(null);
   let copiedDetails = $state(false);
 
   let conn = $derived(appState.findConnection(session.connectionId));
-  let rdpEngine = $derived(conn?.rdp_config?.engine || appState.config.app_settings?.default_rdp_engine || 'ironrdp');
-  let isIronRdp = $derived(rdpEngine === 'ironrdp');
 
   let webglRenderer: RdpWebGlRenderer | null = null;
   let useWebGl = $state(false);
@@ -278,7 +274,7 @@
   }
 
   function handleMouseMove(e: MouseEvent) {
-    if (!isConnected || !isIronRdp) return;
+    if (!isConnected) return;
     const coords = getCanvasMouseCoords(e);
     if (!coords) return;
     pendingMouseMove = coords;
@@ -297,7 +293,7 @@
   }
 
   function handleMouseDown(e: MouseEvent) {
-    if (!isConnected || !isIronRdp) return;
+    if (!isConnected) return;
     canvasRef?.focus();
     const coords = getCanvasMouseCoords(e);
     invoke('ironrdp_mouse_button', {
@@ -310,7 +306,7 @@
   }
 
   function handleMouseUp(e: MouseEvent) {
-    if (!isConnected || !isIronRdp) return;
+    if (!isConnected) return;
     const coords = getCanvasMouseCoords(e);
     invoke('ironrdp_mouse_button', {
       tabId: session.id,
@@ -329,7 +325,7 @@
   let accumulatedWheelX = 0;
 
   function handleWheel(e: WheelEvent) {
-    if (!isConnected || !isIronRdp) return;
+    if (!isConnected) return;
     e.preventDefault();
 
     let dy = e.deltaY;
@@ -377,7 +373,7 @@
   const pressedKeys = new Set<string>();
 
   function handleKeyDown(e: KeyboardEvent) {
-    if (!isConnected || !isIronRdp) return;
+    if (!isConnected) return;
     if (e.code !== 'F12') {
       e.preventDefault();
     }
@@ -390,7 +386,7 @@
   }
 
   function handleKeyUp(e: KeyboardEvent) {
-    if (!isConnected || !isIronRdp) return;
+    if (!isConnected) return;
     if (e.code !== 'F12') {
       e.preventDefault();
     }
@@ -403,7 +399,7 @@
   }
 
   function releaseAllKeys() {
-    if (!isConnected || !isIronRdp) return;
+    if (!isConnected) return;
     if (pressedKeys.size > 0) {
       for (const code of pressedKeys) {
         invoke('ironrdp_key_event', {
@@ -418,7 +414,7 @@
   }
 
   async function sendCtrlAltDel() {
-    if (!isConnected || !isIronRdp) return;
+    if (!isConnected) return;
     for (const code of ['ControlLeft', 'AltLeft', 'Delete']) {
       await invoke('ironrdp_key_event', { tabId: session.id, code, pressed: true }).catch(() => {});
     }
@@ -444,7 +440,7 @@
       `Exit Code: ${exitInfo.code} (0x${(exitInfo.code >>> 0).toString(16).toUpperCase()})`,
     ];
     if (exitInfo.raw_error) {
-      lines.push(`${isIronRdp ? 'IronRDP' : 'FreeRDP'} Diagnostic: ${exitInfo.raw_error}`);
+      lines.push(`IronRDP Diagnostic: ${exitInfo.raw_error}`);
     }
     if (session.connectionId) {
       const conn = appState.findConnection(session.connectionId);
@@ -539,33 +535,19 @@
     };
   }
 
-  function syncBounds() {
-    if (isIronRdp || !viewportRef || isDisconnected || !isDocked) return;
-    if (appState.activeTabId !== session.id) return;
-    const bounds = getFittedBounds();
-    if (!bounds) return;
-    invoke('freerdp_update_bounds', {
-      tabId: session.id,
-      x: bounds.x,
-      y: bounds.y,
-      width: bounds.width,
-      height: bounds.height,
-    }).catch(() => {});
-  }
-
   let ironResizeTimer: any = null;
   let lastIronRdpWidth = 0;
   let lastIronRdpHeight = 0;
 
   function handleIronRdpResize() {
-    if (!isIronRdp || !isConnected || isDisconnected || !viewportRef) return;
+    if (!isConnected || isDisconnected || !viewportRef) return;
     if (appState.activeTabId !== session.id) return;
     if (ironResizeTimer) {
       clearTimeout(ironResizeTimer);
     }
     ironResizeTimer = setTimeout(async () => {
       ironResizeTimer = null;
-      if (!isIronRdp || !isConnected || isDisconnected || !viewportRef) return;
+      if (!isConnected || isDisconnected || !viewportRef) return;
       if (appState.activeTabId !== session.id) return;
       const bounds = getFittedBounds();
       if (!bounds) return;
@@ -667,7 +649,7 @@
           }
         } else {
           const code = event.payload;
-          const engineName = isIronRdp ? 'IronRDP' : 'FreeRDP';
+          const engineName = 'IronRDP';
           if (code === 0) {
             disconnectReason = `${engineName} session ended by user or server`;
             exitInfo = {
@@ -695,120 +677,83 @@
       }
       sessionDisposables.add(unlistenExit);
 
-      if (isIronRdp) {
-        const onFrame = new Channel<ArrayBuffer>((payload) => {
-          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
-          handleBinaryFrameBatch(payload);
-        });
+      const onFrame = new Channel<ArrayBuffer>((payload) => {
+        if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
+        handleBinaryFrameBatch(payload);
+      });
 
-        const unlistenConnected = await listen(`rdp-connected-${session.id}`, () => {
-          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
-          isConnected = true;
-          isConnecting = false;
-          isDisconnected = false;
-          session.status = 'connected';
-          initRenderer();
-          setTimeout(() => {
-            canvasRef?.focus();
-          }, 100);
-        });
-        sessionDisposables.add(unlistenConnected);
-
-        const unlistenPtrDefault = await listen(`rdp-pointer-default-${session.id}`, () => {
-          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
-          if (canvasRef) canvasRef.style.cursor = 'default';
-        });
-        sessionDisposables.add(unlistenPtrDefault);
-
-        const unlistenPtrHidden = await listen(`rdp-pointer-hidden-${session.id}`, () => {
-          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
-          if (canvasRef) canvasRef.style.cursor = 'none';
-        });
-        sessionDisposables.add(unlistenPtrHidden);
-
-        const unlistenPtrBitmap = await listen<IronRdpPointerBitmap>(`rdp-pointer-bitmap-${session.id}`, (event) => {
-          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
-          updateCursorBitmap(event.payload);
-        });
-        sessionDisposables.add(unlistenPtrBitmap);
-
-        await invoke('ironrdp_connect', {
-          tabId: session.id,
-          connectionId: session.connectionId,
-          credentialsOverride: session.credentialsOverride,
-          width: bounds.desktopWidth,
-          height: bounds.desktopHeight,
-          scaleFactor: bounds.scaleDesktop,
-          onFrame,
-        });
-
-        if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
-          invoke('ironrdp_disconnect', { tabId: session.id }).catch(() => {});
-          return;
-        }
-
-        lastIronRdpWidth = bounds.desktopWidth;
-        lastIronRdpHeight = bounds.desktopHeight;
-
-        if (window.ResizeObserver && viewportRef) {
-          const ro = new ResizeObserver(() => {
-            handleIronRdpResize();
-          });
-          ro.observe(viewportRef);
-          sessionDisposables.add(() => ro.disconnect());
-        }
-        sessionDisposables.trackEventListener(window, 'resize', handleIronRdpResize);
-        sessionDisposables.trackEventListener(window, 'blur', releaseAllKeys);
-        sessionDisposables.trackEventListener(document, 'visibilitychange', () => {
-          if (document.hidden) {
-            releaseAllKeys();
-          }
-        });
-        sessionDisposables.add(() => {
-          if (ironResizeTimer) {
-            clearTimeout(ironResizeTimer);
-            ironResizeTimer = null;
-          }
-          releaseAllKeys();
-        });
-      } else {
-        await invoke('freerdp_connect', {
-          tabId: session.id,
-          connectionId: session.connectionId,
-          credentialsOverride: session.credentialsOverride,
-          x: bounds.x,
-          y: bounds.y,
-          width: bounds.width,
-          height: bounds.height,
-          desktopWidth: bounds.desktopWidth,
-          desktopHeight: bounds.desktopHeight,
-          scaleDesktop: bounds.scaleDesktop,
-        });
-
-        if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
-          invoke('freerdp_disconnect', { tabId: session.id }).catch(() => {});
-          return;
-        }
-
+      const unlistenConnected = await listen(`rdp-connected-${session.id}`, () => {
+        if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
         isConnected = true;
         isConnecting = false;
         isDisconnected = false;
         session.status = 'connected';
+        initRenderer();
+        setTimeout(() => {
+          canvasRef?.focus();
+        }, 100);
+      });
+      sessionDisposables.add(unlistenConnected);
 
-        if (window.ResizeObserver && viewportRef) {
-          const ro = new ResizeObserver(() => {
-            syncBounds();
-          });
-          ro.observe(viewportRef);
-          sessionDisposables.add(() => ro.disconnect());
-        }
-        sessionDisposables.trackEventListener(window, 'resize', syncBounds);
+      const unlistenPtrDefault = await listen(`rdp-pointer-default-${session.id}`, () => {
+        if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
+        if (canvasRef) canvasRef.style.cursor = 'default';
+      });
+      sessionDisposables.add(unlistenPtrDefault);
 
-        const unlistenMove = await listen('window-moved', () => syncBounds());
-        sessionDisposables.add(unlistenMove);
+      const unlistenPtrHidden = await listen(`rdp-pointer-hidden-${session.id}`, () => {
+        if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
+        if (canvasRef) canvasRef.style.cursor = 'none';
+      });
+      sessionDisposables.add(unlistenPtrHidden);
+
+      const unlistenPtrBitmap = await listen<IronRdpPointerBitmap>(`rdp-pointer-bitmap-${session.id}`, (event) => {
+        if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
+        updateCursorBitmap(event.payload);
+      });
+      sessionDisposables.add(unlistenPtrBitmap);
+
+      await invoke('ironrdp_connect', {
+        tabId: session.id,
+        connectionId: session.connectionId,
+        credentialsOverride: session.credentialsOverride,
+        width: bounds.desktopWidth,
+        height: bounds.desktopHeight,
+        scaleFactor: bounds.scaleDesktop,
+        onFrame,
+      });
+
+      if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
+        invoke('ironrdp_disconnect', { tabId: session.id }).catch(() => {});
+        return;
       }
+
+      lastIronRdpWidth = bounds.desktopWidth;
+      lastIronRdpHeight = bounds.desktopHeight;
+
+      if (window.ResizeObserver && viewportRef) {
+        const ro = new ResizeObserver(() => {
+          handleIronRdpResize();
+        });
+        ro.observe(viewportRef);
+        sessionDisposables.add(() => ro.disconnect());
+      }
+      sessionDisposables.trackEventListener(window, 'resize', handleIronRdpResize);
+      sessionDisposables.trackEventListener(window, 'blur', releaseAllKeys);
+      sessionDisposables.trackEventListener(document, 'visibilitychange', () => {
+        if (document.hidden) {
+          releaseAllKeys();
+        }
+      });
+      sessionDisposables.add(() => {
+        if (ironResizeTimer) {
+          clearTimeout(ironResizeTimer);
+          ironResizeTimer = null;
+        }
+        releaseAllKeys();
+      });
     } catch (err: any) {
-      console.error(`${isIronRdp ? 'IronRDP' : 'FreeRDP'} connection error:`, err);
+      console.error('IronRDP connection error:', err);
       if (currentGen !== sessionGeneration || componentDisposables.isDisposed) return;
       isConnected = false;
       isConnecting = false;
@@ -823,11 +768,6 @@
         severity: 'error',
       };
     }
-  }
-
-  async function toggleDocked() {
-    isDocked = !isDocked;
-    await invoke('freerdp_set_docked', { tabId: session.id, docked: isDocked }).catch(() => {});
   }
 
   async function handleDisconnect() {
@@ -877,19 +817,10 @@
   $effect(() => {
     const isTabActive = appState.activeTabId === session.id;
     const _drawerOpen = appState.isNotesDrawerOpen;
-    if (isConnected) {
-      if (!isIronRdp) {
-        invoke('freerdp_set_visibility', { tabId: session.id, visible: isTabActive }).catch(() => {});
-        if (isTabActive && isDocked) {
-          requestAnimationFrame(() => {
-            syncBounds();
-          });
-        }
-      } else if (isTabActive) {
-        requestAnimationFrame(() => {
-          canvasRef?.focus();
-        });
-      }
+    if (isConnected && isTabActive) {
+      requestAnimationFrame(() => {
+        canvasRef?.focus();
+      });
     }
   });
 
@@ -940,37 +871,26 @@
         <span class="status-label">Disconnected</span>
       {/if}
 
-      {#if isIronRdp}
-        <span
-          class="acceleration-pill iron"
-          class:webgl={useWebGl}
-          title={useWebGl
-            ? 'Hardware-Accelerated WebGL2 GPU Texture Pipeline'
-            : 'Pure Rust IronRDP Engine with 2D Canvas Fallback'}
-        >
-          {#if useWebGl}
-            <Zap size={11} />
-            <span>IronRDP · WebGL2 GPU</span>
-          {:else}
-            <Shield size={11} />
-            <span>IronRDP · Pure Rust</span>
-          {/if}
-        </span>
-      {:else}
-        <span class="acceleration-pill native" title="Direct3D Hardware-Accelerated FreeRDP Engine">
+      <span
+        class="acceleration-pill iron"
+        class:webgl={useWebGl}
+        title={useWebGl
+          ? 'Hardware-Accelerated WebGL2 GPU Texture Pipeline'
+          : 'Pure Rust IronRDP Engine with 2D Canvas Fallback'}
+      >
+        {#if useWebGl}
           <Zap size={11} />
-          <span>FreeRDP · Direct3D</span>
-        </span>
-      {/if}
-
-      {#if !isIronRdp && !isDocked}
-        <span class="detached-badge">Detached Window</span>
-      {/if}
+          <span>IronRDP · WebGL2 GPU</span>
+        {:else}
+          <Shield size={11} />
+          <span>IronRDP · Pure Rust</span>
+        {/if}
+      </span>
     </div>
 
     <div class="header-right">
       {#if isConnected || isConnecting}
-        {#if isIronRdp && isConnected}
+        {#if isConnected}
           <button
             class="ctrl-btn"
             onclick={sendCtrlAltDel}
@@ -978,22 +898,6 @@
           >
             <Key size={12} />
             <span>Ctrl+Alt+Del</span>
-          </button>
-        {/if}
-
-        {#if !isIronRdp}
-          <button
-            class="ctrl-btn"
-            onclick={toggleDocked}
-            title={isDocked ? 'Detach to standalone native window' : 'Dock back to tab viewport'}
-          >
-            {#if isDocked}
-              <ExternalLink size={12} />
-              <span>Pop Out</span>
-            {:else}
-              <Minimize2 size={12} />
-              <span>Dock</span>
-            {/if}
           </button>
         {/if}
 
@@ -1076,51 +980,33 @@
 
   <!-- RDP Viewport Surface -->
   <div class="rdp-viewport" bind:this={viewportRef}>
-    {#if isIronRdp}
-      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-      <div
-        class="ironrdp-container"
-        class:hidden={!isConnected}
-        onclick={() => canvasRef?.focus()}
-        onkeydown={(e) => { if (e.key === 'Enter') canvasRef?.focus(); }}
-        role="region"
-        aria-label="IronRDP Session Viewport"
-      >
-        <canvas
-          bind:this={canvasRef}
-          class="rdp-canvas"
-          tabindex="0"
-          onmousemove={handleMouseMove}
-          onmousedown={handleMouseDown}
-          onmouseup={handleMouseUp}
-          oncontextmenu={handleContextMenu}
-          onwheel={handleWheel}
-          onkeydown={handleKeyDown}
-          onkeyup={handleKeyUp}
-        ></canvas>
-      </div>
-    {/if}
-
-    {#if !isIronRdp}
-      <div class="freerdp-native-backdrop">
-        {#if !isDocked && isConnected}
-          <div class="native-detached-msg">
-            <ExternalLink size={28} class="placeholder-icon" />
-            <p class="placeholder-title">Session Running in Standalone Window</p>
-            <p class="placeholder-desc">FreeRDP is running in its own native window with full OS titlebar and controls.</p>
-            <button class="action-btn" onclick={toggleDocked}>
-              <Minimize2 size={12} />
-              <span>Dock Back to Tab</span>
-            </button>
-          </div>
-        {/if}
-      </div>
-    {/if}
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+      class="ironrdp-container"
+      class:hidden={!isConnected}
+      onclick={() => canvasRef?.focus()}
+      onkeydown={(e) => { if (e.key === 'Enter') canvasRef?.focus(); }}
+      role="region"
+      aria-label="IronRDP Session Viewport"
+    >
+      <canvas
+        bind:this={canvasRef}
+        class="rdp-canvas"
+        tabindex="0"
+        onmousemove={handleMouseMove}
+        onmousedown={handleMouseDown}
+        onmouseup={handleMouseUp}
+        oncontextmenu={handleContextMenu}
+        onwheel={handleWheel}
+        onkeydown={handleKeyDown}
+        onkeyup={handleKeyUp}
+      ></canvas>
+    </div>
 
     {#if isConnecting}
       <div class="native-connecting-msg">
         <span class="status-indicator connecting"></span>
-        <span>{isIronRdp ? 'Initializing secure IronRDP session...' : 'Initializing hardware-accelerated FreeRDP session...'}</span>
+        <span>Initializing secure IronRDP session...</span>
       </div>
     {:else if isDisconnected}
       <div class="native-disconnected-card {exitInfo?.severity || 'info'}">
@@ -1146,7 +1032,7 @@
 
         {#if exitInfo?.raw_error}
           <div class="card-error-detail">
-            <span class="detail-label">{isIronRdp ? 'IronRDP' : 'FreeRDP'} Diagnostic:</span>
+            <span class="detail-label">IronRDP Diagnostic:</span>
             <code class="detail-code">{exitInfo.raw_error}</code>
           </div>
         {/if}
@@ -1529,22 +1415,6 @@
     transition: color 0.12s ease;
   }
 
-  .acceleration-pill.native {
-    background: rgba(255, 255, 255, 0.03);
-    border-color: var(--hairline);
-    color: var(--body);
-  }
-
-  .acceleration-pill.native:hover {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: var(--hairline-hover);
-    color: var(--ink-secondary);
-  }
-
-  .acceleration-pill.native:hover :global(svg) {
-    color: var(--ink-secondary);
-  }
-
   .acceleration-pill.iron {
     background: rgba(0, 112, 243, 0.08);
     border-color: rgba(0, 112, 243, 0.25);
@@ -1573,41 +1443,12 @@
     color: #79b8ff;
   }
 
-  .detached-badge {
-    font-size: 10px;
-    font-family: var(--font-mono);
-    padding: 2px 6px;
-    border-radius: var(--radius-sm);
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--body);
-  }
-
-  .freerdp-native-backdrop {
-    width: 100%;
-    height: 100%;
-    background: #000000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--mute);
-    user-select: none;
-  }
-
   .native-connecting-msg {
     display: flex;
     align-items: center;
     gap: 8px;
     font-size: 12px;
     color: var(--body);
-  }
-
-  .native-detached-msg {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    padding: 24px;
-    text-align: center;
   }
 
   /* Central Disconnected Alert Card */

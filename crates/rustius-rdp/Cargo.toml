@@ -26,17 +26,12 @@ ironrdp-tls = { git = "https://github.com/Devolutions/IronRDP" }
 ironrdp-dvc = { git = "https://github.com/Devolutions/IronRDP" }
 ironrdp-egfx = { git = "https://github.com/Devolutions/IronRDP", features = ["openh264", "openh264-bundled"] }
 
-
-
-
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
-    "Win32_Graphics_Gdi",
     "Win32_System_Threading",
     "Win32_System_DataExchange",
     "Win32_UI_Shell",
     "Win32_System_Memory",
 ] }
-

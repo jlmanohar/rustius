@@ -87,11 +87,11 @@ rustius/
     │       ├── client.rs       # SshSession: connect, write, resize, disconnect
     │       ├── sftp.rs         # SftpClient: list_dir, upload, download, mkdir, etc.
     │       └── auth.rs         # Auth helpers
-    ├── rustius-rdp/            # RDP client (IronRDP canvas + FreeRDP child window fallback)
+    ├── rustius-rdp/            # RDP client (Pure-Rust IronRDP canvas & WebGL)
     │   └── src/
     │       ├── lib.rs
-    │       ├── ironrdp.rs      # IronRDP: pure-Rust session, FastPath input, canvas dirty rects
-    │       └── freerdp.rs      # FreeRDP: child HWND docking, bounds sync, lifecycle
+    │       ├── ironrdp.rs      # IronRDP: pure-Rust session, FastPath input, canvas & WebGL dirty rects
+    │       └── clipboard/      # Bidirectional clipboard & file provider
     └── rustius-terminal/       # Local PTY (portable-pty)
         └── src/
             ├── lib.rs
@@ -108,8 +108,7 @@ rustius/
 | Async Runtime | Tokio | 1.x (full features) |
 | SSH | russh | 0.63 |
 | SFTP | russh-sftp | 3.0 |
-| RDP (Default) | IronRDP | git (Devolutions) |
-| RDP (Native Fallback) | FreeRDP | 3.x (Hardware accelerated) |
+| RDP | IronRDP | git (Devolutions) |
 | Local Terminal | portable-pty | 0.9 |
 | Frontend Framework | Svelte | 5.x (runes) |
 | Meta-framework | SvelteKit | 2.x (adapter-static, SPA) |
@@ -613,7 +612,7 @@ const result = await invoke<MyResponse>('my_command', { tabId });
 - **Server key verification** — SSH `check_server_key` accepts all keys (no known_hosts). Needs TOFU implementation.
 - **SSH agent auth** — `AuthMethod::Agent` returns a "not yet implemented" error.
 - **Credential storage** — OS Keychain and local encrypted vault supported; continues to undergo cross-platform validation.
-- **RDP** — Dual engines: Pure-Rust IronRDP (HTML5 Canvas) as primary default; FreeRDP Direct3D child window as native Windows fallback.
+- **RDP** — Pure-Rust IronRDP (HTML5 Canvas & WebGL2 GPU) with bidirectional clipboard and file copy.
 - **IronRDP MS-RDPEGFX Graphics Pipeline (TODO)** — The graphics pipeline extension (`MS-RDPEGFX`) is currently disabled by default (`with_graphics_pipeline(false)`) due to an upstream RemoteFX progressive tile decoder limitation in `ironrdp-egfx` (`rfx progressive decode failed` on `WireToSurface2Pdu`). Standard planar bitmap decoding is active and fully stable. When upstream Devolutions/IronRDP fixes progressive wavelet tile decoding, re-enable `with_graphics_pipeline(true)` by default to activate ClearCodec font rendering, H.264/AVC hardware decoding, and 60 FPS frame-pacing.
 - **CSP** — `tauri.conf.json` has `"csp": null`. Tighten before production release.
 - **Cross-platform testing** — local PTY uses `powershell.exe` on Windows, `$SHELL` on Unix. Ensure both paths are tested.

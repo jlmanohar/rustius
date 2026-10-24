@@ -8,9 +8,8 @@ use commands::config::{
     vault_get_status, vault_lock, vault_set_master_password, vault_unlock,
 };
 use commands::rdp::{
-    freerdp_connect, freerdp_disconnect, freerdp_set_docked, freerdp_set_visibility,
-    freerdp_update_bounds, ironrdp_connect, ironrdp_disconnect, ironrdp_key_event,
-    ironrdp_mouse_button, ironrdp_mouse_move, ironrdp_mouse_wheel, ironrdp_release_all, ironrdp_resize, rdp_disconnect,
+    ironrdp_connect, ironrdp_disconnect, ironrdp_key_event, ironrdp_mouse_button,
+    ironrdp_mouse_move, ironrdp_mouse_wheel, ironrdp_release_all, ironrdp_resize, rdp_disconnect,
 };
 
 use commands::sftp::{
@@ -24,7 +23,7 @@ use commands::window::{
     window_close, window_is_maximized, window_minimize, window_toggle_maximize,
 };
 use state::AppState;
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -83,32 +82,10 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if matches!(
-                event,
-                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
-            ) {
-                let _ = window.emit("window-moved", ());
+            if matches!(event, tauri::WindowEvent::Destroyed) {
                 let state = window.state::<AppState>();
-                let sessions: Vec<_> = {
-                    if let Ok(guard) = state.freerdp_sessions.try_read() {
-                        guard.values().cloned().collect()
-                    } else {
-                        Vec::new()
-                    }
-                };
-                for session in sessions {
-                    session.sync_screen_position();
-                }
-            } else if matches!(event, tauri::WindowEvent::Destroyed) {
-                let state = window.state::<AppState>();
-                let freerdp = state.freerdp_sessions.clone();
                 let ironrdp = state.ironrdp_sessions.clone();
                 let pty = state.local_terminals.clone();
-                if let Ok(mut guard) = freerdp.try_write() {
-                    for (_, session) in guard.drain() {
-                        session.disconnect();
-                    }
-                };
                 if let Ok(mut guard) = ironrdp.try_write() {
                     for (_, session) in guard.drain() {
                         session.disconnect();
@@ -166,11 +143,6 @@ pub fn run() {
             local_remove,
             local_rename,
             rdp_disconnect,
-            freerdp_connect,
-            freerdp_disconnect,
-            freerdp_set_docked,
-            freerdp_update_bounds,
-            freerdp_set_visibility,
             ironrdp_connect,
             ironrdp_disconnect,
             ironrdp_mouse_move,
