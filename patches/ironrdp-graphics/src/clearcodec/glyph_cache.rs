@@ -48,9 +48,7 @@ impl GlyphCache {
 
     /// Reset the entire glyph cache, removing all entries.
     pub fn reset(&mut self) {
-        for slot in &mut self.entries {
-            *slot = None;
-        }
+        self.entries.fill(None);
     }
 }
 
