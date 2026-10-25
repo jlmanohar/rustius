@@ -65,12 +65,10 @@ impl EncryptedStorage {
     }
 
     /// Decrypt a binary payload into a plaintext string.
-    /// If the payload does not have the magic header, it attempts to parse it as UTF-8 plaintext (seamless fallback).
+    /// Payload must contain the standard RUSTIUS_ENC_V1 magic header.
     pub fn decrypt(&self, payload: &[u8]) -> Result<String> {
         if payload.len() < MAGIC_HEADER.len() || &payload[..MAGIC_HEADER.len()] != MAGIC_HEADER {
-            // Not encrypted: fallback to UTF-8 plaintext
-            return String::from_utf8(payload.to_vec())
-                .context("File is not encrypted and contains invalid UTF-8");
+            bail!("Invalid vault payload: missing Rustius encryption magic header");
         }
 
         let header_end = MAGIC_HEADER.len();
@@ -106,27 +104,8 @@ impl ConfigStorage for EncryptedStorage {
     }
 
     fn write(&self, path: &Path, content: &str) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         let encrypted_bytes = self.encrypt(content)?;
-        let tmp_path = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
-        std::fs::write(&tmp_path, encrypted_bytes)
-            .with_context(|| format!("Failed to write encrypted file: {}", tmp_path.display()))?;
-
-        #[cfg(windows)]
-        {
-            if path.exists() {
-                let _ = std::fs::remove_file(path);
-            }
-        }
-        std::fs::rename(&tmp_path, path).with_context(|| {
-            format!(
-                "Failed to atomically rename encrypted file: {}",
-                path.display()
-            )
-        })?;
-        Ok(())
+        crate::storage::atomic_write_file(path, &encrypted_bytes)
     }
 
     fn exists(&self, path: &Path) -> bool {
@@ -170,14 +149,15 @@ mod tests {
     }
 
     #[test]
-    fn test_plaintext_fallback() {
+    fn test_rejects_unencrypted_plaintext() {
         let storage = EncryptedStorage::new("master-pass");
-        let plaintext_toml = "[app_settings]\ntheme = \"light\"\n";
+        let fake_plaintext = "{\"connection:1\": \"attacker-password\"}";
 
-        // Raw bytes without magic header
-        let decrypted = storage
-            .decrypt(plaintext_toml.as_bytes())
-            .expect("Fallback failed");
-        assert_eq!(decrypted, plaintext_toml);
+        // Raw bytes without magic header must be rejected
+        let result = storage.decrypt(fake_plaintext.as_bytes());
+        assert!(
+            result.is_err(),
+            "Must reject unencrypted payloads missing the magic header"
+        );
     }
 }

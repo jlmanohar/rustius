@@ -174,10 +174,10 @@ pub unsafe fn write_hdrop_to_clipboard(
     paths: &[PathBuf],
 ) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::GlobalFree;
     use windows_sys::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
     };
-    use windows_sys::Win32::Foundation::GlobalFree;
     use windows_sys::Win32::System::Memory::{
         GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
     };

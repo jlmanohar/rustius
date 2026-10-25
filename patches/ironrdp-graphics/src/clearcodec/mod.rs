@@ -8,16 +8,16 @@ mod glyph_cache;
 mod nscodec;
 mod vbar_cache;
 
-pub use self::glyph_cache::{GLYPH_CACHE_SIZE, GlyphCache, GlyphEntry};
+pub use self::glyph_cache::{GlyphCache, GlyphEntry, GLYPH_CACHE_SIZE};
 pub use self::vbar_cache::{FullVBar, ShortVBar, VBarCache};
 
 /// Glyph cache size as u16 for index arithmetic. GLYPH_CACHE_SIZE=4000 fits in u16.
 const GLYPH_CACHE_WRAP: u16 = 4_000;
 
-use ironrdp_core::{DecodeResult, ReadCursor, invalid_field_err};
+use ironrdp_core::{invalid_field_err, DecodeResult, ReadCursor};
 use ironrdp_pdu::codecs::clearcodec::{
-    ClearCodecBitmapStream, CompositePayload, FLAG_GLYPH_INDEX, RgbRunSegment, SubcodecId, VBar, decode_bands_layer,
-    decode_residual_layer, decode_subcodec_layer, encode_residual_layer,
+    decode_bands_layer, decode_residual_layer, decode_subcodec_layer, encode_residual_layer,
+    ClearCodecBitmapStream, CompositePayload, RgbRunSegment, SubcodecId, VBar, FLAG_GLYPH_INDEX,
 };
 
 /// ClearCodec decoder maintaining persistent cache state across frames.
@@ -57,7 +57,9 @@ impl ClearCodecDecoder {
         // Validate glyph index range per spec: 0..3999 inclusive
         if let Some(idx) = stream.glyph_index {
             if idx >= GLYPH_CACHE_WRAP {
-                return Err(invalid_field_err!("glyphIndex", "glyph index out of range 0-3999", in: src));
+                return Err(
+                    invalid_field_err!("glyphIndex", "glyph index out of range 0-3999", in: src),
+                );
             }
         }
 
@@ -72,9 +74,9 @@ impl ClearCodecDecoder {
 
         // Handle glyph hit: return cached pixel data
         if stream.is_glyph_hit() {
-            let glyph_index = stream
-                .glyph_index
-                .ok_or_else(|| invalid_field_err!("flags", "GLYPH_HIT without GLYPH_INDEX", in: src))?;
+            let glyph_index = stream.glyph_index.ok_or_else(
+                || invalid_field_err!("flags", "GLYPH_HIT without GLYPH_INDEX", in: src),
+            )?;
             // A cache-state failure, not a stream-position failure (decode.rs's None
             // case): src has already advanced past the whole bitmap stream by this
             // point, so a position here would just report the end of the header.
@@ -169,7 +171,9 @@ impl ClearCodecDecoder {
                 // the decoder. Subsequent segments are also skipped via the
                 // `break` below once the buffer is full.
                 let pixels_remaining = (max_offset.saturating_sub(offset)) / 4;
-                let effective_run = u32::try_from(pixels_remaining).unwrap_or(u32::MAX).min(seg.run_length);
+                let effective_run = u32::try_from(pixels_remaining)
+                    .unwrap_or(u32::MAX)
+                    .min(seg.run_length);
                 for _ in 0..effective_run {
                     output[offset] = seg.blue;
                     output[offset + 1] = seg.green;
@@ -194,8 +198,13 @@ impl ClearCodecDecoder {
                         continue;
                     }
 
-                    let full_vbar =
-                        self.resolve_vbar(vbar, band_height, band.blue_bkg, band.green_bkg, band.red_bkg)?;
+                    let full_vbar = self.resolve_vbar(
+                        vbar,
+                        band_height,
+                        band.blue_bkg,
+                        band.green_bkg,
+                        band.red_bkg,
+                    )?;
 
                     // Blit the full V-bar column into the output
                     let pixel_rows = full_vbar.pixels.len() / 3;
@@ -203,7 +212,8 @@ impl ClearCodecDecoder {
                         let y = usize::from(band.y_start) + row;
                         let dst_offset = (y * w + x) * 4;
                         let src_offset = row * 3;
-                        if dst_offset + 3 < output.len() && src_offset + 2 < full_vbar.pixels.len() {
+                        if dst_offset + 3 < output.len() && src_offset + 2 < full_vbar.pixels.len()
+                        {
                             output[dst_offset] = full_vbar.pixels[src_offset];
                             output[dst_offset + 1] = full_vbar.pixels[src_offset + 1];
                             output[dst_offset + 2] = full_vbar.pixels[src_offset + 2];
@@ -242,11 +252,12 @@ impl ClearCodecDecoder {
                 Ok(cached.clone())
             }
             VBar::ShortCacheHit { index, y_on } => {
-                let cached_short = self
-                    .vbar_cache
-                    .get_short_vbar(*index)
-                    .ok_or_else(|| invalid_field_err!("shortVbarIndex", "short V-bar cache miss on hit"))?;
-                if usize::from(*y_on) + usize::from(cached_short.pixel_count) > usize::from(band_height) {
+                let cached_short = self.vbar_cache.get_short_vbar(*index).ok_or_else(|| {
+                    invalid_field_err!("shortVbarIndex", "short V-bar cache miss on hit")
+                })?;
+                if usize::from(*y_on) + usize::from(cached_short.pixel_count)
+                    > usize::from(band_height)
+                {
                     return Err(invalid_field_err!(
                         "shortVBarYOn",
                         "y_on + pixel_count exceeds band height"
@@ -258,7 +269,13 @@ impl ClearCodecDecoder {
                     pixel_count: cached_short.pixel_count,
                     pixels: cached_short.pixels.clone(),
                 };
-                let full = VBarCache::reconstruct_full_vbar(&modified, band_height, bg_blue, bg_green, bg_red);
+                let full = VBarCache::reconstruct_full_vbar(
+                    &modified,
+                    band_height,
+                    bg_blue,
+                    bg_green,
+                    bg_red,
+                );
                 // Store reconstructed full V-bar in cache
                 self.vbar_cache.store_vbar(full.clone());
                 Ok(full)
@@ -272,7 +289,13 @@ impl ClearCodecDecoder {
                 // Store in short V-bar cache
                 self.vbar_cache.store_short_vbar(short.clone());
                 // Reconstruct and store full V-bar
-                let full = VBarCache::reconstruct_full_vbar(&short, band_height, bg_blue, bg_green, bg_red);
+                let full = VBarCache::reconstruct_full_vbar(
+                    &short,
+                    band_height,
+                    bg_blue,
+                    bg_green,
+                    bg_red,
+                );
                 self.vbar_cache.store_vbar(full.clone());
                 Ok(full)
             }
@@ -290,12 +313,17 @@ impl ClearCodecDecoder {
         let x_end = usize::from(sub.x_start) + usize::from(sub.width);
         let y_end = usize::from(sub.y_start) + usize::from(sub.height);
         if x_end > sw || y_end > sh {
-            return Err(invalid_field_err!("subcodec", "region exceeds surface bounds"));
+            return Err(invalid_field_err!(
+                "subcodec",
+                "region exceeds surface bounds"
+            ));
         }
         let max_bitmap_data_len = usize::from(sub.width)
             .checked_mul(usize::from(sub.height))
             .and_then(|len| len.checked_mul(3))
-            .ok_or_else(|| invalid_field_err!("bitmapDataByteCount", "subcodec dimensions overflow"))?;
+            .ok_or_else(|| {
+                invalid_field_err!("bitmapDataByteCount", "subcodec dimensions overflow")
+            })?;
         if sub.bitmap_data.len() > max_bitmap_data_len {
             return Err(invalid_field_err!(
                 "bitmapDataByteCount",
@@ -307,12 +335,17 @@ impl ClearCodecDecoder {
             SubcodecId::Raw => {
                 let w = usize::from(sub.width);
                 let h = usize::from(sub.height);
-                let expected = w
-                    .checked_mul(h)
-                    .and_then(|v| v.checked_mul(3))
-                    .ok_or_else(|| invalid_field_err!("bitmapData", "raw subcodec dimensions overflow"))?;
+                let expected =
+                    w.checked_mul(h)
+                        .and_then(|v| v.checked_mul(3))
+                        .ok_or_else(|| {
+                            invalid_field_err!("bitmapData", "raw subcodec dimensions overflow")
+                        })?;
                 if sub.bitmap_data.len() < expected {
-                    return Err(invalid_field_err!("bitmapData", "raw subcodec data too short"));
+                    return Err(invalid_field_err!(
+                        "bitmapData",
+                        "raw subcodec data too short"
+                    ));
                 }
                 for row in 0..h {
                     for col in 0..w {
@@ -385,8 +418,10 @@ impl ClearCodecDecoder {
 
                 for row in 0..h {
                     let src_start = row * w * 4;
-                    let dst_start = ((usize::from(sub.y_start) + row) * sw + usize::from(sub.x_start)) * 4;
-                    output[dst_start..dst_start + w * 4].copy_from_slice(&pixels[src_start..src_start + w * 4]);
+                    let dst_start =
+                        ((usize::from(sub.y_start) + row) * sw + usize::from(sub.x_start)) * 4;
+                    output[dst_start..dst_start + w * 4]
+                        .copy_from_slice(&pixels[src_start..src_start + w * 4]);
                 }
             }
         }
@@ -642,7 +677,7 @@ mod tests {
         stream.push(FLAG_GLYPH_INDEX); // flags
         stream.push(0x00); // seq
         stream.extend_from_slice(&42u16.to_le_bytes()); // glyph_index = 42
-        // Composite with 1-pixel residual (white)
+                                                        // Composite with 1-pixel residual (white)
         let residual = [0xFF, 0xFF, 0xFF, 0x01]; // BGR white, run=1
         stream.extend_from_slice(&4u32.to_le_bytes()); // residual bytes
         stream.extend_from_slice(&0u32.to_le_bytes()); // bands bytes
@@ -688,7 +723,7 @@ mod tests {
 
         let pixels = decoder.decode(&stream, 2, 1).unwrap();
         assert_eq!(pixels.len(), 2 * 4); // 2 pixels * BGRA
-        // Pixel 0: red (BGR: 0x00, 0x00, 0xFF)
+                                         // Pixel 0: red (BGR: 0x00, 0x00, 0xFF)
         assert_eq!(&pixels[0..4], &[0x00, 0x00, 0xFF, 0xFF]);
         // Pixel 1: blue (BGR: 0xFF, 0x00, 0x00)
         assert_eq!(&pixels[4..8], &[0xFF, 0x00, 0x00, 0xFF]);

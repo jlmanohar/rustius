@@ -55,26 +55,29 @@
 
 use std::collections::BTreeMap;
 
-use ironrdp_core::{Decode as _, ReadCursor, impl_as_any};
+use ironrdp_core::{impl_as_any, Decode as _, ReadCursor};
 use ironrdp_dvc::{DvcClientProcessor, DvcMessage, DvcProcessor};
 use ironrdp_graphics::clearcodec::ClearCodecDecoder;
-use ironrdp_graphics::progressive::{ProgressiveDecodeError, ProgressiveDecoder, TILE_BYTES_PER_PIXEL, TILE_DIM};
+use ironrdp_graphics::progressive::{
+    ProgressiveDecodeError, ProgressiveDecoder, TILE_BYTES_PER_PIXEL, TILE_DIM,
+};
 use ironrdp_graphics::rdp6::BitmapStreamDecoder;
 use ironrdp_graphics::zgfx;
 use ironrdp_pdu::geometry::ExclusiveRectangle;
-use ironrdp_pdu::{PduResult, decode_cursor, decode_err, pdu_other_err};
+use ironrdp_pdu::{decode_cursor, decode_err, pdu_other_err, PduResult};
 use tracing::{debug, trace, warn};
 
-use crate::CHANNEL_NAME;
 use crate::compositor::{Compositor, OutputUpdate};
 use crate::decode::H264Decoder;
 use crate::pdu::{
-    Avc420BitmapStream, CacheImportReplyPdu, CacheToSurfacePdu, CapabilitiesAdvertisePdu, CapabilitiesV8Flags,
-    CapabilitiesV81Flags, CapabilitiesV107Flags, CapabilitySet, Codec1Type, DeleteEncodingContextPdu,
-    EvictCacheEntryPdu, FrameAcknowledgePdu, GfxPdu, MapSurfaceToScaledOutputPdu, MapSurfaceToScaledWindowPdu,
-    MapSurfaceToWindowPdu, PixelFormat, QueueDepth, RawCapabilitySet, SolidFillPdu, SurfaceToCachePdu,
-    SurfaceToSurfacePdu, WireToSurface2Pdu,
+    Avc420BitmapStream, CacheImportReplyPdu, CacheToSurfacePdu, CapabilitiesAdvertisePdu,
+    CapabilitiesV107Flags, CapabilitiesV81Flags, CapabilitiesV8Flags, CapabilitySet, Codec1Type,
+    DeleteEncodingContextPdu, EvictCacheEntryPdu, FrameAcknowledgePdu, GfxPdu,
+    MapSurfaceToScaledOutputPdu, MapSurfaceToScaledWindowPdu, MapSurfaceToWindowPdu, PixelFormat,
+    QueueDepth, RawCapabilitySet, SolidFillPdu, SurfaceToCachePdu, SurfaceToSurfacePdu,
+    WireToSurface2Pdu,
 };
+use crate::CHANNEL_NAME;
 
 /// Max capacity to keep for decompressed buffer when cleared.
 const MAX_DECOMPRESSED_BUFFER_CAPACITY: usize = 16384; // 16 KiB
@@ -430,7 +433,10 @@ impl GraphicsPipelineClient {
     /// ClearCodec decoding is always available (no external decoder required)
     /// and its cache spine is allocated lazily, on the first ClearCodec frame,
     /// rather than up front for a codec the session may never use.
-    pub fn new(handler: Box<dyn GraphicsPipelineHandler>, h264_decoder: Option<Box<dyn H264Decoder>>) -> Self {
+    pub fn new(
+        handler: Box<dyn GraphicsPipelineHandler>,
+        h264_decoder: Option<Box<dyn H264Decoder>>,
+    ) -> Self {
         Self {
             handler,
             h264_decoder,
@@ -520,7 +526,12 @@ impl GraphicsPipelineClient {
                 Ok(vec![])
             }
             GfxPdu::CreateSurface(create) => {
-                self.handle_create_surface(create.surface_id, create.width, create.height, create.pixel_format);
+                self.handle_create_surface(
+                    create.surface_id,
+                    create.width,
+                    create.height,
+                    create.pixel_format,
+                );
                 Ok(vec![])
             }
             GfxPdu::DeleteSurface(delete) => {
@@ -580,8 +591,11 @@ impl GraphicsPipelineClient {
                     cache_slot = pdu.cache_slot,
                     "SurfaceToCache"
                 );
-                self.compositor
-                    .surface_to_cache(pdu.surface_id, pdu.cache_slot, &pdu.source_rectangle);
+                self.compositor.surface_to_cache(
+                    pdu.surface_id,
+                    pdu.cache_slot,
+                    &pdu.source_rectangle,
+                );
                 self.handler.on_surface_to_cache(&pdu);
                 Ok(vec![])
             }
@@ -591,8 +605,11 @@ impl GraphicsPipelineClient {
                     surface_id = pdu.surface_id,
                     "CacheToSurface"
                 );
-                self.compositor
-                    .cache_to_surface(pdu.cache_slot, pdu.surface_id, &pdu.destination_points);
+                self.compositor.cache_to_surface(
+                    pdu.cache_slot,
+                    pdu.surface_id,
+                    &pdu.destination_points,
+                );
                 self.handler.on_cache_to_surface(&pdu);
                 Ok(vec![])
             }
@@ -730,9 +747,18 @@ impl GraphicsPipelineClient {
         }
     }
 
-    fn handle_create_surface(&mut self, surface_id: u16, width: u16, height: u16, pixel_format: PixelFormat) {
+    fn handle_create_surface(
+        &mut self,
+        surface_id: u16,
+        width: u16,
+        height: u16,
+        pixel_format: PixelFormat,
+    ) {
         if width == 0 || height == 0 {
-            warn!(surface_id, width, height, "Ignoring CreateSurface with zero dimensions");
+            warn!(
+                surface_id,
+                width, height, "Ignoring CreateSurface with zero dimensions"
+            );
             return;
         }
 
@@ -770,7 +796,8 @@ impl GraphicsPipelineClient {
             surface.output_origin_y = origin_y;
             self.compositor.map_surface(surface_id, origin_x, origin_y);
             debug!(surface_id, origin_x, origin_y, "Surface mapped to output");
-            self.handler.on_surface_mapped(surface_id, origin_x, origin_y);
+            self.handler
+                .on_surface_mapped(surface_id, origin_x, origin_y);
         } else {
             warn!(surface_id, "MapSurfaceToOutput for unknown surface");
         }
@@ -796,8 +823,11 @@ impl GraphicsPipelineClient {
                 target_height = pdu.target_height,
                 "Surface mapped to scaled output"
             );
-            self.handler
-                .on_surface_mapped(pdu.surface_id, pdu.output_origin_x, pdu.output_origin_y);
+            self.handler.on_surface_mapped(
+                pdu.surface_id,
+                pdu.output_origin_x,
+                pdu.output_origin_y,
+            );
         } else {
             warn!(
                 surface_id = pdu.surface_id,
@@ -848,7 +878,11 @@ impl GraphicsPipelineClient {
                 self.handler.on_unhandled_pdu(&GfxPdu::WireToSurface1(pdu));
             }
             Codec1Type::ClearCodec => {
-                self.decode_clearcodec(pdu.surface_id, &pdu.destination_rectangle, &pdu.bitmap_data)?;
+                self.decode_clearcodec(
+                    pdu.surface_id,
+                    &pdu.destination_rectangle,
+                    &pdu.bitmap_data,
+                )?;
             }
             Codec1Type::Planar => {
                 self.decode_planar(pdu.surface_id, &pdu.destination_rectangle, &pdu.bitmap_data)?;
@@ -874,18 +908,19 @@ impl GraphicsPipelineClient {
             .ok_or_else(|| pdu_other_err!("unknown surface in WireToSurface2"))?;
         let (surface_width, surface_height) = (surface.width, surface.height);
 
-        let tiles = match self
-            .progressive_decoder
-            .decode_bitmap(
-                pdu.surface_id,
-                pdu.codec_context_id,
-                surface_width,
-                surface_height,
-                &pdu.bitmap_data,
-            ) {
+        let tiles = match self.progressive_decoder.decode_bitmap(
+            pdu.surface_id,
+            pdu.codec_context_id,
+            surface_width,
+            surface_height,
+            &pdu.bitmap_data,
+        ) {
             Ok(tiles) => tiles,
             Err(ProgressiveDecodeError::Srl(err)) => {
-                warn!(?err, "rfx progressive srl decode failed for tile; skipping refinement pass");
+                warn!(
+                    ?err,
+                    "rfx progressive srl decode failed for tile; skipping refinement pass"
+                );
                 return Ok(());
             }
             Err(error) => {
@@ -920,8 +955,11 @@ impl GraphicsPipelineClient {
                     width,
                     height,
                 };
-                self.compositor
-                    .apply_bitmap(update.surface_id, &update.destination_rectangle, &update.data);
+                self.compositor.apply_bitmap(
+                    update.surface_id,
+                    &update.destination_rectangle,
+                    &update.data,
+                );
                 self.handler.on_bitmap_updated(&update);
             };
 
@@ -950,7 +988,8 @@ impl GraphicsPipelineClient {
                 let row_bytes = usize::from(width) * TILE_BYTES_PER_PIXEL;
                 let mut data = Vec::with_capacity(row_bytes * usize::from(height));
                 for row in 0..usize::from(height) {
-                    let source_start = (source_y + row) * source_stride + source_x * TILE_BYTES_PER_PIXEL;
+                    let source_start =
+                        (source_y + row) * source_stride + source_x * TILE_BYTES_PER_PIXEL;
                     data.extend_from_slice(&tile.pixels[source_start..source_start + row_bytes]);
                 }
                 emit_update(destination_rectangle, data);
@@ -960,7 +999,12 @@ impl GraphicsPipelineClient {
         Ok(())
     }
 
-    fn decode_avc420(&mut self, surface_id: u16, dest_rect: &ExclusiveRectangle, bitmap_data: &[u8]) -> PduResult<()> {
+    fn decode_avc420(
+        &mut self,
+        surface_id: u16,
+        dest_rect: &ExclusiveRectangle,
+        bitmap_data: &[u8],
+    ) -> PduResult<()> {
         let mut cursor = ReadCursor::new(bitmap_data);
         let stream = Avc420BitmapStream::decode(&mut cursor).map_err(|e| decode_err!(e))?;
 
@@ -989,7 +1033,9 @@ impl GraphicsPipelineClient {
                 dest_height,
                 "decoded frame smaller than destination rectangle"
             );
-            return Err(pdu_other_err!("decoded frame smaller than destination rectangle"));
+            return Err(pdu_other_err!(
+                "decoded frame smaller than destination rectangle"
+            ));
         }
 
         // MS-RDPEGFX 2.2.4.4 (RFX_AVC420_METABLOCK): `regionRects` lists the
@@ -1027,7 +1073,11 @@ impl GraphicsPipelineClient {
                 width,
                 height,
             };
-            compositor.apply_bitmap(update.surface_id, &update.destination_rectangle, &update.data);
+            compositor.apply_bitmap(
+                update.surface_id,
+                &update.destination_rectangle,
+                &update.data,
+            );
             handler.on_bitmap_updated(&update);
         };
 
@@ -1035,7 +1085,13 @@ impl GraphicsPipelineClient {
             // No region metadata: fall back to the single bounding-box update,
             // copying from the frame origin. This matches the pre-#2042 behavior
             // for streams that legitimately omit regionRects.
-            let cropped_data = crop_decoded_frame(frame.data(), frame.width(), frame.height(), dest_width, dest_height);
+            let cropped_data = crop_decoded_frame(
+                frame.data(),
+                frame.width(),
+                frame.height(),
+                dest_width,
+                dest_height,
+            );
             emit_avc420(dest_rect.clone(), cropped_data);
             return Ok(());
         }
@@ -1113,7 +1169,8 @@ impl GraphicsPipelineClient {
             height: dest_height,
         };
 
-        self.compositor.apply_bitmap(surface_id, dest_rect, &update.data);
+        self.compositor
+            .apply_bitmap(surface_id, dest_rect, &update.data);
         self.handler.on_bitmap_updated(&update);
         Ok(())
     }
@@ -1123,7 +1180,12 @@ impl GraphicsPipelineClient {
     /// The payload is an `RDP6_BITMAP_STREAM` ([MS-RDPEGDI] 2.2.2.5.1), the same
     /// structure the fast-path bitmap route already decodes, so this reuses
     /// `ironrdp-graphics`' decoder rather than adding a second implementation.
-    fn decode_planar(&mut self, surface_id: u16, dest_rect: &ExclusiveRectangle, bitmap_data: &[u8]) -> PduResult<()> {
+    fn decode_planar(
+        &mut self,
+        surface_id: u16,
+        dest_rect: &ExclusiveRectangle,
+        bitmap_data: &[u8],
+    ) -> PduResult<()> {
         // MS-RDPEGFX 2.2.2.1: destRect gives both the target point and "the
         // dimensions (width and height) of the bitmap data". It is only a bounding
         // rectangle for the AVC codecs, so for Planar these are exact.
@@ -1159,7 +1221,8 @@ impl GraphicsPipelineClient {
             height: dest_height,
         };
 
-        self.compositor.apply_bitmap(surface_id, dest_rect, &update.data);
+        self.compositor
+            .apply_bitmap(surface_id, dest_rect, &update.data);
         self.handler.on_bitmap_updated(&update);
         Ok(())
     }
@@ -1184,12 +1247,18 @@ impl GraphicsPipelineClient {
             height: dest_height,
         };
 
-        self.compositor
-            .apply_bitmap(update.surface_id, &update.destination_rectangle, &update.data);
+        self.compositor.apply_bitmap(
+            update.surface_id,
+            &update.destination_rectangle,
+            &update.data,
+        );
         self.handler.on_bitmap_updated(&update);
     }
 
-    #[expect(clippy::as_conversions, reason = "Box<GfxPdu> to Box<dyn DvcEncode> coercion")]
+    #[expect(
+        clippy::as_conversions,
+        reason = "Box<GfxPdu> to Box<dyn DvcEncode> coercion"
+    )]
     fn handle_end_frame(&mut self, frame_id: u32) -> PduResult<Vec<DvcMessage>> {
         self.total_frames_decoded = self.total_frames_decoded.wrapping_add(1);
         self.current_frame_id = None;
@@ -1248,7 +1317,10 @@ impl DvcProcessor for GraphicsPipelineClient {
 
         let pdu = GfxPdu::CapabilitiesAdvertise(CapabilitiesAdvertisePdu::from_typed(&caps));
 
-        #[expect(clippy::as_conversions, reason = "Box<GfxPdu> to Box<dyn DvcEncode> coercion")]
+        #[expect(
+            clippy::as_conversions,
+            reason = "Box<GfxPdu> to Box<dyn DvcEncode> coercion"
+        )]
         Ok(vec![Box::new(pdu) as DvcMessage])
     }
 
@@ -1260,7 +1332,8 @@ impl DvcProcessor for GraphicsPipelineClient {
     fn process(&mut self, _channel_id: u32, payload: &[u8]) -> PduResult<Vec<DvcMessage>> {
         // ZGFX decompress
         self.decompressed_buffer.clear();
-        self.decompressed_buffer.shrink_to(MAX_DECOMPRESSED_BUFFER_CAPACITY);
+        self.decompressed_buffer
+            .shrink_to(MAX_DECOMPRESSED_BUFFER_CAPACITY);
         self.decompressor
             .decompress(payload, &mut self.decompressed_buffer)
             .map_err(|e| decode_err!(e))?;
@@ -1302,7 +1375,10 @@ impl DvcClientProcessor for GraphicsPipelineClient {}
 /// four. See `decode_planar` for why the alpha byte is synthesized rather than
 /// taken from the stream.
 fn convert_rgb24_to_rgba(src: &[u8]) -> Vec<u8> {
-    debug_assert!(src.len().is_multiple_of(3), "RGB24 input length not aligned to 3 bytes");
+    debug_assert!(
+        src.len().is_multiple_of(3),
+        "RGB24 input length not aligned to 3 bytes"
+    );
     let mut dst = Vec::with_capacity(src.len() / 3 * 4);
     for pixel in src.chunks_exact(3) {
         dst.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 0xFF]);
@@ -1311,7 +1387,10 @@ fn convert_rgb24_to_rgba(src: &[u8]) -> Vec<u8> {
 }
 
 fn convert_bgra_to_rgba(src: &[u8]) -> Vec<u8> {
-    debug_assert!(src.len().is_multiple_of(4), "BGRA input length not aligned to 4 bytes");
+    debug_assert!(
+        src.len().is_multiple_of(4),
+        "BGRA input length not aligned to 4 bytes"
+    );
     let mut dst = Vec::with_capacity(src.len());
     for pixel in src.chunks_exact(4) {
         dst.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
@@ -1379,7 +1458,10 @@ fn crop_decoded_frame(
 
     let dst_stride = tw.saturating_mul(4);
     let rows = th.min(decoded_height);
-    #[expect(clippy::as_conversions, reason = "dst_stride * rows bounded by frame dimensions")]
+    #[expect(
+        clippy::as_conversions,
+        reason = "dst_stride * rows bounded by frame dimensions"
+    )]
     let expected_len = (dst_stride as usize).saturating_mul(rows as usize);
     if cropped.len() < expected_len {
         tracing::warn!(
@@ -1541,13 +1623,15 @@ mod tests {
             }))
             .unwrap();
         client
-            .handle_pdu(GfxPdu::MapSurfaceToScaledOutput(MapSurfaceToScaledOutputPdu {
-                surface_id: 1,
-                output_origin_x: 3,
-                output_origin_y: 4,
-                target_width: 4,
-                target_height: 4,
-            }))
+            .handle_pdu(GfxPdu::MapSurfaceToScaledOutput(
+                MapSurfaceToScaledOutputPdu {
+                    surface_id: 1,
+                    output_origin_x: 3,
+                    output_origin_y: 4,
+                    target_width: 4,
+                    target_height: 4,
+                },
+            ))
             .unwrap();
 
         assert!(client.drain_output().is_empty());
@@ -1555,14 +1639,20 @@ mod tests {
             .handle_pdu(GfxPdu::EndFrame(crate::pdu::EndFramePdu { frame_id: 1 }))
             .unwrap();
 
-        assert_eq!(*mappings.lock().expect("mappings lock"), vec![(1, 3, 4, 4, 4)]);
+        assert_eq!(
+            *mappings.lock().expect("mappings lock"),
+            vec![(1, 3, 4, 4, 4)]
+        );
         assert_eq!(
             *surface_mappings.lock().expect("surface mappings lock"),
             vec![(1, 3, 4)]
         );
         assert!(client.surfaces[&1].is_mapped);
         assert_eq!(
-            (client.surfaces[&1].output_origin_x, client.surfaces[&1].output_origin_y),
+            (
+                client.surfaces[&1].output_origin_x,
+                client.surfaces[&1].output_origin_y
+            ),
             (3, 4)
         );
 
@@ -1583,13 +1673,15 @@ mod tests {
     fn map_surface_to_scaled_output_ignores_unknown_surface() {
         let mut client = GraphicsPipelineClient::new(Box::new(TestHandler), None);
         client
-            .handle_pdu(GfxPdu::MapSurfaceToScaledOutput(MapSurfaceToScaledOutputPdu {
-                surface_id: 1,
-                output_origin_x: 0,
-                output_origin_y: 0,
-                target_width: 2,
-                target_height: 2,
-            }))
+            .handle_pdu(GfxPdu::MapSurfaceToScaledOutput(
+                MapSurfaceToScaledOutputPdu {
+                    surface_id: 1,
+                    output_origin_x: 0,
+                    output_origin_y: 0,
+                    target_width: 2,
+                    target_height: 2,
+                },
+            ))
             .unwrap();
 
         assert!(client.surfaces.is_empty());
@@ -1666,7 +1758,10 @@ mod tests {
             assert_eq!(*width, W, "rle={rle}");
             assert_eq!(*height, H, "rle={rle}");
 
-            let expected: Vec<u8> = rgb.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 0xFF]).collect();
+            let expected: Vec<u8> = rgb
+                .chunks_exact(3)
+                .flat_map(|p| [p[0], p[1], p[2], 0xFF])
+                .collect();
             assert_eq!(*data, expected, "rle={rle}");
         }
     }
@@ -1727,11 +1822,13 @@ mod tests {
                 height: H,
                 pixel_format: PixelFormat::XRgb,
             }));
-            let _ = client.handle_pdu(GfxPdu::MapSurfaceToOutput(crate::pdu::MapSurfaceToOutputPdu {
-                surface_id: 1,
-                output_origin_x: u32::from(ORIGIN_X),
-                output_origin_y: u32::from(ORIGIN_Y),
-            }));
+            let _ = client.handle_pdu(GfxPdu::MapSurfaceToOutput(
+                crate::pdu::MapSurfaceToOutputPdu {
+                    surface_id: 1,
+                    output_origin_x: u32::from(ORIGIN_X),
+                    output_origin_y: u32::from(ORIGIN_Y),
+                },
+            ));
             // Discard the delta from the surface becoming visible: only the
             // WireToSurface1 decode below is under test.
             let _ = client.handle_pdu(GfxPdu::EndFrame(crate::pdu::EndFramePdu { frame_id: 0 }));
@@ -1749,7 +1846,11 @@ mod tests {
             let _ = client.handle_pdu(GfxPdu::EndFrame(crate::pdu::EndFramePdu { frame_id: 1 }));
 
             let updates = client.drain_output();
-            assert_eq!(updates.len(), 1, "{codec_id:?}: the decode must reach the compositor");
+            assert_eq!(
+                updates.len(),
+                1,
+                "{codec_id:?}: the decode must reach the compositor"
+            );
             let update = &updates[0];
             assert_eq!(
                 (
@@ -1828,7 +1929,10 @@ mod tests {
         }));
 
         assert!(client.surfaces.is_empty(), "surfaces should be cleared");
-        assert!(client.current_frame_id.is_none(), "frame_id should be reset");
+        assert!(
+            client.current_frame_id.is_none(),
+            "frame_id should be reset"
+        );
     }
 
     #[test]
@@ -1973,7 +2077,10 @@ mod tests {
         client
     }
 
-    fn wire_progressive(client: &mut GraphicsPipelineClient, bitmap_data: Vec<u8>) -> PduResult<Vec<DvcMessage>> {
+    fn wire_progressive(
+        client: &mut GraphicsPipelineClient,
+        bitmap_data: Vec<u8>,
+    ) -> PduResult<Vec<DvcMessage>> {
         client.handle_pdu(GfxPdu::WireToSurface2(WireToSurface2Pdu {
             surface_id: 1,
             codec_id: crate::pdu::Codec2Type::RemoteFxProgressive,
@@ -1984,11 +2091,12 @@ mod tests {
     }
 
     fn progressive_context_stream(with_context: bool) -> Vec<u8> {
-        use ironrdp_pdu::codecs::rfx::RfxRectangle;
         use ironrdp_pdu::codecs::rfx::progressive::{
-            ProgressiveBlock, ProgressiveContextPdu, ProgressiveFrameBeginPdu, ProgressiveFrameEndPdu,
-            ProgressiveRegion, ProgressiveSyncPdu, encode_progressive_stream,
+            encode_progressive_stream, ProgressiveBlock, ProgressiveContextPdu,
+            ProgressiveFrameBeginPdu, ProgressiveFrameEndPdu, ProgressiveRegion,
+            ProgressiveSyncPdu,
         };
+        use ironrdp_pdu::codecs::rfx::RfxRectangle;
 
         let mut blocks = Vec::new();
         if with_context {
@@ -2021,14 +2129,19 @@ mod tests {
         encode_progressive_stream(&blocks).unwrap()
     }
 
-    fn progressive_tile_stream(tile_x: u16, tile_y: u16, rect_width: u16, rect_height: u16) -> Vec<u8> {
-        use ironrdp_graphics::progressive::{COEFFICIENTS_PER_COMPONENT, encode_first_pass};
-        use ironrdp_pdu::codecs::rfx::RfxRectangle;
+    fn progressive_tile_stream(
+        tile_x: u16,
+        tile_y: u16,
+        rect_width: u16,
+        rect_height: u16,
+    ) -> Vec<u8> {
+        use ironrdp_graphics::progressive::{encode_first_pass, COEFFICIENTS_PER_COMPONENT};
         use ironrdp_pdu::codecs::rfx::progressive::{
-            ComponentCodecQuant, ProgressiveBlock, ProgressiveContextPdu, ProgressiveFrameBeginPdu,
-            ProgressiveFrameEndPdu, ProgressiveRegion, ProgressiveSyncPdu, ProgressiveTile, TileSimple,
-            encode_progressive_stream,
+            encode_progressive_stream, ComponentCodecQuant, ProgressiveBlock,
+            ProgressiveContextPdu, ProgressiveFrameBeginPdu, ProgressiveFrameEndPdu,
+            ProgressiveRegion, ProgressiveSyncPdu, ProgressiveTile, TileSimple,
         };
+        use ironrdp_pdu::codecs::rfx::RfxRectangle;
 
         let base_quant = ComponentCodecQuant::LOSSLESS;
         let mut component = [0i16; COEFFICIENTS_PER_COMPONENT];
@@ -2110,11 +2223,13 @@ mod tests {
             }))
             .unwrap();
         client
-            .handle_pdu(GfxPdu::MapSurfaceToOutput(crate::pdu::MapSurfaceToOutputPdu {
-                surface_id: 1,
-                output_origin_x: 0,
-                output_origin_y: 0,
-            }))
+            .handle_pdu(GfxPdu::MapSurfaceToOutput(
+                crate::pdu::MapSurfaceToOutputPdu {
+                    surface_id: 1,
+                    output_origin_x: 0,
+                    output_origin_y: 0,
+                },
+            ))
             .unwrap();
         client
             .handle_pdu(GfxPdu::StartFrame(crate::pdu::StartFramePdu {
@@ -2190,16 +2305,21 @@ mod tests {
     }
 
     fn rect(x: u16, y: u16, width: u16, height: u16) -> ironrdp_pdu::codecs::rfx::RfxRectangle {
-        ironrdp_pdu::codecs::rfx::RfxRectangle { x, y, width, height }
+        ironrdp_pdu::codecs::rfx::RfxRectangle {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     #[test]
     fn wire_to_surface2_clips_compositor_output_to_region() {
-        use ironrdp_graphics::progressive::{COEFFICIENTS_PER_COMPONENT, encode_first_pass};
+        use ironrdp_graphics::progressive::{encode_first_pass, COEFFICIENTS_PER_COMPONENT};
         use ironrdp_pdu::codecs::rfx::progressive::{
-            ComponentCodecQuant, ProgressiveBlock, ProgressiveContextPdu, ProgressiveFrameBeginPdu,
-            ProgressiveFrameEndPdu, ProgressiveRegion, ProgressiveSyncPdu, ProgressiveTile, TileSimple,
-            encode_progressive_stream,
+            encode_progressive_stream, ComponentCodecQuant, ProgressiveBlock,
+            ProgressiveContextPdu, ProgressiveFrameBeginPdu, ProgressiveFrameEndPdu,
+            ProgressiveRegion, ProgressiveSyncPdu, ProgressiveTile, TileSimple,
         };
 
         // Send one real, neutral-gray TILE_SIMPLE, then reference it from a
@@ -2280,11 +2400,13 @@ mod tests {
         // only have been produced by WireToSurface2.
         start_frame(&mut client, 1);
         client
-            .handle_pdu(GfxPdu::MapSurfaceToOutput(crate::pdu::MapSurfaceToOutputPdu {
-                surface_id: 1,
-                output_origin_x: 0,
-                output_origin_y: 0,
-            }))
+            .handle_pdu(GfxPdu::MapSurfaceToOutput(
+                crate::pdu::MapSurfaceToOutputPdu {
+                    surface_id: 1,
+                    output_origin_x: 0,
+                    output_origin_y: 0,
+                },
+            ))
             .unwrap();
         end_frame(&mut client, 1);
         let _ = client.drain_output();
@@ -2380,7 +2502,9 @@ mod tests {
     fn progressive_context_is_deleted_with_surface() {
         assert_progressive_context_is_deleted(|client| {
             client
-                .handle_pdu(GfxPdu::DeleteSurface(crate::pdu::DeleteSurfacePdu { surface_id: 1 }))
+                .handle_pdu(GfxPdu::DeleteSurface(crate::pdu::DeleteSurfacePdu {
+                    surface_id: 1,
+                }))
                 .unwrap();
             client
                 .handle_pdu(GfxPdu::CreateSurface(crate::pdu::CreateSurfacePdu {
@@ -2423,7 +2547,10 @@ mod tests {
     }
 
     impl H264Decoder for CoordinateDecoder {
-        fn decode(&mut self, _data: &[u8]) -> crate::decode::DecoderResult<crate::decode::DecodedFrame> {
+        fn decode(
+            &mut self,
+            _data: &[u8],
+        ) -> crate::decode::DecoderResult<crate::decode::DecodedFrame> {
             let (w, h) = (self.width, self.height);
             let mut data = Vec::with_capacity(usize::try_from(w * h * 4).unwrap_or(0));
             for y in 0..h {
@@ -2496,7 +2623,10 @@ mod tests {
                 updates: Arc::clone(&updates),
                 unhandled: Arc::clone(&unhandled),
             }),
-            Some(Box::new(CoordinateDecoder { width: 64, height: 64 })),
+            Some(Box::new(CoordinateDecoder {
+                width: 64,
+                height: 64,
+            })),
         );
 
         client

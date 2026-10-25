@@ -193,6 +193,22 @@ pub async fn sftp_download(
     }
     .ok_or_else(|| format!("SFTP session not active for tab: {tab_id}"))?;
 
+    let local_p = Path::new(&local_path);
+    let file_name = local_p
+        .file_name()
+        .and_then(|f| f.to_str())
+        .ok_or_else(|| format!("Invalid destination filename in: {local_path}"))?;
+
+    if file_name.contains("..")
+        || file_name.contains('/')
+        || file_name.contains('\\')
+        || file_name.contains(':')
+    {
+        return Err(format!(
+            "Insecure filename rejected for download: {file_name}"
+        ));
+    }
+
     client
         .download(&remote_path, &local_path)
         .await
@@ -234,7 +250,25 @@ pub async fn sftp_download_to_downloads(
         let _ = tokio::fs::create_dir_all(&downloads_dir).await;
     }
 
-    let local_path = downloads_dir.join(&file_name).to_string_lossy().to_string();
+    let mut candidate = downloads_dir.join(&file_name);
+    if candidate.exists() {
+        let stem = Path::new(&file_name)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "downloaded_file".to_string());
+        let ext = Path::new(&file_name)
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy()))
+            .unwrap_or_default();
+
+        let mut counter = 1;
+        while candidate.exists() {
+            candidate = downloads_dir.join(format!("{stem} ({counter}){ext}"));
+            counter += 1;
+        }
+    }
+
+    let local_path = candidate.to_string_lossy().to_string();
 
     client
         .download(&remote_path, &local_path)
@@ -242,27 +276,6 @@ pub async fn sftp_download_to_downloads(
         .map_err(|e| format!("Failed to download '{remote_path}' to '{local_path}': {e}"))?;
 
     Ok(local_path)
-}
-
-/// Read all bytes of a remote file directly into memory over Tauri IPC.
-///
-/// Suitable for quick in-browser file previews without local disk persistence.
-#[tauri::command]
-pub async fn sftp_download_bytes(
-    tab_id: String,
-    remote_path: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<u8>, String> {
-    let client = {
-        let sessions = state.sftp_sessions.read().await;
-        sessions.get(&tab_id).cloned()
-    }
-    .ok_or_else(|| format!("SFTP session not active for tab: {tab_id}"))?;
-
-    client
-        .download_bytes(&remote_path)
-        .await
-        .map_err(|e| format!("Failed to download bytes from '{remote_path}': {e}"))
 }
 
 /// Stream an in-memory byte buffer directly to a remote destination path on the SFTP server.
@@ -368,11 +381,47 @@ pub async fn local_mkdir(path: String) -> Result<(), String> {
         .map_err(|e| format!("Failed to create local directory '{path}': {e}"))
 }
 
+fn validate_safe_local_path(path_str: &str) -> Result<&Path, String> {
+    let p = Path::new(path_str);
+    if path_str.trim().is_empty() {
+        return Err("Empty path provided".into());
+    }
+    let components: Vec<_> = p.components().collect();
+    if components.is_empty() || components.len() == 1 {
+        return Err(format!(
+            "Operation not permitted on filesystem root: {path_str}"
+        ));
+    }
+    if let Ok(canon) = std::fs::canonicalize(p) {
+        if canon.parent().is_none() {
+            return Err(format!(
+                "Operation not permitted on filesystem root: {}",
+                canon.display()
+            ));
+        }
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .ok();
+        if let Some(h) = home {
+            if let Ok(canon_home) = std::fs::canonicalize(&h) {
+                if canon == canon_home {
+                    return Err(format!(
+                        "Operation not permitted on user home directory: {}",
+                        canon.display()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(p)
+}
+
 /// Delete a local file or directory.
 ///
 /// Recursively removes directory trees if `is_dir` is true, or deletes a single file otherwise.
 #[tauri::command]
 pub async fn local_remove(path: String, is_dir: bool) -> Result<(), String> {
+    validate_safe_local_path(&path)?;
     if is_dir {
         tokio::fs::remove_dir_all(&path).await
     } else {

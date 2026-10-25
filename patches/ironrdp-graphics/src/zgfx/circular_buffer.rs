@@ -14,7 +14,12 @@ impl FixedCircularBuffer {
         }
     }
 
-    pub(crate) fn read_with_offset(&self, offset: usize, length: usize, output: &mut impl io::Write) -> io::Result<()> {
+    pub(crate) fn read_with_offset(
+        &self,
+        offset: usize,
+        length: usize,
+        output: &mut impl io::Write,
+    ) -> io::Result<()> {
         // Defence-in-depth: callers should already have bounded the offset against the
         // buffer size, but reject out-of-range values here so a stray attacker-controlled
         // offset surfaces as a typed I/O error rather than an unsigned-underflow panic
@@ -161,7 +166,8 @@ mod tests {
     }
 
     #[test]
-    fn fixed_circular_buffer_correctly_writes_buffer_bigger_then_internal_buffer_size_with_position_at_end() {
+    fn fixed_circular_buffer_correctly_writes_buffer_bigger_then_internal_buffer_size_with_position_at_end(
+    ) {
         let size = 8;
         let mut circular_buffer = FixedCircularBuffer::new(size);
         circular_buffer.position = 6;
@@ -226,7 +232,8 @@ mod tests {
     }
 
     #[test]
-    fn fixed_circular_buffer_correctly_reads_buffer_with_repeating_multiple_bytes_from_end_to_start() {
+    fn fixed_circular_buffer_correctly_reads_buffer_with_repeating_multiple_bytes_from_end_to_start(
+    ) {
         let circular_buffer = FixedCircularBuffer {
             buffer: vec![11, 12, 3, 4, 5, 6, 7, 8, 9, 10],
             position: 2,

@@ -14,8 +14,8 @@ use commands::rdp::{
 
 use commands::sftp::{
     local_get_home_dir, local_list_dir, local_mkdir, local_remove, local_rename, sftp_connect,
-    sftp_disconnect, sftp_download, sftp_download_bytes, sftp_download_to_downloads, sftp_list_dir,
-    sftp_mkdir, sftp_remove, sftp_rename, sftp_upload, sftp_upload_bytes,
+    sftp_disconnect, sftp_download, sftp_download_to_downloads, sftp_list_dir, sftp_mkdir,
+    sftp_remove, sftp_rename, sftp_upload, sftp_upload_bytes,
 };
 use commands::ssh::{ssh_connect, ssh_disconnect, ssh_resize, ssh_write};
 use commands::terminal::{pty_close, pty_resize, pty_spawn, pty_write};
@@ -58,6 +58,12 @@ pub fn run() {
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
@@ -136,7 +142,6 @@ pub fn run() {
             sftp_upload_bytes,
             sftp_download,
             sftp_download_to_downloads,
-            sftp_download_bytes,
             local_get_home_dir,
             local_list_dir,
             local_mkdir,

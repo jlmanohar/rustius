@@ -71,7 +71,8 @@ fn verify_or_learn_rdp_certificate(
         None => {
             let base = if let Ok(appdata) = std::env::var("APPDATA") {
                 PathBuf::from(appdata).join("rustius")
-            } else if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+            } else if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME"))
+            {
                 PathBuf::from(home).join(".config").join("rustius")
             } else {
                 PathBuf::from("rustius-data")
@@ -135,13 +136,18 @@ fn verify_or_learn_rdp_certificate(
         let _ = std::fs::create_dir_all(parent);
     }
     use std::io::Write;
-    entries.push((endpoint.to_string(), fingerprint.clone()));
-    if let Ok(mut file) = std::fs::File::create(&path) {
-        for (h, fp) in entries {
-            let _ = writeln!(file, "{} {}", h, fp);
-        }
-    } else {
-        warn!(path = %path.display(), "Failed to write rdp_known_hosts entry");
+    let new_entry = format!("{} {}\n", endpoint, fingerprint);
+    let append_res = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut f| {
+            f.write_all(new_entry.as_bytes())?;
+            f.sync_all()
+        });
+
+    if let Err(e) = append_res {
+        warn!(path = %path.display(), error = %e, "Failed to persist rdp_known_hosts entry");
     }
 
     true
@@ -198,9 +204,8 @@ impl BinaryFrameBatchBuilder {
         // Zero-copy: 0x00RRGGBB in LE memory is [B, G, R, 0].
         // Copy raw bytes directly and let GPU fragment shader perform 0-overhead swizzling.
         let safe_slice = &u32_buffer[..valid_len];
-        let raw_bytes = unsafe {
-            std::slice::from_raw_parts(safe_slice.as_ptr() as *const u8, valid_len * 4)
-        };
+        let raw_bytes =
+            unsafe { std::slice::from_raw_parts(safe_slice.as_ptr() as *const u8, valid_len * 4) };
         self.buffer.extend_from_slice(raw_bytes);
     }
 
@@ -282,7 +287,7 @@ impl IronRdpSession {
         );
 
         let dest = Destination::from_parts(config.host.clone(), config.port);
-        let egfx_enabled = config.egfx.unwrap_or(true);
+        let egfx_enabled = config.egfx.unwrap_or(false);
         let clipboard_enabled = config.clipboard_sharing.unwrap_or(true);
         let clipboard_type = if clipboard_enabled {
             ClipboardType::Enable
@@ -594,7 +599,9 @@ impl IronRdpSession {
 
                         // Coalesce any additional tiles already queued in the channel without adding artificial latency.
                         while builder.tile_count < 64 {
-                            match tokio::time::timeout(std::time::Duration::ZERO, output_rx.recv()).await {
+                            match tokio::time::timeout(std::time::Duration::ZERO, output_rx.recv())
+                                .await
+                            {
                                 Ok(Some(RdpOutputEvent::DesktopUpdate(next_update))) => {
                                     let (next_buffer, next_fw, next_fh, next_region) =
                                         next_update.into_parts();
@@ -910,8 +917,6 @@ fn handle_non_desktop_event(event: RdpOutputEvent, on_event: &impl Fn(IronRdpEve
     }
 }
 
-
-
 /// Convert DOM / Web `KeyboardEvent.code` to PC/AT set-1 `Scancode`
 fn map_web_code_to_scancode(code: &str) -> Option<Scancode> {
     let (extended, make) = match code {
@@ -1001,7 +1006,7 @@ fn map_web_code_to_scancode(code: &str) -> Option<Scancode> {
         "F11" => (false, 0x57),
         "F12" => (false, 0x58),
         "PrintScreen" => (true, 0x37),
-        "Pause" => (false, 0x45),
+        "Pause" => return None,
         "NumpadEqual" => (false, 0x59),
         "NumpadComma" => (false, 0x7E),
         "IntlBackslash" => (false, 0x56),
@@ -1057,7 +1062,8 @@ mod tests {
 
         // Finding #17 extended scancodes
         assert!(map_web_code_to_scancode("PrintScreen").is_some());
-        assert!(map_web_code_to_scancode("Pause").is_some());
+        // Pause requires an E1-prefixed sequence not supported by fastpath scancode API; maps to None
+        assert!(map_web_code_to_scancode("Pause").is_none());
         assert!(map_web_code_to_scancode("NumpadEqual").is_some());
         assert!(map_web_code_to_scancode("NumpadComma").is_some());
         assert!(map_web_code_to_scancode("IntlBackslash").is_some());
@@ -1097,23 +1103,35 @@ mod tests {
 
         // 1. Initial connect: learns certificate (TOFU)
         let ok1 = verify_or_learn_rdp_certificate(cert, endpoint, "None", Some(&path));
-        assert!(ok1, "First-time connection should succeed under TOFU policy");
+        assert!(
+            ok1,
+            "First-time connection should succeed under TOFU policy"
+        );
 
         // 2. Second connect: verifies against known_hosts
         let ok2 = verify_or_learn_rdp_certificate(cert, endpoint, "None", Some(&path));
-        assert!(ok2, "Second connection with identical certificate must succeed");
+        assert!(
+            ok2,
+            "Second connection with identical certificate must succeed"
+        );
 
         // 3. Different cert for same host: rejected (MITM detection)
         let fake_cert = b"attacker_mitm_cert_der_bytes";
         let ok3 = verify_or_learn_rdp_certificate(fake_cert, endpoint, "None", Some(&path));
-        assert!(!ok3, "Different certificate for known host must be rejected");
+        assert!(
+            !ok3,
+            "Different certificate for known host must be rejected"
+        );
 
         // 4. Test whitespace robustness: edit file to contain multiple spaces and tabs
         let content = std::fs::read_to_string(&path).unwrap();
         let mangled = content.replace(' ', "   \t  ");
         std::fs::write(&path, mangled).unwrap();
         let ok4 = verify_or_learn_rdp_certificate(cert, endpoint, "None", Some(&path));
-        assert!(ok4, "Parsing must handle multiple spaces and tabs gracefully");
+        assert!(
+            ok4,
+            "Parsing must handle multiple spaces and tabs gracefully"
+        );
 
         // 5. Fail-closed test: if path is a directory, read fails with IsADirectory / PermissionDenied
         let dir_path = dir.join("sub_dir_store");
@@ -1158,7 +1176,10 @@ mod tests {
     #[test]
     fn test_egfx_openh264_initialization() {
         let decoder = ironrdp_egfx::decode::OpenH264Decoder::new();
-        assert!(decoder.is_ok(), "OpenH264 decoder must initialize successfully");
+        assert!(
+            decoder.is_ok(),
+            "OpenH264 decoder must initialize successfully"
+        );
 
         struct TestHandler;
         impl ironrdp_egfx::client::GraphicsPipelineHandler for TestHandler {}
@@ -1174,7 +1195,10 @@ mod tests {
                     if flags.contains(ironrdp_egfx::pdu::CapabilitiesV81Flags::AVC420_ENABLED)
             )
         });
-        assert!(has_v8_1, "EGFX handler must advertise V8.1 with AVC420_ENABLED");
+        assert!(
+            has_v8_1,
+            "EGFX handler must advertise V8.1 with AVC420_ENABLED"
+        );
     }
 
     #[test]

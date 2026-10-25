@@ -260,7 +260,7 @@
     selectedFontPreset = 'Geist Mono';
     customFontFamily = '';
     fontFamily = 'Geist Mono';
-    selectedVaultBackend = 'auto';
+    selectedVaultBackend = appState.config.app_settings?.vault_backend ?? 'auto';
     defaultRdpResolutionMode = 'auto';
     defaultRdpScaleFactor = 0;
     defaultRdpClipboardSharing = true;
@@ -274,7 +274,7 @@
       default_terminal_type: 'xterm-256color',
       font_size: 13,
       font_family: 'Geist Mono',
-      vault_backend: 'auto' as VaultBackend,
+      vault_backend: appState.config.app_settings?.vault_backend ?? 'auto',
       default_rdp_resolution_mode: 'auto' as const,
       default_rdp_scale_factor: 0,
       default_rdp_clipboard_sharing: true,

@@ -1,13 +1,11 @@
 use anyhow::Result;
+use std::io::Write;
 use std::path::Path;
 
 /// Abstraction over how config data is read/written.
 ///
-/// Phase 1: `PlaintextStorage` — reads/writes plain TOML files.
-/// Phase 2 (future): `EncryptedStorage` — AES-256-GCM with master password.
-///
-/// This trait ensures we can swap the storage backend without changing
-/// any of the config management or data model code.
+/// PlaintextStorage: JSON files for modular configuration (settings, connections, notes).
+/// EncryptedStorage: AES-256-GCM authenticated vault with Argon2id key derivation.
 pub trait ConfigStorage: Send + Sync {
     /// Read the content of a config file as a string.
     fn read(&self, path: &Path) -> Result<String>;
@@ -27,7 +25,71 @@ pub trait ConfigStorage: Send + Sync {
     }
 }
 
-/// Phase 1 implementation: plain configuration files on disk with atomic writes.
+/// Atomically write bytes to a file.
+///
+/// On Windows, creates a temporary file in the same directory, flushes to disk via sync_all(),
+/// and uses ReplaceFileW (if target exists) or rename (if new).
+/// On Unix, writes to temp file, flushes, and atomically renames.
+pub fn atomic_write_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let tmp_path = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp_path)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let to_wide = |p: &Path| -> Vec<u16> {
+            p.as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
+        };
+
+        if path.exists() {
+            let target_wide = to_wide(path);
+            let tmp_wide = to_wide(&tmp_path);
+            let res = unsafe {
+                windows_sys::Win32::Storage::FileSystem::ReplaceFileW(
+                    target_wide.as_ptr(),
+                    tmp_wide.as_ptr(),
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            let _ = std::fs::remove_file(&tmp_path);
+            if res == 0 {
+                return Err(anyhow::anyhow!(
+                    "Failed to atomically replace file on Windows: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        } else {
+            std::fs::rename(&tmp_path, path)?;
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::fs::rename(&tmp_path, path)?;
+    }
+
+    Ok(())
+}
+
+/// Plain configuration files on disk with atomic writes.
 pub struct PlaintextStorage;
 
 impl ConfigStorage for PlaintextStorage {
@@ -36,24 +98,7 @@ impl ConfigStorage for PlaintextStorage {
     }
 
     fn write(&self, path: &Path, content: &str) -> Result<()> {
-        // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        // Write to temporary file first for atomic persistence
-        let tmp_path = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
-        std::fs::write(&tmp_path, content)?;
-
-        // On Windows std::fs::rename will fail if target exists, so remove target if it already exists or use atomic replace
-        #[cfg(windows)]
-        {
-            if path.exists() {
-                let _ = std::fs::remove_file(path);
-            }
-        }
-        std::fs::rename(&tmp_path, path)?;
-        Ok(())
+        atomic_write_file(path, content.as_bytes())
     }
 
     fn exists(&self, path: &Path) -> bool {

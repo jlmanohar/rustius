@@ -59,23 +59,26 @@ use core::num::NonZeroU32;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
-use ironrdp_core::{Encode, EncodeResult, WriteCursor, decode, impl_as_any};
+use ironrdp_core::{decode, impl_as_any, Encode, EncodeResult, WriteCursor};
 use ironrdp_dvc::{DvcEncode, DvcMessage, DvcProcessor, DvcServerProcessor};
-use ironrdp_graphics::zgfx::{CompressionMode, Compressor, compress_and_wrap_egfx, wrap_uncompressed};
+use ironrdp_graphics::zgfx::{
+    compress_and_wrap_egfx, wrap_uncompressed, CompressionMode, Compressor,
+};
 use ironrdp_pdu::gcc::Monitor;
 use ironrdp_pdu::geometry::ExclusiveRectangle;
-use ironrdp_pdu::{PduResult, decode_err};
+use ironrdp_pdu::{decode_err, PduResult};
 use tracing::{debug, trace, warn};
 
-use crate::CHANNEL_NAME;
 use crate::pdu::{
-    Avc420BitmapStream, Avc420Region, Avc444BitmapStream, CacheImportOfferPdu, CacheImportReplyPdu,
-    CapabilitiesAdvertisePdu, CapabilitiesConfirmPdu, CapabilitiesV8Flags, CapabilitiesV10Flags, CapabilitiesV81Flags,
-    CapabilitiesV103Flags, CapabilitiesV104Flags, CapabilitiesV107Flags, CapabilitySet, Codec1Type, Codec2Type,
-    CreateSurfacePdu, DeleteSurfacePdu, Encoding, EndFramePdu, FrameAcknowledgePdu, GfxPdu, MapSurfaceToOutputPdu,
-    PixelFormat, QoeFrameAcknowledgePdu, ResetGraphicsPdu, StartFramePdu, Timestamp, WireToSurface1Pdu,
-    WireToSurface2Pdu, encode_avc420_bitmap_stream,
+    encode_avc420_bitmap_stream, Avc420BitmapStream, Avc420Region, Avc444BitmapStream,
+    CacheImportOfferPdu, CacheImportReplyPdu, CapabilitiesAdvertisePdu, CapabilitiesConfirmPdu,
+    CapabilitiesV103Flags, CapabilitiesV104Flags, CapabilitiesV107Flags, CapabilitiesV10Flags,
+    CapabilitiesV81Flags, CapabilitiesV8Flags, CapabilitySet, Codec1Type, Codec2Type,
+    CreateSurfacePdu, DeleteSurfacePdu, Encoding, EndFramePdu, FrameAcknowledgePdu, GfxPdu,
+    MapSurfaceToOutputPdu, PixelFormat, QoeFrameAcknowledgePdu, ResetGraphicsPdu, StartFramePdu,
+    Timestamp, WireToSurface1Pdu, WireToSurface2Pdu,
 };
+use crate::CHANNEL_NAME;
 
 // ============================================================================
 // Constants
@@ -184,7 +187,10 @@ impl Surfaces {
     /// Allocate a new surface ID
     pub fn allocate_id(&mut self) -> u16 {
         let id = self.next_surface_id;
-        debug_assert!(!self.surfaces.contains_key(&id), "surface ID {id} already in use");
+        debug_assert!(
+            !self.surfaces.contains_key(&id),
+            "surface ID {id} already in use"
+        );
         self.next_surface_id = self.next_surface_id.wrapping_add(1);
         id
     }
@@ -728,7 +734,9 @@ impl FrameTracker {
     /// A valid suspend request is independent of whether an RTT sample is tracked.
     fn suspend_from_untracked_ack(&mut self, frame_id: u32) -> bool {
         let issued = frame_id.wrapping_sub(self.generation_first_frame_id)
-            < self.next_frame_id.wrapping_sub(self.generation_first_frame_id);
+            < self
+                .next_frame_id
+                .wrapping_sub(self.generation_first_frame_id);
         if !issued {
             return false;
         }
@@ -743,9 +751,9 @@ impl FrameTracker {
         if !self.ack_suspended || queue_depth == SUSPEND_FRAME_ACK_QUEUE_DEPTH {
             return false;
         }
-        let issued_during_suspension = self
-            .suspension_first_frame_id
-            .is_some_and(|first| frame_id.wrapping_sub(first) < self.next_frame_id.wrapping_sub(first));
+        let issued_during_suspension = self.suspension_first_frame_id.is_some_and(|first| {
+            frame_id.wrapping_sub(first) < self.next_frame_id.wrapping_sub(first)
+        });
         if !self.suspension_outstanding.contains(&frame_id) && !issued_during_suspension {
             return false;
         }
@@ -814,7 +822,9 @@ impl core::fmt::Display for FrameSubmissionError {
                 "EGFX acknowledgement window is full ({frames_in_flight}/{max_frames_in_flight})"
             ),
             Self::UnknownSurface { surface_id } => write!(f, "unknown EGFX surface {surface_id}"),
-            Self::InvalidFrame => f.write_str("EGFX frame does not satisfy the negotiated framing rules"),
+            Self::InvalidFrame => {
+                f.write_str("EGFX frame does not satisfy the negotiated framing rules")
+            }
         }
     }
 }
@@ -930,7 +940,10 @@ fn capability_priority(cap: &CapabilitySet) -> u32 {
 }
 
 /// Negotiate the best capability set between client and server
-fn negotiate_capabilities(client_caps: &[CapabilitySet], server_caps: &[CapabilitySet]) -> Option<CapabilitySet> {
+fn negotiate_capabilities(
+    client_caps: &[CapabilitySet],
+    server_caps: &[CapabilitySet],
+) -> Option<CapabilitySet> {
     let mut server_sorted: Vec<_> = server_caps.iter().collect();
     server_sorted.sort_by_key(|cap| core::cmp::Reverse(capability_priority(cap)));
 
@@ -950,34 +963,52 @@ fn negotiate_capabilities(client_caps: &[CapabilitySet], server_caps: &[Capabili
 /// Intersect positive flags while preserving the client AVC decoder constraint.
 fn intersect_flags(client: &CapabilitySet, server: &CapabilitySet) -> CapabilitySet {
     match (client, server) {
-        (CapabilitySet::V8 { flags: cf }, CapabilitySet::V8 { flags: sf }) => CapabilitySet::V8 { flags: *cf & *sf },
+        (CapabilitySet::V8 { flags: cf }, CapabilitySet::V8 { flags: sf }) => {
+            CapabilitySet::V8 { flags: *cf & *sf }
+        }
         (CapabilitySet::V8_1 { flags: cf }, CapabilitySet::V8_1 { flags: sf }) => {
             CapabilitySet::V8_1 { flags: *cf & *sf }
         }
-        (CapabilitySet::V10 { flags: cf }, CapabilitySet::V10 { flags: sf }) => CapabilitySet::V10 {
-            flags: (*cf & *sf) | (*cf & CapabilitiesV10Flags::AVC_DISABLED),
-        },
-        (CapabilitySet::V10_2 { flags: cf }, CapabilitySet::V10_2 { flags: sf }) => CapabilitySet::V10_2 {
-            flags: (*cf & *sf) | (*cf & CapabilitiesV10Flags::AVC_DISABLED),
-        },
-        (CapabilitySet::V10_3 { flags: cf }, CapabilitySet::V10_3 { flags: sf }) => CapabilitySet::V10_3 {
-            flags: (*cf & *sf) | (*cf & CapabilitiesV103Flags::AVC_DISABLED),
-        },
-        (CapabilitySet::V10_4 { flags: cf }, CapabilitySet::V10_4 { flags: sf }) => CapabilitySet::V10_4 {
-            flags: (*cf & *sf) | (*cf & CapabilitiesV104Flags::AVC_DISABLED),
-        },
-        (CapabilitySet::V10_5 { flags: cf }, CapabilitySet::V10_5 { flags: sf }) => CapabilitySet::V10_5 {
-            flags: (*cf & *sf) | (*cf & CapabilitiesV104Flags::AVC_DISABLED),
-        },
-        (CapabilitySet::V10_6 { flags: cf }, CapabilitySet::V10_6 { flags: sf }) => CapabilitySet::V10_6 {
-            flags: (*cf & *sf) | (*cf & CapabilitiesV104Flags::AVC_DISABLED),
-        },
-        (CapabilitySet::V10_6Err { flags: cf }, CapabilitySet::V10_6Err { flags: sf }) => CapabilitySet::V10_6Err {
-            flags: (*cf & *sf) | (*cf & CapabilitiesV104Flags::AVC_DISABLED),
-        },
-        (CapabilitySet::V10_7 { flags: cf }, CapabilitySet::V10_7 { flags: sf }) => CapabilitySet::V10_7 {
-            flags: (*cf & *sf) | (*cf & CapabilitiesV107Flags::AVC_DISABLED),
-        },
+        (CapabilitySet::V10 { flags: cf }, CapabilitySet::V10 { flags: sf }) => {
+            CapabilitySet::V10 {
+                flags: (*cf & *sf) | (*cf & CapabilitiesV10Flags::AVC_DISABLED),
+            }
+        }
+        (CapabilitySet::V10_2 { flags: cf }, CapabilitySet::V10_2 { flags: sf }) => {
+            CapabilitySet::V10_2 {
+                flags: (*cf & *sf) | (*cf & CapabilitiesV10Flags::AVC_DISABLED),
+            }
+        }
+        (CapabilitySet::V10_3 { flags: cf }, CapabilitySet::V10_3 { flags: sf }) => {
+            CapabilitySet::V10_3 {
+                flags: (*cf & *sf) | (*cf & CapabilitiesV103Flags::AVC_DISABLED),
+            }
+        }
+        (CapabilitySet::V10_4 { flags: cf }, CapabilitySet::V10_4 { flags: sf }) => {
+            CapabilitySet::V10_4 {
+                flags: (*cf & *sf) | (*cf & CapabilitiesV104Flags::AVC_DISABLED),
+            }
+        }
+        (CapabilitySet::V10_5 { flags: cf }, CapabilitySet::V10_5 { flags: sf }) => {
+            CapabilitySet::V10_5 {
+                flags: (*cf & *sf) | (*cf & CapabilitiesV104Flags::AVC_DISABLED),
+            }
+        }
+        (CapabilitySet::V10_6 { flags: cf }, CapabilitySet::V10_6 { flags: sf }) => {
+            CapabilitySet::V10_6 {
+                flags: (*cf & *sf) | (*cf & CapabilitiesV104Flags::AVC_DISABLED),
+            }
+        }
+        (CapabilitySet::V10_6Err { flags: cf }, CapabilitySet::V10_6Err { flags: sf }) => {
+            CapabilitySet::V10_6Err {
+                flags: (*cf & *sf) | (*cf & CapabilitiesV104Flags::AVC_DISABLED),
+            }
+        }
+        (CapabilitySet::V10_7 { flags: cf }, CapabilitySet::V10_7 { flags: sf }) => {
+            CapabilitySet::V10_7 {
+                flags: (*cf & *sf) | (*cf & CapabilitiesV107Flags::AVC_DISABLED),
+            }
+        }
         // V10_1 has no flags; mismatched variants return server as-is.
         _ => server.clone(),
     }
@@ -1282,7 +1313,10 @@ impl GraphicsPipelineServer {
     /// compress PDUs before ZGFX wrapping, reducing bandwidth at the cost
     /// of CPU. The compressor maintains a sliding history window across
     /// frames for back-reference efficiency.
-    pub fn with_compression(handler: Box<dyn GraphicsPipelineHandler>, compression_mode: CompressionMode) -> Self {
+    pub fn with_compression(
+        handler: Box<dyn GraphicsPipelineHandler>,
+        compression_mode: CompressionMode,
+    ) -> Self {
         let mut server = Self::new(handler);
         server.compression_mode = compression_mode;
         server
@@ -1358,7 +1392,12 @@ impl GraphicsPipelineServer {
     }
 
     /// Create a new surface with specific pixel format
-    pub fn create_surface_with_format(&mut self, width: u16, height: u16, pixel_format: PixelFormat) -> Option<u16> {
+    pub fn create_surface_with_format(
+        &mut self,
+        width: u16,
+        height: u16,
+        pixel_format: PixelFormat,
+    ) -> Option<u16> {
         if self.state != ServerState::Ready && self.state != ServerState::Resizing {
             return None;
         }
@@ -1377,11 +1416,12 @@ impl GraphicsPipelineServer {
                 height
             };
 
-            self.output_queue.push_back(GfxPdu::ResetGraphics(ResetGraphicsPdu {
-                width: u32::from(desktop_width),
-                height: u32::from(desktop_height),
-                monitors: Vec::new(),
-            }));
+            self.output_queue
+                .push_back(GfxPdu::ResetGraphics(ResetGraphicsPdu {
+                    width: u32::from(desktop_width),
+                    height: u32::from(desktop_height),
+                    monitors: Vec::new(),
+                }));
 
             self.output_width = desktop_width;
             self.output_height = desktop_height;
@@ -1391,12 +1431,13 @@ impl GraphicsPipelineServer {
         let surface_id = self.surfaces.allocate_id();
         let surface = Surface::new(surface_id, width, height, pixel_format);
 
-        self.output_queue.push_back(GfxPdu::CreateSurface(CreateSurfacePdu {
-            surface_id,
-            width,
-            height,
-            pixel_format,
-        }));
+        self.output_queue
+            .push_back(GfxPdu::CreateSurface(CreateSurfacePdu {
+                surface_id,
+                width,
+                height,
+                pixel_format,
+            }));
 
         self.handler.on_surface_created(&surface);
         self.surfaces.insert(surface);
@@ -1485,7 +1526,12 @@ impl GraphicsPipelineServer {
             return;
         }
 
-        debug!(width, height, monitors = monitors.len(), "Initiating resize");
+        debug!(
+            width,
+            height,
+            monitors = monitors.len(),
+            "Initiating resize"
+        );
 
         self.state = ServerState::Resizing;
         self.output_width = width;
@@ -1498,11 +1544,12 @@ impl GraphicsPipelineServer {
 
         self.frames.clear_pending_frames();
 
-        self.output_queue.push_back(GfxPdu::ResetGraphics(ResetGraphicsPdu {
-            width: u32::from(width),
-            height: u32::from(height),
-            monitors,
-        }));
+        self.output_queue
+            .push_back(GfxPdu::ResetGraphics(ResetGraphicsPdu {
+                width: u32::from(width),
+                height: u32::from(height),
+                monitors,
+            }));
 
         self.reset_graphics_sent = true;
         self.state = ServerState::Ready;
@@ -1604,7 +1651,11 @@ impl GraphicsPipelineServer {
     ///
     /// `Avc420Region` and the wire-format `RDPGFX_RECT16` both use exclusive
     /// right and bottom bounds.
-    fn compute_dest_rect(regions: &[Avc420Region], default_width: u16, default_height: u16) -> ExclusiveRectangle {
+    fn compute_dest_rect(
+        regions: &[Avc420Region],
+        default_width: u16,
+        default_height: u16,
+    ) -> ExclusiveRectangle {
         if let Some(first) = regions.first() {
             let mut left = first.left;
             let mut top = first.top;
@@ -1636,10 +1687,17 @@ impl GraphicsPipelineServer {
 
     /// Whether an exclusive rectangle is non-empty and lies inside the surface.
     fn rect_fits_surface(surface: &Surface, rect: &ExclusiveRectangle) -> bool {
-        rect.left < rect.right && rect.top < rect.bottom && rect.right <= surface.width && rect.bottom <= surface.height
+        rect.left < rect.right
+            && rect.top < rect.bottom
+            && rect.right <= surface.width
+            && rect.bottom <= surface.height
     }
 
-    fn submission_state(&self, surface_id: u16, avc444: bool) -> Result<&Surface, FrameSubmissionError> {
+    fn submission_state(
+        &self,
+        surface_id: u16,
+        avc444: bool,
+    ) -> Result<&Surface, FrameSubmissionError> {
         if !self.is_ready() {
             return Err(FrameSubmissionError::NotReady);
         }
@@ -1665,7 +1723,11 @@ impl GraphicsPipelineServer {
         self.submission_state(surface_id, false).map(|_| ())
     }
 
-    fn prepare_submission(&mut self, surface_id: u16, avc444: bool) -> Result<Surface, FrameSubmissionError> {
+    fn prepare_submission(
+        &mut self,
+        surface_id: u16,
+        avc444: bool,
+    ) -> Result<Surface, FrameSubmissionError> {
         // Copy the small descriptor so validation and QoE accounting use one lookup.
         match self.submission_state(surface_id, avc444).cloned() {
             Err(error @ FrameSubmissionError::Backpressured { .. }) => {
@@ -1692,15 +1754,20 @@ impl GraphicsPipelineServer {
 
         // MS-RDPEGFX requires three-PDU sequence per frame.
         self.output_queue
-            .push_back(GfxPdu::StartFrame(StartFramePdu { timestamp, frame_id }));
-        self.output_queue.push_back(GfxPdu::WireToSurface1(WireToSurface1Pdu {
-            surface_id,
-            codec_id: Codec1Type::Avc420,
-            pixel_format: surface.pixel_format,
-            destination_rectangle: target_rect,
-            bitmap_data: encoded_stream,
-        }));
-        self.output_queue.push_back(GfxPdu::EndFrame(EndFramePdu { frame_id }));
+            .push_back(GfxPdu::StartFrame(StartFramePdu {
+                timestamp,
+                frame_id,
+            }));
+        self.output_queue
+            .push_back(GfxPdu::WireToSurface1(WireToSurface1Pdu {
+                surface_id,
+                codec_id: Codec1Type::Avc420,
+                pixel_format: surface.pixel_format,
+                destination_rectangle: target_rect,
+                bitmap_data: encoded_stream,
+            }));
+        self.output_queue
+            .push_back(GfxPdu::EndFrame(EndFramePdu { frame_id }));
 
         Ok(frame_id)
     }
@@ -1737,7 +1804,11 @@ impl GraphicsPipelineServer {
     ) -> Result<u32, FrameSubmissionError> {
         let (encoding, stream2_data, stream2_regions) =
             if let (Some(chroma_data), Some(chroma_regions)) = (chroma_data, chroma_regions) {
-                (Encoding::LUMA_AND_CHROMA, Some(chroma_data), Some(chroma_regions))
+                (
+                    Encoding::LUMA_AND_CHROMA,
+                    Some(chroma_data),
+                    Some(chroma_regions),
+                )
             } else {
                 (Encoding::LUMA, None, None)
             };
@@ -1861,12 +1932,23 @@ impl GraphicsPipelineServer {
         let surface = self.prepare_submission(surface_id, true)?;
         let timestamp = Self::make_timestamp(timestamp_ms);
         let frame_id = self.frames.begin_frame(timestamp);
-        let wire_pdu = Self::avc444_wire_pdu(codec_id, &surface, encoding, (stream1_regions, stream1_data), stream2);
+        let wire_pdu = Self::avc444_wire_pdu(
+            codec_id,
+            &surface,
+            encoding,
+            (stream1_regions, stream1_data),
+            stream2,
+        );
 
         self.output_queue
-            .push_back(GfxPdu::StartFrame(StartFramePdu { timestamp, frame_id }));
-        self.output_queue.push_back(GfxPdu::WireToSurface1(wire_pdu));
-        self.output_queue.push_back(GfxPdu::EndFrame(EndFramePdu { frame_id }));
+            .push_back(GfxPdu::StartFrame(StartFramePdu {
+                timestamp,
+                frame_id,
+            }));
+        self.output_queue
+            .push_back(GfxPdu::WireToSurface1(wire_pdu));
+        self.output_queue
+            .push_back(GfxPdu::EndFrame(EndFramePdu { frame_id }));
 
         Ok(frame_id)
     }
@@ -1906,9 +1988,12 @@ impl GraphicsPipelineServer {
 
         // destRect is the bounding rectangle of both sub-streams (MS-RDPEGFX 2.2.2.1).
         let destination_rectangle = match stream2 {
-            Some((stream2_regions, _)) => {
-                Self::compute_dest_rect_for_streams(stream1.0, stream2_regions, surface.width, surface.height)
-            }
+            Some((stream2_regions, _)) => Self::compute_dest_rect_for_streams(
+                stream1.0,
+                stream2_regions,
+                surface.width,
+                surface.height,
+            ),
             None => Self::compute_dest_rect(stream1.0, surface.width, surface.height),
         };
 
@@ -1923,7 +2008,11 @@ impl GraphicsPipelineServer {
 
     /// Build the `WireToSurface1` PDU for an AVC444 or AVC444v2 mixed-frame tile
     /// whose shape has already been checked.
-    fn avc444_tile_pdu(codec_id: Codec1Type, surface: &Surface, tile: &Avc444Tile) -> WireToSurface1Pdu {
+    fn avc444_tile_pdu(
+        codec_id: Codec1Type,
+        surface: &Surface,
+        tile: &Avc444Tile,
+    ) -> WireToSurface1Pdu {
         Self::avc444_wire_pdu(
             codec_id,
             surface,
@@ -1949,10 +2038,9 @@ impl GraphicsPipelineServer {
         {
             return Some("AVC region is empty or outside the surface");
         }
-        if regions
-            .iter()
-            .any(|region| MAX_AVC_QP < region.quantization_parameter || MAX_AVC_QUALITY < region.quality)
-        {
+        if regions.iter().any(|region| {
+            MAX_AVC_QP < region.quantization_parameter || MAX_AVC_QUALITY < region.quality
+        }) {
             return Some("AVC QP or quality is out of range");
         }
 
@@ -2015,17 +2103,22 @@ impl GraphicsPipelineServer {
         };
 
         self.output_queue
-            .push_back(GfxPdu::StartFrame(StartFramePdu { timestamp, frame_id }));
+            .push_back(GfxPdu::StartFrame(StartFramePdu {
+                timestamp,
+                frame_id,
+            }));
 
-        self.output_queue.push_back(GfxPdu::WireToSurface1(WireToSurface1Pdu {
-            surface_id,
-            codec_id: Codec1Type::Planar,
-            pixel_format: surface.pixel_format,
-            destination_rectangle,
-            bitmap_data: planar_data.to_vec(),
-        }));
+        self.output_queue
+            .push_back(GfxPdu::WireToSurface1(WireToSurface1Pdu {
+                surface_id,
+                codec_id: Codec1Type::Planar,
+                pixel_format: surface.pixel_format,
+                destination_rectangle,
+                bitmap_data: planar_data.to_vec(),
+            }));
 
-        self.output_queue.push_back(GfxPdu::EndFrame(EndFramePdu { frame_id }));
+        self.output_queue
+            .push_back(GfxPdu::EndFrame(EndFramePdu { frame_id }));
 
         Some(frame_id)
     }
@@ -2067,17 +2160,22 @@ impl GraphicsPipelineServer {
         };
 
         self.output_queue
-            .push_back(GfxPdu::StartFrame(StartFramePdu { timestamp, frame_id }));
+            .push_back(GfxPdu::StartFrame(StartFramePdu {
+                timestamp,
+                frame_id,
+            }));
 
-        self.output_queue.push_back(GfxPdu::WireToSurface1(WireToSurface1Pdu {
-            surface_id,
-            codec_id: Codec1Type::Uncompressed,
-            pixel_format: surface.pixel_format,
-            destination_rectangle: dest_rect,
-            bitmap_data: bitmap_data.to_vec(),
-        }));
+        self.output_queue
+            .push_back(GfxPdu::WireToSurface1(WireToSurface1Pdu {
+                surface_id,
+                codec_id: Codec1Type::Uncompressed,
+                pixel_format: surface.pixel_format,
+                destination_rectangle: dest_rect,
+                bitmap_data: bitmap_data.to_vec(),
+            }));
 
-        self.output_queue.push_back(GfxPdu::EndFrame(EndFramePdu { frame_id }));
+        self.output_queue
+            .push_back(GfxPdu::EndFrame(EndFramePdu { frame_id }));
 
         Some(frame_id)
     }
@@ -2114,17 +2212,22 @@ impl GraphicsPipelineServer {
         let frame_id = self.frames.begin_frame(timestamp);
 
         self.output_queue
-            .push_back(GfxPdu::StartFrame(StartFramePdu { timestamp, frame_id }));
+            .push_back(GfxPdu::StartFrame(StartFramePdu {
+                timestamp,
+                frame_id,
+            }));
 
-        self.output_queue.push_back(GfxPdu::WireToSurface2(WireToSurface2Pdu {
-            surface_id,
-            codec_id: Codec2Type::RemoteFxProgressive,
-            codec_context_id,
-            pixel_format: surface.pixel_format,
-            bitmap_data: progressive_data,
-        }));
+        self.output_queue
+            .push_back(GfxPdu::WireToSurface2(WireToSurface2Pdu {
+                surface_id,
+                codec_id: Codec2Type::RemoteFxProgressive,
+                codec_context_id,
+                pixel_format: surface.pixel_format,
+                bitmap_data: progressive_data,
+            }));
 
-        self.output_queue.push_back(GfxPdu::EndFrame(EndFramePdu { frame_id }));
+        self.output_queue
+            .push_back(GfxPdu::EndFrame(EndFramePdu { frame_id }));
 
         Some(frame_id)
     }
@@ -2160,17 +2263,22 @@ impl GraphicsPipelineServer {
         let frame_id = self.frames.begin_frame(timestamp);
 
         self.output_queue
-            .push_back(GfxPdu::StartFrame(StartFramePdu { timestamp, frame_id }));
+            .push_back(GfxPdu::StartFrame(StartFramePdu {
+                timestamp,
+                frame_id,
+            }));
 
-        self.output_queue.push_back(GfxPdu::WireToSurface1(WireToSurface1Pdu {
-            surface_id,
-            codec_id: Codec1Type::ClearCodec,
-            pixel_format: surface.pixel_format,
-            destination_rectangle,
-            bitmap_data,
-        }));
+        self.output_queue
+            .push_back(GfxPdu::WireToSurface1(WireToSurface1Pdu {
+                surface_id,
+                codec_id: Codec1Type::ClearCodec,
+                pixel_format: surface.pixel_format,
+                destination_rectangle,
+                bitmap_data,
+            }));
 
-        self.output_queue.push_back(GfxPdu::EndFrame(EndFramePdu { frame_id }));
+        self.output_queue
+            .push_back(GfxPdu::EndFrame(EndFramePdu { frame_id }));
 
         Some(frame_id)
     }
@@ -2271,8 +2379,10 @@ impl GraphicsPipelineServer {
         let pixel_format = surface.pixel_format;
 
         let refusal = tiles.iter().find_map(|tile| match tile {
-            MixedTilePayload::ClearCodec { destination, .. } => (!Self::rect_fits_surface(surface, destination))
-                .then_some("ClearCodec destination is empty or outside the surface"),
+            MixedTilePayload::ClearCodec { destination, .. } => {
+                (!Self::rect_fits_surface(surface, destination))
+                    .then_some("ClearCodec destination is empty or outside the surface")
+            }
             MixedTilePayload::RemoteFxProgressive { .. } => None,
             MixedTilePayload::Avc420 { regions, .. } => Self::avc_regions_refusal(surface, regions),
             MixedTilePayload::Avc444(tile) | MixedTilePayload::Avc444v2(tile) => {
@@ -2299,7 +2409,10 @@ impl GraphicsPipelineServer {
         let frame_id = self.frames.begin_frame(timestamp);
 
         self.output_queue
-            .push_back(GfxPdu::StartFrame(StartFramePdu { timestamp, frame_id }));
+            .push_back(GfxPdu::StartFrame(StartFramePdu {
+                timestamp,
+                frame_id,
+            }));
 
         for tile in tiles {
             match tile {
@@ -2307,37 +2420,41 @@ impl GraphicsPipelineServer {
                     destination,
                     bitmap_data,
                 } => {
-                    self.output_queue.push_back(GfxPdu::WireToSurface1(WireToSurface1Pdu {
-                        surface_id,
-                        codec_id: Codec1Type::ClearCodec,
-                        pixel_format,
-                        destination_rectangle: destination,
-                        bitmap_data,
-                    }));
+                    self.output_queue
+                        .push_back(GfxPdu::WireToSurface1(WireToSurface1Pdu {
+                            surface_id,
+                            codec_id: Codec1Type::ClearCodec,
+                            pixel_format,
+                            destination_rectangle: destination,
+                            bitmap_data,
+                        }));
                 }
                 MixedTilePayload::RemoteFxProgressive {
                     codec_context_id,
                     progressive_data,
                 } => {
-                    self.output_queue.push_back(GfxPdu::WireToSurface2(WireToSurface2Pdu {
-                        surface_id,
-                        codec_id: Codec2Type::RemoteFxProgressive,
-                        codec_context_id,
-                        pixel_format,
-                        bitmap_data: progressive_data,
-                    }));
+                    self.output_queue
+                        .push_back(GfxPdu::WireToSurface2(WireToSurface2Pdu {
+                            surface_id,
+                            codec_id: Codec2Type::RemoteFxProgressive,
+                            codec_context_id,
+                            pixel_format,
+                            bitmap_data: progressive_data,
+                        }));
                 }
                 MixedTilePayload::Avc420 { regions, h264_data } => {
                     let encoded_stream = encode_avc420_bitmap_stream(&regions, &h264_data);
-                    let target_rect = Self::compute_dest_rect(&regions, surface.width, surface.height);
+                    let target_rect =
+                        Self::compute_dest_rect(&regions, surface.width, surface.height);
 
-                    self.output_queue.push_back(GfxPdu::WireToSurface1(WireToSurface1Pdu {
-                        surface_id,
-                        codec_id: Codec1Type::Avc420,
-                        pixel_format,
-                        destination_rectangle: target_rect,
-                        bitmap_data: encoded_stream,
-                    }));
+                    self.output_queue
+                        .push_back(GfxPdu::WireToSurface1(WireToSurface1Pdu {
+                            surface_id,
+                            codec_id: Codec1Type::Avc420,
+                            pixel_format,
+                            destination_rectangle: target_rect,
+                            bitmap_data: encoded_stream,
+                        }));
                 }
                 MixedTilePayload::Avc444(tile) => {
                     self.output_queue
@@ -2358,7 +2475,8 @@ impl GraphicsPipelineServer {
             }
         }
 
-        self.output_queue.push_back(GfxPdu::EndFrame(EndFramePdu { frame_id }));
+        self.output_queue
+            .push_back(GfxPdu::EndFrame(EndFramePdu { frame_id }));
 
         Some(frame_id)
     }
@@ -2399,7 +2517,8 @@ impl GraphicsPipelineServer {
                 let pdu_size = pdu.size();
                 let mut pdu_bytes = vec![0u8; pdu_size];
                 let mut cursor = WriteCursor::new(&mut pdu_bytes);
-                pdu.encode(&mut cursor).expect("GfxPdu encoding should not fail");
+                pdu.encode(&mut cursor)
+                    .expect("GfxPdu encoding should not fail");
                 total_uncompressed += pdu_size;
 
                 let wrapped = match mode {
@@ -2518,10 +2637,9 @@ impl GraphicsPipelineServer {
         self.state = ServerState::Ready;
         let negotiated = self.negotiated_caps.insert(negotiated);
 
-        self.output_queue
-            .push_back(GfxPdu::CapabilitiesConfirm(CapabilitiesConfirmPdu::from_typed(
-                negotiated,
-            )));
+        self.output_queue.push_back(GfxPdu::CapabilitiesConfirm(
+            CapabilitiesConfirmPdu::from_typed(negotiated),
+        ));
 
         self.handler.on_ready(negotiated);
     }
@@ -2541,7 +2659,8 @@ impl GraphicsPipelineServer {
             let accepted = if suspended {
                 self.frames.suspend_from_untracked_ack(pdu.frame_id)
             } else {
-                self.frames.resume_from_untracked_ack(pdu.frame_id, queue_depth)
+                self.frames
+                    .resume_from_untracked_ack(pdu.frame_id, queue_depth)
             };
             if accepted {
                 self.handler
@@ -2586,7 +2705,9 @@ impl GraphicsPipelineServer {
         let accepted = self.handler.on_cache_import_offer(&pdu);
 
         self.output_queue
-            .push_back(GfxPdu::CacheImportReply(CacheImportReplyPdu { cache_slots: accepted }));
+            .push_back(GfxPdu::CacheImportReply(CacheImportReplyPdu {
+                cache_slots: accepted,
+            }));
     }
 }
 
@@ -2630,7 +2751,11 @@ impl DvcProcessor for GraphicsPipelineServer {
             GfxPdu::CacheImportOffer(_) => "CacheImportOffer",
             _ => "other",
         };
-        debug!(pdu_kind, payload_len = payload.len(), "EGFX DVC PDU received");
+        debug!(
+            pdu_kind,
+            payload_len = payload.len(),
+            "EGFX DVC PDU received"
+        );
 
         match pdu {
             GfxPdu::CapabilitiesAdvertise(pdu) => {
@@ -2761,7 +2886,8 @@ mod capability_negotiation_tests {
         let cases = [
             (
                 CapabilitySet::V10_3 {
-                    flags: CapabilitiesV103Flags::AVC_DISABLED | CapabilitiesV103Flags::AVC_THIN_CLIENT,
+                    flags: CapabilitiesV103Flags::AVC_DISABLED
+                        | CapabilitiesV103Flags::AVC_THIN_CLIENT,
                 },
                 CapabilitySet::V10_3 {
                     flags: CapabilitiesV103Flags::AVC_THIN_CLIENT,
@@ -2777,7 +2903,8 @@ mod capability_negotiation_tests {
                         | CapabilitiesV104Flags::SMALL_CACHE,
                 },
                 CapabilitySet::V10_4 {
-                    flags: CapabilitiesV104Flags::AVC_THIN_CLIENT | CapabilitiesV104Flags::SMALL_CACHE,
+                    flags: CapabilitiesV104Flags::AVC_THIN_CLIENT
+                        | CapabilitiesV104Flags::SMALL_CACHE,
                 },
                 CapabilitySet::V10_4 {
                     flags: CapabilitiesV104Flags::AVC_DISABLED | CapabilitiesV104Flags::SMALL_CACHE,
@@ -2790,7 +2917,8 @@ mod capability_negotiation_tests {
                         | CapabilitiesV104Flags::SMALL_CACHE,
                 },
                 CapabilitySet::V10_5 {
-                    flags: CapabilitiesV104Flags::AVC_THIN_CLIENT | CapabilitiesV104Flags::SMALL_CACHE,
+                    flags: CapabilitiesV104Flags::AVC_THIN_CLIENT
+                        | CapabilitiesV104Flags::SMALL_CACHE,
                 },
                 CapabilitySet::V10_5 {
                     flags: CapabilitiesV104Flags::AVC_DISABLED | CapabilitiesV104Flags::SMALL_CACHE,
@@ -2803,7 +2931,8 @@ mod capability_negotiation_tests {
                         | CapabilitiesV104Flags::SMALL_CACHE,
                 },
                 CapabilitySet::V10_6 {
-                    flags: CapabilitiesV104Flags::AVC_THIN_CLIENT | CapabilitiesV104Flags::SMALL_CACHE,
+                    flags: CapabilitiesV104Flags::AVC_THIN_CLIENT
+                        | CapabilitiesV104Flags::SMALL_CACHE,
                 },
                 CapabilitySet::V10_6 {
                     flags: CapabilitiesV104Flags::AVC_DISABLED | CapabilitiesV104Flags::SMALL_CACHE,
@@ -2816,7 +2945,8 @@ mod capability_negotiation_tests {
                         | CapabilitiesV104Flags::SMALL_CACHE,
                 },
                 CapabilitySet::V10_6Err {
-                    flags: CapabilitiesV104Flags::AVC_THIN_CLIENT | CapabilitiesV104Flags::SMALL_CACHE,
+                    flags: CapabilitiesV104Flags::AVC_THIN_CLIENT
+                        | CapabilitiesV104Flags::SMALL_CACHE,
                 },
                 CapabilitySet::V10_6Err {
                     flags: CapabilitiesV104Flags::AVC_DISABLED | CapabilitiesV104Flags::SMALL_CACHE,
@@ -2829,7 +2959,8 @@ mod capability_negotiation_tests {
                         | CapabilitiesV107Flags::SMALL_CACHE,
                 },
                 CapabilitySet::V10_7 {
-                    flags: CapabilitiesV107Flags::AVC_THIN_CLIENT | CapabilitiesV107Flags::SMALL_CACHE,
+                    flags: CapabilitiesV107Flags::AVC_THIN_CLIENT
+                        | CapabilitiesV107Flags::SMALL_CACHE,
                 },
                 CapabilitySet::V10_7 {
                     flags: CapabilitiesV107Flags::AVC_DISABLED | CapabilitiesV107Flags::SMALL_CACHE,
@@ -2851,7 +2982,9 @@ mod tests {
     #[test]
     fn valid_suspend_ack_is_honoured_without_a_tracked_sample_or_ready_state() {
         let mut server = GraphicsPipelineServer::new(Box::new(DefaultsHandler));
-        let frame_id = server.frames.begin_frame(GraphicsPipelineServer::make_timestamp(0));
+        let frame_id = server
+            .frames
+            .begin_frame(GraphicsPipelineServer::make_timestamp(0));
         server.frames.acknowledge(frame_id, 0).unwrap();
         server.state = ServerState::Resizing;
         server.handle_frame_acknowledge(FrameAcknowledgePdu {
@@ -2906,7 +3039,8 @@ mod tests {
             flags: CapabilitiesV104Flags::empty(),
         }];
 
-        let negotiated = negotiate_capabilities(&client_caps, &server_caps).expect("V10.6-only client negotiates");
+        let negotiated = negotiate_capabilities(&client_caps, &server_caps)
+            .expect("V10.6-only client negotiates");
 
         assert!(matches!(negotiated, CapabilitySet::V10_6 { .. }));
         assert!(CodecCapabilities::from_capability_set(&negotiated).avc444);

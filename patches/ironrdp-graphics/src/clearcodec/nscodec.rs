@@ -3,7 +3,7 @@
 //! ClearCodec embeds an NSCodec Compressed Bitmap Stream ([MS-RDPNSC] 2.2.2) directly inside a positioned subcodec region ([MS-RDPEGFX] 2.2.4.1.1.3.1).
 //! Unlike the classic bitmap-update transport, which wraps the stream in Extended Bitmap Data ([MS-RDPBCGR] 2.2.9.2.1.1), the containing subcodec supplies its dimensions.
 
-use ironrdp_core::{DecodeResult, invalid_field_err};
+use ironrdp_core::{invalid_field_err, DecodeResult};
 
 const HEADER_SIZE: usize = 4 /* LumaPlaneByteCount */
     + 4 /* OrangeChromaPlaneByteCount */
@@ -18,7 +18,10 @@ const RLE_END_DATA_SIZE: usize = 4;
 ///
 /// The stream uses AYCoCg planes, optionally with 4:2:0 chroma subsampling.
 pub(super) fn decode(data: &[u8], width: u16, height: u16) -> DecodeResult<Vec<u8>> {
-    #![allow(clippy::similar_names, reason = "Co and Cg are protocol-defined plane names")]
+    #![allow(
+        clippy::similar_names,
+        reason = "Co and Cg are protocol-defined plane names"
+    )]
 
     if data.len() < HEADER_SIZE {
         return Err(invalid_field_err!(
@@ -27,22 +30,38 @@ pub(super) fn decode(data: &[u8], width: u16, height: u16) -> DecodeResult<Vec<u
         ));
     }
 
-    let luma_len = usize::try_from(u32::from_le_bytes(data[0..4].try_into().expect("4-byte slice")))
-        .map_err(|_| invalid_field_err!("lumaPlaneByteCount", "length does not fit in usize"))?;
-    let co_len = usize::try_from(u32::from_le_bytes(data[4..8].try_into().expect("4-byte slice")))
-        .map_err(|_| invalid_field_err!("orangeChromaPlaneByteCount", "length does not fit in usize"))?;
-    let cg_len = usize::try_from(u32::from_le_bytes(data[8..12].try_into().expect("4-byte slice")))
-        .map_err(|_| invalid_field_err!("greenChromaPlaneByteCount", "length does not fit in usize"))?;
-    let alpha_len = usize::try_from(u32::from_le_bytes(data[12..16].try_into().expect("4-byte slice")))
-        .map_err(|_| invalid_field_err!("alphaPlaneByteCount", "length does not fit in usize"))?;
+    let luma_len = usize::try_from(u32::from_le_bytes(
+        data[0..4].try_into().expect("4-byte slice"),
+    ))
+    .map_err(|_| invalid_field_err!("lumaPlaneByteCount", "length does not fit in usize"))?;
+    let co_len = usize::try_from(u32::from_le_bytes(
+        data[4..8].try_into().expect("4-byte slice"),
+    ))
+    .map_err(|_| {
+        invalid_field_err!("orangeChromaPlaneByteCount", "length does not fit in usize")
+    })?;
+    let cg_len = usize::try_from(u32::from_le_bytes(
+        data[8..12].try_into().expect("4-byte slice"),
+    ))
+    .map_err(|_| invalid_field_err!("greenChromaPlaneByteCount", "length does not fit in usize"))?;
+    let alpha_len = usize::try_from(u32::from_le_bytes(
+        data[12..16].try_into().expect("4-byte slice"),
+    ))
+    .map_err(|_| invalid_field_err!("alphaPlaneByteCount", "length does not fit in usize"))?;
     let color_loss_level = data[16];
     let chroma_subsampling = data[17];
 
     if !(1..=7).contains(&color_loss_level) {
-        return Err(invalid_field_err!("colorLossLevel", "must be in the range 1-7"));
+        return Err(invalid_field_err!(
+            "colorLossLevel",
+            "must be in the range 1-7"
+        ));
     }
     if chroma_subsampling > 1 {
-        return Err(invalid_field_err!("chromaSubsamplingLevel", "must be 0 or 1"));
+        return Err(invalid_field_err!(
+            "chromaSubsamplingLevel",
+            "must be 0 or 1"
+        ));
     }
     if luma_len == 0 || co_len == 0 || cg_len == 0 {
         return Err(invalid_field_err!(
@@ -69,7 +88,11 @@ pub(super) fn decode(data: &[u8], width: u16, height: u16) -> DecodeResult<Vec<u
             .ok_or_else(|| invalid_field_err!("dimensions", "padded luma height overflow"))?
             / 2
             * 2;
-        (padded_luma_width, padded_luma_width / 2, padded_luma_height / 2)
+        (
+            padded_luma_width,
+            padded_luma_width / 2,
+            padded_luma_height / 2,
+        )
     };
     let luma_size = luma_width
         .checked_mul(h)
@@ -96,13 +119,29 @@ pub(super) fn decode(data: &[u8], width: u16, height: u16) -> DecodeResult<Vec<u
     let luma_end = HEADER_SIZE + luma_len;
     let co_end = luma_end + co_len;
     let cg_end = co_end + cg_len;
-    let luma = decode_plane(&data[HEADER_SIZE..luma_end], luma_size, "lumaPlaneByteCount")?;
-    let co = decode_plane(&data[luma_end..co_end], chroma_size, "orangeChromaPlaneByteCount")?;
-    let cg = decode_plane(&data[co_end..cg_end], chroma_size, "greenChromaPlaneByteCount")?;
+    let luma = decode_plane(
+        &data[HEADER_SIZE..luma_end],
+        luma_size,
+        "lumaPlaneByteCount",
+    )?;
+    let co = decode_plane(
+        &data[luma_end..co_end],
+        chroma_size,
+        "orangeChromaPlaneByteCount",
+    )?;
+    let cg = decode_plane(
+        &data[co_end..cg_end],
+        chroma_size,
+        "greenChromaPlaneByteCount",
+    )?;
     let alpha = if alpha_len == 0 {
         None
     } else {
-        Some(decode_plane(&data[cg_end..], pixel_count, "alphaPlaneByteCount")?)
+        Some(decode_plane(
+            &data[cg_end..],
+            pixel_count,
+            "alphaPlaneByteCount",
+        )?)
     };
 
     let mut pixels = Vec::with_capacity(pixel_count * 4);
@@ -114,10 +153,19 @@ pub(super) fn decode(data: &[u8], width: u16, height: u16) -> DecodeResult<Vec<u
             } else {
                 (y / 2) * chroma_width + x / 2
             };
-            let (red, green, blue) =
-                ycocg_to_rgb(color_loss_level, luma[luma_index], co[chroma_index], cg[chroma_index]);
+            let (red, green, blue) = ycocg_to_rgb(
+                color_loss_level,
+                luma[luma_index],
+                co[chroma_index],
+                cg[chroma_index],
+            );
 
-            pixels.extend_from_slice(&[blue, green, red, alpha.as_ref().map_or(0xFF, |plane| plane[y * w + x])]);
+            pixels.extend_from_slice(&[
+                blue,
+                green,
+                red,
+                alpha.as_ref().map_or(0xFF, |plane| plane[y * w + x]),
+            ]);
         }
     }
 
@@ -135,7 +183,10 @@ fn decode_plane(data: &[u8], expected_len: usize, field: &'static str) -> Decode
         return Ok(data.to_vec());
     }
     if data.len() < RLE_END_DATA_SIZE {
-        return Err(invalid_field_err!(field, "RLE plane is missing its four-byte EndData"));
+        return Err(invalid_field_err!(
+            field,
+            "RLE plane is missing its four-byte EndData"
+        ));
     }
 
     let segments_end = data.len() - RLE_END_DATA_SIZE;
@@ -148,19 +199,27 @@ fn decode_plane(data: &[u8], expected_len: usize, field: &'static str) -> Decode
         let run_len = if offset < segments_end && data[offset] == value {
             offset += 1;
             if offset == segments_end {
-                return Err(invalid_field_err!(field, "RLE run is missing its length factor"));
+                return Err(invalid_field_err!(
+                    field,
+                    "RLE run is missing its length factor"
+                ));
             }
 
             let factor = data[offset];
             offset += 1;
             if factor == u8::MAX {
                 if segments_end - offset < 4 {
-                    return Err(invalid_field_err!(field, "long RLE run is missing its length factor"));
+                    return Err(invalid_field_err!(
+                        field,
+                        "long RLE run is missing its length factor"
+                    ));
                 }
                 let length = usize::try_from(u32::from_le_bytes(
                     data[offset..offset + 4].try_into().expect("4-byte slice"),
                 ))
-                .map_err(|_| invalid_field_err!(field, "long RLE run length does not fit in usize"))?;
+                .map_err(|_| {
+                    invalid_field_err!(field, "long RLE run length does not fit in usize")
+                })?;
                 offset += 4;
                 length
             } else {
@@ -182,7 +241,10 @@ fn decode_plane(data: &[u8], expected_len: usize, field: &'static str) -> Decode
 
     decoded.extend_from_slice(&data[segments_end..]);
     if decoded.len() != expected_len {
-        return Err(invalid_field_err!(field, "RLE output does not fill plane size"));
+        return Err(invalid_field_err!(
+            field,
+            "RLE output does not fill plane size"
+        ));
     }
 
     Ok(decoded)
@@ -209,8 +271,16 @@ fn clamp_u8(value: i16) -> u8 {
 mod tests {
     use super::*;
 
-    fn stream(luma: &[u8], co: &[u8], cg: &[u8], alpha: &[u8], color_loss_level: u8, subsampled: bool) -> Vec<u8> {
-        let mut data = Vec::with_capacity(HEADER_SIZE + luma.len() + co.len() + cg.len() + alpha.len());
+    fn stream(
+        luma: &[u8],
+        co: &[u8],
+        cg: &[u8],
+        alpha: &[u8],
+        color_loss_level: u8,
+        subsampled: bool,
+    ) -> Vec<u8> {
+        let mut data =
+            Vec::with_capacity(HEADER_SIZE + luma.len() + co.len() + cg.len() + alpha.len());
         for plane in [luma, co, cg, alpha] {
             data.extend_from_slice(
                 &u32::try_from(plane.len())
@@ -240,7 +310,14 @@ mod tests {
 
     #[test]
     fn decodes_rle_luma_plane() {
-        let data = stream(&[0x33, 0x33, 0x02, 1, 2, 3, 4], &[0; 8], &[0; 8], &[], 1, false);
+        let data = stream(
+            &[0x33, 0x33, 0x02, 1, 2, 3, 4],
+            &[0; 8],
+            &[0; 8],
+            &[],
+            1,
+            false,
+        );
         let pixels = decode(&data, 4, 2).unwrap();
         let luma = [0x33, 0x33, 0x33, 0x33, 1, 2, 3, 4];
 
@@ -289,7 +366,9 @@ mod tests {
         let data = stream(&[100; 24], &[0; 8], &[0; 8], &[0xFF; 9], 3, true);
         let pixels = decode(&data, 3, 3).unwrap();
         assert_eq!(pixels.len(), 3 * 3 * 4);
-        assert!(pixels.chunks_exact(4).all(|pixel| pixel == [100, 100, 100, 0xFF]));
+        assert!(pixels
+            .chunks_exact(4)
+            .all(|pixel| pixel == [100, 100, 100, 0xFF]));
     }
 
     #[test]

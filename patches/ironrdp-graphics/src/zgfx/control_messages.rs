@@ -17,15 +17,19 @@ pub(crate) enum SegmentedDataPdu<'a> {
 
 impl<'a> SegmentedDataPdu<'a> {
     pub(crate) fn from_buffer(mut buffer: &'a [u8]) -> Result<Self, ZgfxError> {
-        let descriptor =
-            SegmentedDescriptor::from_u8(buffer.read_u8()?).ok_or(ZgfxError::InvalidSegmentedDescriptor)?;
+        let descriptor = SegmentedDescriptor::from_u8(buffer.read_u8()?)
+            .ok_or(ZgfxError::InvalidSegmentedDescriptor)?;
 
         match descriptor {
-            SegmentedDescriptor::Single => Ok(SegmentedDataPdu::Single(BulkEncodedData::from_buffer(buffer)?)),
+            SegmentedDescriptor::Single => Ok(SegmentedDataPdu::Single(
+                BulkEncodedData::from_buffer(buffer)?,
+            )),
             SegmentedDescriptor::Multipart => {
                 let segment_count = usize::from(buffer.read_u16::<LittleEndian>()?);
                 let uncompressed_size = usize::try_from(buffer.read_u32::<LittleEndian>()?)
-                    .map_err(|_| ZgfxError::InvalidIntegralConversion("segments uncompressed size"))?;
+                    .map_err(|_| {
+                        ZgfxError::InvalidIntegralConversion("segments uncompressed size")
+                    })?;
 
                 // Each segment consumes at least 4 bytes (size header) plus 1 byte
                 // (compression-type-and-flags header). Cap the preallocation against the
@@ -34,17 +38,17 @@ impl<'a> SegmentedDataPdu<'a> {
                 // Avc420BitmapStream::decode.
                 const MIN_SEGMENT_BYTES: usize = 5;
                 let max_possible_segments = buffer.len() / MIN_SEGMENT_BYTES;
-                let mut segments = Vec::with_capacity(core::cmp::min(segment_count, max_possible_segments));
+                let mut segments =
+                    Vec::with_capacity(core::cmp::min(segment_count, max_possible_segments));
                 for _ in 0..segment_count {
                     let size = usize::try_from(buffer.read_u32::<LittleEndian>()?)
                         .map_err(|_| ZgfxError::InvalidIntegralConversion("segment data size"))?;
-                    let (segment_data, new_buffer) =
-                        buffer
-                            .split_at_checked(size)
-                            .ok_or(ZgfxError::SegmentSizeExceedsBuffer {
-                                size,
-                                remaining: buffer.len(),
-                            })?;
+                    let (segment_data, new_buffer) = buffer.split_at_checked(size).ok_or(
+                        ZgfxError::SegmentSizeExceedsBuffer {
+                            size,
+                            remaining: buffer.len(),
+                        },
+                    )?;
                     buffer = new_buffer;
 
                     segments.push(BulkEncodedData::from_buffer(segment_data)?);
@@ -70,7 +74,8 @@ impl<'a> BulkEncodedData<'a> {
         let compression_type_and_flags = buffer.read_u8()?;
         let _compression_type = CompressionType::from_u8(compression_type_and_flags.get_bits(..4))
             .ok_or(ZgfxError::InvalidCompressionType)?;
-        let compression_flags = CompressionFlags::from_bits_retain(compression_type_and_flags.get_bits(4..));
+        let compression_flags =
+            CompressionFlags::from_bits_retain(compression_type_and_flags.get_bits(4..));
 
         Ok(Self {
             compression_flags,
@@ -108,7 +113,8 @@ mod test {
     const SINGLE_SEGMENTED_DATA_PDU_BUFFER: [u8; 17] = [
         0xe0, // descriptor
         0x24, // flags and compression type
-        0x09, 0xe3, 0x18, 0x0a, 0x44, 0x8d, 0x37, 0xf4, 0xc6, 0xe8, 0xa0, 0x20, 0xc6, 0x30, 0x01, // data
+        0x09, 0xe3, 0x18, 0x0a, 0x44, 0x8d, 0x37, 0xf4, 0xc6, 0xe8, 0xa0, 0x20, 0xc6, 0x30,
+        0x01, // data
     ];
 
     const MULTIPART_SEGMENTED_DATA_PDU_BUFFER: [u8; 66] = [
@@ -121,7 +127,8 @@ mod test {
         0x20, // the first segment: data
         0x0E, 0x00, 0x00, 0x00, // size of the second segment
         0x04, // the second segment: flags and compression type
-        0x66, 0x6F, 0x78, 0x20, 0x6A, 0x75, 0x6D, 0x70, 0x73, 0x20, 0x6F, 0x76, 0x65, // the second segment: data
+        0x66, 0x6F, 0x78, 0x20, 0x6A, 0x75, 0x6D, 0x70, 0x73, 0x20, 0x6F, 0x76,
+        0x65, // the second segment: data
         0x10, 0x00, 0x00, 0x00, // size of the third segment
         0x24, // the third segment: flags and compression type
         0x39, 0x08, 0x0E, 0x91, 0xF8, 0xD8, 0x61, 0x3D, 0x1E, 0x44, 0x06, 0x43, 0x79, 0x9C,

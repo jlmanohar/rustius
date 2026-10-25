@@ -158,7 +158,9 @@ fn wrap_multipart_segments(data: &[u8], compressed: bool) -> Vec<u8> {
     for segment in data.chunks(ZGFX_SEGMENTED_MAXSIZE) {
         // Segment size (includes flags byte) - max ZGFX_SEGMENTED_MAXSIZE + 1
         output
-            .write_u32::<LittleEndian>(u32::try_from(segment.len() + 1).expect("segment size exceeds u32"))
+            .write_u32::<LittleEndian>(
+                u32::try_from(segment.len() + 1).expect("segment size exceeds u32"),
+            )
             .expect("write to Vec cannot fail");
 
         // Flags: RDP8 type + optional COMPRESSED flag
@@ -223,11 +225,13 @@ mod tests {
         let segment_count = u16::from_le_bytes([wrapped[1], wrapped[2]]) as usize;
         assert_eq!(segment_count, 2); // 100KB / 65KB = 2 segments
 
-        let uncompressed_size = u32::from_le_bytes([wrapped[3], wrapped[4], wrapped[5], wrapped[6]]) as usize;
+        let uncompressed_size =
+            u32::from_le_bytes([wrapped[3], wrapped[4], wrapped[5], wrapped[6]]) as usize;
         assert_eq!(uncompressed_size, 100000);
 
         // Verify first segment
-        let seg1_size = u32::from_le_bytes([wrapped[7], wrapped[8], wrapped[9], wrapped[10]]) as usize;
+        let seg1_size =
+            u32::from_le_bytes([wrapped[7], wrapped[8], wrapped[9], wrapped[10]]) as usize;
         assert_eq!(seg1_size, 65536); // 65535 data + 1 flags
         assert_eq!(wrapped[11], 0x04); // Flags
 
@@ -341,7 +345,8 @@ mod tests {
         use crate::zgfx::{Compressor, Decompressor};
 
         let mut compressor = Compressor::new();
-        let data = b"This is test data that will be compressed using ZGFX algorithm and then wrapped";
+        let data =
+            b"This is test data that will be compressed using ZGFX algorithm and then wrapped";
 
         let compressed_data = compressor.compress(data).unwrap();
         let wrapped = wrap_compressed(&compressed_data);

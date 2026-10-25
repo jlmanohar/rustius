@@ -99,7 +99,10 @@ pub fn encode(mode: EntropyAlgorithm, input: &[i16], tile: &mut [u8]) -> Result<
         clippy::as_conversions,
         reason = "u32-to-usize and usize-to-u32 conversions, mostly fine, and hot loop"
     )]
-    #![expect(clippy::missing_panics_doc, reason = "unreachable panics (prior checks)")]
+    #![expect(
+        clippy::missing_panics_doc,
+        reason = "unreachable panics (prior checks)"
+    )]
 
     if input.is_empty() {
         return Err(RlgrError::EmptyTile);
@@ -252,7 +255,11 @@ fn code_gr(bits: &mut BitStream<'_>, krp: &mut u32, val: u32) {
     }
 }
 
-pub fn decode(mode: EntropyAlgorithm, tile: &[u8], mut output: &mut [i16]) -> Result<(), RlgrError> {
+pub fn decode(
+    mode: EntropyAlgorithm,
+    tile: &[u8],
+    mut output: &mut [i16],
+) -> Result<(), RlgrError> {
     #![expect(
         clippy::as_conversions,
         clippy::cast_possible_truncation,
@@ -275,14 +282,16 @@ pub fn decode(mode: EntropyAlgorithm, tile: &[u8], mut output: &mut [i16]) -> Re
             CompressionMode::RunLength => {
                 let number_of_zeros = truncate_leading_value(&mut bits, false);
                 try_split_bits!(bits, 1);
-                let run = count_run(number_of_zeros, &mut k, &mut kp) + load_be_u32(try_split_bits!(bits, k as usize));
+                let run = count_run(number_of_zeros, &mut k, &mut kp)
+                    + load_be_u32(try_split_bits!(bits, k as usize));
 
                 let sign_bit = try_split_bits!(bits, 1).load_be::<u8>();
 
                 let number_of_ones = truncate_leading_value(&mut bits, true);
                 try_split_bits!(bits, 1);
 
-                let code_remainder = load_be_u32(try_split_bits!(bits, kr as usize)) + ((number_of_ones as u32) << kr);
+                let code_remainder = load_be_u32(try_split_bits!(bits, kr as usize))
+                    + ((number_of_ones as u32) << kr);
 
                 update_parameters_according_to_number_of_ones(number_of_ones, &mut kr, &mut krp);
                 kp = kp.saturating_sub(DN_GR);
@@ -299,7 +308,8 @@ pub fn decode(mode: EntropyAlgorithm, tile: &[u8], mut output: &mut [i16]) -> Re
                 let number_of_ones = truncate_leading_value(&mut bits, true);
                 try_split_bits!(bits, 1);
 
-                let code_remainder = load_be_u32(try_split_bits!(bits, kr as usize)) + ((number_of_ones as u32) << kr);
+                let code_remainder = load_be_u32(try_split_bits!(bits, kr as usize))
+                    + ((number_of_ones as u32) << kr);
 
                 update_parameters_according_to_number_of_ones(number_of_ones, &mut kr, &mut krp);
 
@@ -345,7 +355,11 @@ fn fill(buffer: &mut [i16], value: i16) {
 }
 
 fn load_be_u32(s: &BitSlice<u8, Msb0>) -> u32 {
-    if s.is_empty() { 0 } else { s.load_be::<u32>() }
+    if s.is_empty() {
+        0
+    } else {
+        s.load_be::<u32>()
+    }
 }
 
 // Returns number of truncated bits
@@ -372,8 +386,8 @@ fn count_run(number_of_zeros: usize, k: &mut u32, kp: &mut u32) -> u32 {
 }
 
 fn compute_rl_magnitude(sign_bit: u8, code_remainder: u32) -> Result<i16, RlgrError> {
-    let rl_magnitude =
-        i16::try_from(code_remainder + 1).map_err(|_| RlgrError::InvalidIntegralConversion("code remainder + 1"))?;
+    let rl_magnitude = i16::try_from(code_remainder + 1)
+        .map_err(|_| RlgrError::InvalidIntegralConversion("code remainder + 1"))?;
 
     if sign_bit != 0 {
         Ok(-rl_magnitude)
@@ -382,7 +396,11 @@ fn compute_rl_magnitude(sign_bit: u8, code_remainder: u32) -> Result<i16, RlgrEr
     }
 }
 
-fn compute_rlgr1_magnitude(code_remainder: u32, k: &mut u32, kp: &mut u32) -> Result<i16, RlgrError> {
+fn compute_rlgr1_magnitude(
+    code_remainder: u32,
+    k: &mut u32,
+    kp: &mut u32,
+) -> Result<i16, RlgrError> {
     if code_remainder == 0 {
         *kp = min(*kp + UQ_GR, KP_MAX);
         *k = *kp >> LS_GR;
@@ -396,14 +414,16 @@ fn compute_rlgr1_magnitude(code_remainder: u32, k: &mut u32, kp: &mut u32) -> Re
             Ok(-i16::try_from((code_remainder + 1) >> 1)
                 .map_err(|_| RlgrError::InvalidIntegralConversion("(code remainder + 1) >> 1"))?)
         } else {
-            i16::try_from(code_remainder >> 1).map_err(|_| RlgrError::InvalidIntegralConversion("code remainder >> 1"))
+            i16::try_from(code_remainder >> 1)
+                .map_err(|_| RlgrError::InvalidIntegralConversion("code remainder >> 1"))
         }
     }
 }
 
 fn compute_rlgr3_magnitude(val: u32) -> Result<i16, RlgrError> {
     if !val.is_multiple_of(2) {
-        Ok(-i16::try_from((val + 1) >> 1).map_err(|_| RlgrError::InvalidIntegralConversion("(val + 1) >> 1"))?)
+        Ok(-i16::try_from((val + 1) >> 1)
+            .map_err(|_| RlgrError::InvalidIntegralConversion("(val + 1) >> 1"))?)
     } else {
         i16::try_from(val >> 1).map_err(|_| RlgrError::InvalidIntegralConversion("val >> 1"))
     }
@@ -421,7 +441,11 @@ fn compute_n_index(code_remainder: u32) -> usize {
     32 - leading_zeros
 }
 
-fn update_parameters_according_to_number_of_ones(number_of_ones: usize, kr: &mut u32, krp: &mut u32) {
+fn update_parameters_according_to_number_of_ones(
+    number_of_ones: usize,
+    kr: &mut u32,
+    krp: &mut u32,
+) {
     #![expect(
         clippy::as_conversions,
         clippy::cast_possible_truncation,
@@ -445,7 +469,11 @@ enum CompressionMode {
 
 impl From<u32> for CompressionMode {
     fn from(m: u32) -> Self {
-        if m != 0 { Self::RunLength } else { Self::GolombRice }
+        if m != 0 {
+            Self::RunLength
+        } else {
+            Self::GolombRice
+        }
     }
 }
 
@@ -471,9 +499,14 @@ impl core::fmt::Display for RlgrError {
             Self::Io(_) => write!(f, "IO error"),
             Self::Yuv(_) => write!(f, "YUV error"),
             Self::EmptyTile => write!(f, "the input tile is empty"),
-            Self::InvalidIntegralConversion(s) => write!(f, "invalid `{s}`: out of range integral type conversion"),
+            Self::InvalidIntegralConversion(s) => {
+                write!(f, "invalid `{s}`: out of range integral type conversion")
+            }
             Self::OutputTooSmall { needed, available } => {
-                write!(f, "encoded tile needs {needed} bytes, output buffer is {available}")
+                write!(
+                    f,
+                    "encoded tile needs {needed} bytes, output buffer is {available}"
+                )
             }
         }
     }

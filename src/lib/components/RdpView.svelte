@@ -198,8 +198,16 @@
       offset += 12;
 
       if (offset + dataLen > byteLength) break;
-      const slice = new Uint8Array(buf, byteOffset + offset, dataLen);
-      pendingTiles.push({ x, y, width, height, slice });
+      if (
+        width > 0 &&
+        height > 0 &&
+        x + width <= pendingDesktopWidth &&
+        y + height <= pendingDesktopHeight &&
+        dataLen === width * height * 4
+      ) {
+        const slice = new Uint8Array(buf, byteOffset + offset, dataLen);
+        pendingTiles.push({ x, y, width, height, slice });
+      }
       offset += dataLen;
     }
 

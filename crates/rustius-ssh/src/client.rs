@@ -23,19 +23,19 @@ pub struct SshSession {
 impl SshSession {
     /// Connect to remote SSH host, authenticate, allocate a PTY, and spawn an interactive shell.
     ///
-    /// - `output_tx`: Unbounded sender delivering raw remote terminal bytes to the event loop.
+    /// - `output_tx`: Bounded sender delivering raw remote terminal bytes to the event loop.
     /// - `exit_tx`: Sender signaling remote process exit or channel EOF with the exit code.
     pub async fn connect(
         connection: &Connection,
         known_hosts_path: Option<std::path::PathBuf>,
-        output_tx: mpsc::UnboundedSender<Vec<u8>>,
+        output_tx: mpsc::Sender<Vec<u8>>,
         exit_tx: mpsc::Sender<u32>,
     ) -> Result<Self> {
         let keepalive_secs = connection
             .ssh_config
             .as_ref()
             .and_then(|c| c.keepalive_interval)
-            .unwrap_or(5);
+            .unwrap_or(30);
         let timeout_secs = connection
             .ssh_config
             .as_ref()
@@ -114,12 +114,12 @@ impl SshSession {
             while let Some(msg) = read_half.wait().await {
                 match msg {
                     russh::ChannelMsg::Data { data } => {
-                        let _ = output_tx.send(data.to_vec());
+                        let _ = output_tx.send(data.to_vec()).await;
                     }
                     russh::ChannelMsg::ExtendedData { data, ext } => {
                         // ext == 1 is STDERR
                         if ext == 1 {
-                            let _ = output_tx.send(data.to_vec());
+                            let _ = output_tx.send(data.to_vec()).await;
                         }
                     }
                     russh::ChannelMsg::ExitStatus { exit_status } => {

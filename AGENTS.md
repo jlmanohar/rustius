@@ -226,8 +226,8 @@ The workspace defines optimized build profiles — **do not modify without reaso
 
 ### 2.9 Safety & Security
 
-- **Never store passwords in plaintext in production** — `PlaintextStorage` is the current implementation; plan for encrypted storage (e.g., OS keychain integration).
-- **Server key verification** — `check_server_key` currently returns `Ok(true)` unconditionally (TOFU). This must be improved with known_hosts support before production.
+- **Credential storage** — Secrets are secured in either the OS keyring or AES-256-GCM encrypted vault (`vault.enc`) derived with Argon2id. Modular configuration is stored as `settings.json`, `connections.json`, and runbook notes under `notes/*.md`.
+- **Server key verification** — `check_server_key` implements TOFU verification with persistent `known_hosts` matching and certificate fingerprint pinning.
 - **Sanitize user input** — connection names, hostnames, and paths received from the frontend should be validated before use.
 - **Capability permissions** — keep the Tauri capability set minimal. Only expose IPC commands the frontend actually needs.
 

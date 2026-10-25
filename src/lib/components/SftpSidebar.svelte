@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { openPath } from '@tauri-apps/plugin-opener';
+  import { revealItemInDir } from '@tauri-apps/plugin-opener';
   import type { FileEntry, CredentialOverride } from '../types';
   import {
     Folder,
@@ -292,20 +292,35 @@
   }
 
   async function uploadFileList(fileList: File[]) {
+    const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
     for (const file of fileList) {
+      if (file.size > MAX_UPLOAD_BYTES) {
+        showToast('error', `File "${file.name}" exceeds 50 MB upload limit. Use the Dual-Pane SFTP view for large files.`);
+        continue;
+      }
       showToast('loading', `Uploading ${file.name}...`, undefined, false);
       try {
-        const arrayBuf = await file.arrayBuffer();
-        const bytes = Array.from(new Uint8Array(arrayBuf));
         const remoteDest = currentPath.endsWith('/')
           ? `${currentPath}${file.name}`
           : `${currentPath}/${file.name}`;
 
-        await invoke('sftp_upload_bytes', {
-          tabId,
-          remotePath: remoteDest,
-          data: bytes,
-        });
+        const localPath = (file as any).path;
+        if (localPath && typeof localPath === 'string') {
+          // Stream directly from disk via native path (no webview memory allocation)
+          await invoke('sftp_upload', {
+            tabId,
+            localPath,
+            remotePath: remoteDest,
+          });
+        } else {
+          const arrayBuf = await file.arrayBuffer();
+          const bytes = Array.from(new Uint8Array(arrayBuf));
+          await invoke('sftp_upload_bytes', {
+            tabId,
+            remotePath: remoteDest,
+            data: bytes,
+          });
+        }
         showToast('success', `Uploaded ${file.name}`);
       } catch (err: any) {
         showToast('error', `Upload failed: ${err?.message || err}`);
@@ -648,7 +663,7 @@
       <div class="toast-content">
         <span class="toast-msg">{transferToast.message}</span>
         {#if transferToast.localPath}
-          <button class="toast-link" onclick={() => openPath(transferToast!.localPath!)}>
+          <button class="toast-link" onclick={() => { if (transferToast?.localPath) revealItemInDir(transferToast.localPath).catch(console.error); }}>
             Open in Folder
           </button>
         {/if}

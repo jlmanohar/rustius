@@ -36,6 +36,7 @@ pub struct VaultState {
 }
 
 /// Helper for managing credentials in both native OS keyring and encrypted file vault.
+#[derive(Clone)]
 pub struct SecretManager {
     service: String,
     vault_path: PathBuf,
@@ -273,6 +274,10 @@ impl SecretManager {
             match entry.get_password() {
                 Ok(pass) => return Ok(Some(pass)),
                 Err(keyring::Error::NoEntry) => {
+                    if attempt < 2 {
+                        std::thread::sleep(std::time::Duration::from_millis(15 * (attempt + 1)));
+                        continue;
+                    }
                     debug!("No secret found in OS keyring for key: {}", key);
                     return Ok(None);
                 }
@@ -415,6 +420,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires real OS keyring"]
     fn test_secret_manager_roundtrip() {
         let manager = SecretManager::default();
         let test_key = format!("test-key-{}", uuid::Uuid::new_v4());

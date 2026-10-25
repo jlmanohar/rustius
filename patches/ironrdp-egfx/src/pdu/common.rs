@@ -1,6 +1,6 @@
 use ironrdp_pdu::{
-    Decode, DecodeError, DecodeResult, Encode, EncodeResult, ReadCursor, WriteCursor, ensure_fixed_part_size,
-    invalid_field_err,
+    ensure_fixed_part_size, invalid_field_err, Decode, DecodeError, DecodeResult, Encode,
+    EncodeResult, ReadCursor, WriteCursor,
 };
 
 /// 2.2.1.1 RDPGFX_POINT16

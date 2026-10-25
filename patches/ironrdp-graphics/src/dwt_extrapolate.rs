@@ -131,7 +131,10 @@ pub fn encode(buffer: &mut [i16], temp: &mut [i16]) {
 ///
 /// `n_l` and `n_h` are the low-pass and high-pass band counts.
 /// Buffer contains `[HL, LH, HH, LL]` contiguously.
-#[expect(clippy::similar_names, reason = "hl/lh/hh/ll are standard DWT subband names")]
+#[expect(
+    clippy::similar_names,
+    reason = "hl/lh/hh/ll are standard DWT subband names"
+)]
 fn decode_block(buffer: &mut [i16], temp: &mut [i16], n_l: usize, n_h: usize) {
     let dst_w = n_l + n_h;
 
@@ -171,7 +174,17 @@ fn decode_block(buffer: &mut [i16], temp: &mut [i16], n_l: usize, n_h: usize) {
 
     // Vertical inverse: (L + H) -> reconstructed columns in buffer
     for col in 0..dst_w {
-        idwt_col(temp, l_off + col, h_off + col, dst_w, buffer, col, dst_w, n_l, n_h);
+        idwt_col(
+            temp,
+            l_off + col,
+            h_off + col,
+            dst_w,
+            buffer,
+            col,
+            dst_w,
+            n_l,
+            n_h,
+        );
     }
 }
 
@@ -286,7 +299,10 @@ fn idwt_col(
 // ---------------------------------------------------------------------------
 
 /// Forward DWT for one decomposition level.
-#[expect(clippy::similar_names, reason = "hl/lh/hh/ll are standard DWT subband names")]
+#[expect(
+    clippy::similar_names,
+    reason = "hl/lh/hh/ll are standard DWT subband names"
+)]
 fn encode_block(buffer: &mut [i16], temp: &mut [i16], n_l: usize, n_h: usize) {
     let src_w = n_l + n_h;
 
@@ -300,7 +316,17 @@ fn encode_block(buffer: &mut [i16], temp: &mut [i16], n_l: usize, n_h: usize) {
 
     // Forward vertical: split columns into L (n_l rows) and H (n_h rows) in temp
     for col in 0..src_w {
-        dwt_col(buffer, col, src_w, temp, l_off + col, h_off + col, src_w, n_l, n_h);
+        dwt_col(
+            buffer,
+            col,
+            src_w,
+            temp,
+            l_off + col,
+            h_off + col,
+            src_w,
+            n_l,
+            n_h,
+        );
     }
 
     // Forward horizontal on L rows: produce LL and HL subbands.
@@ -334,7 +360,14 @@ fn encode_block(buffer: &mut [i16], temp: &mut [i16], n_l: usize, n_h: usize) {
 /// 1D forward DWT: reads from `input`, writes low-pass to `out[low_off..]` and
 /// high-pass to `out[high_off..]`. This avoids needing two separate mutable
 /// slice borrows.
-fn dwt_row_scattered(input: &[i16], out: &mut [i16], low_off: usize, high_off: usize, n_l: usize, n_h: usize) {
+fn dwt_row_scattered(
+    input: &[i16],
+    out: &mut [i16],
+    low_off: usize,
+    high_off: usize,
+    n_l: usize,
+    n_h: usize,
+) {
     // Predict step: compute high-pass from odd samples
     for i in 0..n_h {
         let x0 = i32::from(input[2 * i]);
@@ -357,7 +390,8 @@ fn dwt_row_scattered(input: &[i16], out: &mut [i16], low_off: usize, high_off: u
     } else {
         let h_last = i32::from(out[high_off + n_h - 1]);
         out[low_off + n_h] = t(i32::from(input[2 * n_h]) + h_last / 2);
-        out[low_off + n_h + 1] = t(2 * i32::from(input[n_l + n_h - 1]) - i32::from(input[n_l + n_h - 2]));
+        out[low_off + n_h + 1] =
+            t(2 * i32::from(input[n_l + n_h - 1]) - i32::from(input[n_l + n_h - 2]));
     }
 }
 
@@ -425,7 +459,11 @@ fn t(value: i32) -> i16 {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[expect(clippy::as_conversions, clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap
+)]
 mod tests {
     use super::*;
 
@@ -513,7 +551,10 @@ mod tests {
             .map(|(&a, &b)| (a - b).abs())
             .max()
             .unwrap_or(0);
-        assert!(max_err <= 2, "max round-trip error {max_err} exceeds tolerance");
+        assert!(
+            max_err <= 2,
+            "max round-trip error {max_err} exceeds tolerance"
+        );
     }
 
     #[test]
@@ -537,7 +578,10 @@ mod tests {
             .map(|(&a, &b)| (a - b).abs())
             .max()
             .unwrap_or(0);
-        assert!(max_err <= 4, "max round-trip error {max_err} exceeds tolerance");
+        assert!(
+            max_err <= 4,
+            "max round-trip error {max_err} exceeds tolerance"
+        );
     }
 
     #[test]
@@ -563,7 +607,10 @@ mod tests {
             .unwrap_or(0);
         // Reduce-extrapolate DWT has slightly more rounding error at
         // boundaries than standard DWT due to asymmetric sample counts
-        assert!(max_err <= 6, "max round-trip error {max_err} exceeds tolerance");
+        assert!(
+            max_err <= 6,
+            "max round-trip error {max_err} exceeds tolerance"
+        );
     }
 
     #[test]

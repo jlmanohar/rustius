@@ -43,7 +43,7 @@ impl SftpClient {
             .ssh_config
             .as_ref()
             .and_then(|c| c.keepalive_interval)
-            .unwrap_or(5);
+            .unwrap_or(30);
         let timeout_secs = connection
             .ssh_config
             .as_ref()
@@ -180,33 +180,24 @@ impl SftpClient {
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        let mut local_file = tokio::fs::File::create(local_path).await?;
-        tokio::io::copy(&mut remote_file, &mut local_file).await?;
+        let part_path = format!("{local_path}.part");
+        let mut local_file = tokio::fs::File::create(&part_path).await?;
+        if let Err(e) = tokio::io::copy(&mut remote_file, &mut local_file).await {
+            drop(local_file);
+            let _ = tokio::fs::remove_file(&part_path).await;
+            return Err(e.into());
+        }
         local_file.flush().await?;
-        Ok(())
-    }
+        drop(local_file);
 
-    /// Read all bytes of a remote file into memory.
-    ///
-    /// Used by frontend drag-and-drop / viewer operations where data is passed directly
-    /// over Tauri IPC without writing to an intermediate local staging file.
-    /// Enforces a 50MB safety limit to prevent OOM crashes on large files.
-    pub async fn download_bytes(&self, remote_path: &str) -> Result<Vec<u8>> {
-        let mut remote_file = self.session.open(remote_path).await?;
-        if let Ok(meta) = remote_file.metadata().await {
-            if let Some(size) = meta.size {
-                if size > MAX_IN_MEMORY_FILE_BYTES {
-                    let size_mb = size as f64 / (1024.0 * 1024.0);
-                    anyhow::bail!(
-                        "File is too large ({:.1} MB) for in-memory preview. Maximum allowed is 50 MB. Please download to disk instead.",
-                        size_mb
-                    );
-                }
+        #[cfg(windows)]
+        {
+            if std::path::Path::new(local_path).exists() {
+                let _ = tokio::fs::remove_file(local_path).await;
             }
         }
-        let mut buffer = Vec::new();
-        tokio::io::copy(&mut remote_file, &mut buffer).await?;
-        Ok(buffer)
+        tokio::fs::rename(&part_path, local_path).await?;
+        Ok(())
     }
 
     /// Upload a local file to a remote destination path.

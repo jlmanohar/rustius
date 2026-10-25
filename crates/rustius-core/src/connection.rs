@@ -391,7 +391,11 @@ pub struct SshConfig {
     #[serde(default)]
     pub terminal_type: Option<String>,
     /// Keep-alive interval in seconds.
-    #[serde(default, alias = "keepalive_interval_secs")]
+    #[serde(
+        default,
+        rename = "keepalive_interval_secs",
+        alias = "keepalive_interval"
+    )]
     pub keepalive_interval: Option<u64>,
     /// Connect timeout in seconds.
     #[serde(default)]
@@ -643,6 +647,32 @@ impl Default for RustiusConfig {
             app_settings: AppSettings::default(),
             credentials: Vec::new(),
             tree: Vec::new(),
+        }
+    }
+}
+
+impl RustiusConfig {
+    /// Strip all plaintext passwords and passphrases so credentials are never leaked over IPC.
+    pub fn sanitize_for_ipc(&mut self) {
+        fn sanitize_nodes(nodes: &mut [TreeNode]) {
+            for node in nodes {
+                match node {
+                    TreeNode::Connection(c) => match &mut c.auth {
+                        AuthMethod::Password { password, .. } => *password = None,
+                        AuthMethod::KeyFile { passphrase, .. } => *passphrase = None,
+                        _ => {}
+                    },
+                    TreeNode::Folder(f) => sanitize_nodes(&mut f.children),
+                }
+            }
+        }
+        sanitize_nodes(&mut self.tree);
+        for cred in &mut self.credentials {
+            match &mut cred.auth {
+                AuthMethod::Password { password, .. } => *password = None,
+                AuthMethod::KeyFile { passphrase, .. } => *passphrase = None,
+                _ => {}
+            }
         }
     }
 }

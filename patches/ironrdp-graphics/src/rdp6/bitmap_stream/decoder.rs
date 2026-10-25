@@ -1,8 +1,8 @@
-use ironrdp_core::{DecodeError, decode};
+use ironrdp_core::{decode, DecodeError};
 use ironrdp_pdu::bitmap::rdp6::{BitmapStream as BitmapStreamPdu, ColorPlaneDefinition};
 
 use crate::color_conversion::Rgb;
-use crate::rdp6::rle::{RleDecodeError, decompress_8bpp_plane};
+use crate::rdp6::rle::{decompress_8bpp_plane, RleDecodeError};
 
 #[derive(Debug)]
 pub enum BitmapDecodeError {
@@ -14,9 +14,14 @@ pub enum BitmapDecodeError {
 impl core::fmt::Display for BitmapDecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            BitmapDecodeError::Decode(_error) => write!(f, "failed to decode RDP6 bitmap stream PDU"),
+            BitmapDecodeError::Decode(_error) => {
+                write!(f, "failed to decode RDP6 bitmap stream PDU")
+            }
             BitmapDecodeError::Rle(_error) => {
-                write!(f, "failed to perform RLE decompression of RDP6 bitmap stream")
+                write!(
+                    f,
+                    "failed to perform RLE decompression of RDP6 bitmap stream"
+                )
             }
             BitmapDecodeError::InvalidUncompressedDataSize => write!(
                 f,
@@ -110,7 +115,10 @@ impl<'a> BitmapStreamDecoderImpl<'a> {
         }
     }
 
-    fn decompress_planes(&'a self, aux_buffer: &'a mut Vec<u8>) -> Result<&'a [u8], BitmapDecodeError> {
+    fn decompress_planes(
+        &'a self,
+        aux_buffer: &'a mut Vec<u8>,
+    ) -> Result<&'a [u8], BitmapDecodeError> {
         let planes = if self.bitmap.header.enable_rle_compression {
             // We don't care for the previous content, just resize it to fit the data
             aux_buffer.resize(self.uncompressed_planes_size, 0);
@@ -195,7 +203,10 @@ impl<'a> BitmapStreamDecoderImpl<'a> {
     }
 
     fn write_aycocg_planes_to_rgb24(&self, params: AYCoCgParams, planes: &[u8], dst: &mut Vec<u8>) {
-        #![allow(clippy::similar_names, reason = "it’s hard to find better names for co, cg, etc")]
+        #![allow(
+            clippy::similar_names,
+            reason = "it’s hard to find better names for co, cg, etc"
+        )]
 
         let sample_shift = usize::from(params.chroma_subsampling);
 
@@ -229,7 +240,11 @@ impl<'a> BitmapStreamDecoderImpl<'a> {
         }
     }
 
-    fn decode(self, dst: &mut Vec<u8>, aux_buffer: &'a mut Vec<u8>) -> Result<(), BitmapDecodeError> {
+    fn decode(
+        self,
+        dst: &mut Vec<u8>,
+        aux_buffer: &'a mut Vec<u8>,
+    ) -> Result<(), BitmapDecodeError> {
         // Reserve enough space for decoded RGB channels data
         dst.reserve(self.image_height * self.image_width * 3);
 
@@ -268,8 +283,10 @@ fn ycocg_with_cll_to_rgb(cll: u8, y: u8, co: u8, cg: u8) -> Rgb {
     // |B|   |1  -1/2   -1/2|   |Cg|
     let chroma_shift = cll - 1;
 
-    let clip_i16 =
-        |v: i16| u8::try_from(v.clamp(0, 255)).expect("fits into u8 because the value is clamped to [0..256]");
+    let clip_i16 = |v: i16| {
+        u8::try_from(v.clamp(0, 255))
+            .expect("fits into u8 because the value is clamped to [0..256]")
+    };
 
     let co_signed = (co << chroma_shift).cast_signed();
     let cg_signed = (cg << chroma_shift).cast_signed();

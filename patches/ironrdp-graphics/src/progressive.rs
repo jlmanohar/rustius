@@ -36,13 +36,15 @@
 
 extern crate alloc;
 
+use alloc::collections::btree_map::Entry;
 use alloc::collections::BTreeMap;
 use alloc::collections::BTreeSet;
-use alloc::collections::btree_map::Entry;
 
 use ironrdp_core::invalid_field_err;
+use ironrdp_pdu::codecs::rfx::progressive::{
+    ComponentCodecQuant, ProgressiveCodecQuant, TILE_FLAG_DIFFERENCE,
+};
 use ironrdp_pdu::codecs::rfx::EntropyAlgorithm;
-use ironrdp_pdu::codecs::rfx::progressive::{ComponentCodecQuant, ProgressiveCodecQuant, TILE_FLAG_DIFFERENCE};
 use ironrdp_pdu::geometry::{ExclusiveRectangle, InclusiveRectangle};
 
 use crate::dwt_extrapolate::BandInfo;
@@ -180,14 +182,17 @@ pub fn decode_upgrade_pass(
     assert!(sign.len() >= COEFFICIENTS_PER_COMPONENT);
 
     let bands = get_band_layout(use_reduce_extrapolate);
-    let zero_counts: [usize; NUM_BANDS] = core::array::from_fn(|band_idx| band_zero_count(sign, &bands[band_idx]));
+    let zero_counts: [usize; NUM_BANDS] =
+        core::array::from_fn(|band_idx| band_zero_count(sign, &bands[band_idx]));
     let has_srl_values = bands.iter().enumerate().any(|(band_idx, _)| {
         let num_bits = prev_prog_quant
             .for_band(band_idx)
             .saturating_sub(curr_prog_quant.for_band(band_idx));
         band_idx != NUM_BANDS - 1 && num_bits != 0 && zero_counts[band_idx] != 0
     });
-    let mut srl_decoder = has_srl_values.then(|| srl::SrlDecoder::new(srl_data)).transpose()?;
+    let mut srl_decoder = has_srl_values
+        .then(|| srl::SrlDecoder::new(srl_data))
+        .transpose()?;
     let mut srl_values = Vec::with_capacity(NUM_BANDS);
 
     for (band_idx, _) in bands.iter().enumerate() {
@@ -238,8 +243,13 @@ pub fn decode_upgrade_pass(
                 if value != 0 {
                     // Coefficient transitions from zero to non-zero
                     let shifted = i32::from(value) << i32::from(curr_bit_pos);
-                    coefficients[coeff_idx] = clamp_i16(i32::from(coefficients[coeff_idx]) + shifted);
-                    sign[coeff_idx] = if value > 0 { SIGN_POSITIVE } else { SIGN_NEGATIVE };
+                    coefficients[coeff_idx] =
+                        clamp_i16(i32::from(coefficients[coeff_idx]) + shifted);
+                    sign[coeff_idx] = if value > 0 {
+                        SIGN_POSITIVE
+                    } else {
+                        SIGN_NEGATIVE
+                    };
                 }
             } else {
                 // Non-zero DAS: read raw magnitude bits
@@ -251,10 +261,12 @@ pub fn decode_upgrade_pass(
                     let shifted = mag_i32 << i32::from(curr_bit_pos);
                     if is_ll3 || sign[coeff_idx] == SIGN_POSITIVE {
                         // LL3 is always positive; positive DAS adds
-                        coefficients[coeff_idx] = clamp_i16(i32::from(coefficients[coeff_idx]) + shifted);
+                        coefficients[coeff_idx] =
+                            clamp_i16(i32::from(coefficients[coeff_idx]) + shifted);
                     } else {
                         // Negative DAS subtracts
-                        coefficients[coeff_idx] = clamp_i16(i32::from(coefficients[coeff_idx]) - shifted);
+                        coefficients[coeff_idx] =
+                            clamp_i16(i32::from(coefficients[coeff_idx]) - shifted);
                     }
                 }
             }
@@ -272,7 +284,11 @@ pub fn decode_upgrade_pass(
 ///
 /// For non-LL3 bands, this shifts the absolute value (preserving sign).
 /// For LL3, this is a simple left shift (floor toward negative infinity).
-fn progressive_dequantize(coefficients: &mut [i16], prog_quant: &ComponentCodecQuant, use_reduce_extrapolate: bool) {
+fn progressive_dequantize(
+    coefficients: &mut [i16],
+    prog_quant: &ComponentCodecQuant,
+    use_reduce_extrapolate: bool,
+) {
     let bands = get_band_layout(use_reduce_extrapolate);
 
     for (band_idx, band) in bands.iter().enumerate() {
@@ -307,7 +323,11 @@ fn progressive_dequantize(coefficients: &mut [i16], prog_quant: &ComponentCodecQ
 /// Apply progressive quantization: right-shift each band by its BitPos value.
 ///
 /// Inverse of `progressive_dequantize`.
-pub fn progressive_quantize(coefficients: &mut [i16], prog_quant: &ComponentCodecQuant, use_reduce_extrapolate: bool) {
+pub fn progressive_quantize(
+    coefficients: &mut [i16],
+    prog_quant: &ComponentCodecQuant,
+    use_reduce_extrapolate: bool,
+) {
     let bands = get_band_layout(use_reduce_extrapolate);
 
     for (band_idx, band) in bands.iter().enumerate() {
@@ -398,7 +418,11 @@ pub fn encode_first_pass(
 ///
 /// Each band is divided by `2^(quant_value - 6)` and rounded. This is the
 /// scale specified by MS-RDPRFX section 3.1.8.1.5.
-fn quantize_component_ccq(coefficients: &mut [i16], quant: &ComponentCodecQuant, use_reduce_extrapolate: bool) {
+fn quantize_component_ccq(
+    coefficients: &mut [i16],
+    quant: &ComponentCodecQuant,
+    use_reduce_extrapolate: bool,
+) {
     let bands = get_band_layout(use_reduce_extrapolate);
 
     for (band_idx, band) in bands.iter().enumerate() {
@@ -487,7 +511,8 @@ pub fn encode_upgrade_pass(
             if !is_ll3 && sign[coeff_idx] == SIGN_ZERO {
                 // Zero-DAS: compute the refined value and encode via SRL
                 let curr_shifted = i32::from(coefficients[coeff_idx]) >> i32::from(curr_bit_pos);
-                let prev_shifted = i32::from(prev_coefficients[coeff_idx]) >> i32::from(curr_bit_pos);
+                let prev_shifted =
+                    i32::from(prev_coefficients[coeff_idx]) >> i32::from(curr_bit_pos);
                 let delta = clamp_i16(curr_shifted - prev_shifted);
                 band_srl_values.push(delta);
             } else {
@@ -558,7 +583,11 @@ pub fn rgba_to_ycbcr(pixels: &[u8], y_out: &mut [i16], cb_out: &mut [i16], cr_ou
 /// Each band is multiplied by `2^(quant_value - 6)` and rounded. Uses
 /// `for_band()` to map band indices to quant values, which handles the
 /// progressive nibble ordering.
-fn dequantize_component_ccq(coefficients: &mut [i16], quant: &ComponentCodecQuant, use_reduce_extrapolate: bool) {
+fn dequantize_component_ccq(
+    coefficients: &mut [i16],
+    quant: &ComponentCodecQuant,
+    use_reduce_extrapolate: bool,
+) {
     let bands = get_band_layout(use_reduce_extrapolate);
 
     for (band_idx, band) in bands.iter().enumerate() {
@@ -934,7 +963,9 @@ impl TileState {
 
         if let Some(reference) = reference {
             for (component, reference_component) in coefficients.iter_mut().zip(reference.iter()) {
-                for (coefficient, reference_coefficient) in component.iter_mut().zip(reference_component.iter()) {
+                for (coefficient, reference_coefficient) in
+                    component.iter_mut().zip(reference_component.iter())
+                {
                     *coefficient = coefficient.saturating_add(*reference_coefficient);
                 }
             }
@@ -1004,7 +1035,10 @@ impl TileState {
     /// # Panics
     ///
     /// Panics if `pixels` has fewer than 64 * 64 * 4 = 16384 bytes.
-    #[expect(clippy::similar_names, reason = "y/cb/cr are standard YCbCr component names")]
+    #[expect(
+        clippy::similar_names,
+        reason = "y/cb/cr are standard YCbCr component names"
+    )]
     pub fn reconstruct_to_rgba(&self, pixels: &mut [u8]) {
         assert!(pixels.len() >= 64 * 64 * 4, "pixel buffer too small");
 
@@ -1016,8 +1050,16 @@ impl TileState {
 
         // The progressive state remains in DecDwtQ form until all refinements are applied.
         dequantize_component_ccq(&mut y_buf, &self.base_quant[0], self.use_reduce_extrapolate);
-        dequantize_component_ccq(&mut cb_buf, &self.base_quant[1], self.use_reduce_extrapolate);
-        dequantize_component_ccq(&mut cr_buf, &self.base_quant[2], self.use_reduce_extrapolate);
+        dequantize_component_ccq(
+            &mut cb_buf,
+            &self.base_quant[1],
+            self.use_reduce_extrapolate,
+        );
+        dequantize_component_ccq(
+            &mut cr_buf,
+            &self.base_quant[2],
+            self.use_reduce_extrapolate,
+        );
 
         // Inverse DWT.
         if self.use_reduce_extrapolate {
@@ -1205,7 +1247,10 @@ impl core::fmt::Display for ProgressiveDecodeError {
                 write!(f, "quant index {index} exceeds table length {table_len}")
             }
             Self::MissingTileReference { x_idx, y_idx } => {
-                write!(f, "difference tile ({x_idx}, {y_idx}) has no retained reference")
+                write!(
+                    f,
+                    "difference tile ({x_idx}, {y_idx}) has no retained reference"
+                )
             }
             Self::SurfaceTooLarge { width, height } => {
                 write!(
@@ -1236,7 +1281,10 @@ impl From<SrlError> for ProgressiveDecodeError {
     }
 }
 
-fn charge_region_clipping_work(used: &mut usize, units: usize) -> Result<(), ProgressiveDecodeError> {
+fn charge_region_clipping_work(
+    used: &mut usize,
+    units: usize,
+) -> Result<(), ProgressiveDecodeError> {
     match (*used).checked_add(units) {
         Some(total) if total <= MAX_REGION_CLIPPING_WORK => {
             *used = total;
@@ -1335,7 +1383,7 @@ impl ProgressiveDecoder {
         surface_height: u16,
         bitmap_data: &[u8],
     ) -> Result<Vec<DecodedTile>, ProgressiveDecodeError> {
-        use ironrdp_pdu::codecs::rfx::progressive::{ProgressiveBlock, decode_progressive_stream};
+        use ironrdp_pdu::codecs::rfx::progressive::{decode_progressive_stream, ProgressiveBlock};
 
         let blocks = decode_progressive_stream(bitmap_data)?;
 
@@ -1377,13 +1425,18 @@ impl ProgressiveDecoder {
             self.frame_tiles.clear();
         }
 
-        let (contexts, references, all_frame_tiles) = (&mut self.contexts, &mut self.references, &mut self.frame_tiles);
+        let (contexts, references, all_frame_tiles) = (
+            &mut self.contexts,
+            &mut self.references,
+            &mut self.frame_tiles,
+        );
 
         // Get or create the context for this (surface_id, codec_context_id).
         let context = match contexts.entry((surface_id, codec_context_id)) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => {
-                let surface = SurfaceTiles::new(surface_width, surface_height, use_reduce_extrapolate)?;
+                let surface =
+                    SurfaceTiles::new(surface_width, surface_height, use_reduce_extrapolate)?;
                 e.insert(ProgressiveContext { surface })
             }
         };
@@ -1391,14 +1444,17 @@ impl ProgressiveDecoder {
         // If surface dimensions changed, reallocate the codec-context tile grid.
         let expected_wide = surface_width.div_ceil(TILE_DIM);
         let expected_high = surface_height.div_ceil(TILE_DIM);
-        let surface_resized =
-            context.surface.tiles_wide != expected_wide || context.surface.tiles_high != expected_high;
+        let surface_resized = context.surface.tiles_wide != expected_wide
+            || context.surface.tiles_high != expected_high;
         if surface_resized {
-            context.surface = SurfaceTiles::new(surface_width, surface_height, use_reduce_extrapolate)?;
+            context.surface =
+                SurfaceTiles::new(surface_width, surface_height, use_reduce_extrapolate)?;
         }
         context.surface.use_reduce_extrapolate = use_reduce_extrapolate;
 
-        let frame_tiles = all_frame_tiles.entry((surface_id, codec_context_id)).or_default();
+        let frame_tiles = all_frame_tiles
+            .entry((surface_id, codec_context_id))
+            .or_default();
         if surface_resized {
             frame_tiles.clear();
         }
@@ -1448,8 +1504,14 @@ impl ProgressiveDecoder {
             for rectangle in &region.rects {
                 let left = rectangle.x.min(surface_width);
                 let top = rectangle.y.min(surface_height);
-                let right = rectangle.x.saturating_add(rectangle.width).min(surface_width);
-                let bottom = rectangle.y.saturating_add(rectangle.height).min(surface_height);
+                let right = rectangle
+                    .x
+                    .saturating_add(rectangle.width)
+                    .min(surface_width);
+                let bottom = rectangle
+                    .y
+                    .saturating_add(rectangle.height)
+                    .min(surface_height);
                 if left < right && top < bottom {
                     charge_region_clipping_work(
                         &mut region_clipping_work,
@@ -1468,7 +1530,10 @@ impl ProgressiveDecoder {
             // within the same frame, so clip them against every tile currently
             // available for this frame rather than only the newly decoded tiles.
             for &(x_idx, y_idx) in frame_tiles.iter() {
-                charge_region_clipping_work(&mut region_clipping_work, clipping_region.rectangles.len().max(1))?;
+                charge_region_clipping_work(
+                    &mut region_clipping_work,
+                    clipping_region.rectangles.len().max(1),
+                )?;
                 let left = x_idx.saturating_mul(TILE_DIM);
                 let top = y_idx.saturating_mul(TILE_DIM);
                 let right = left.saturating_add(TILE_DIM).min(surface_width);
@@ -1503,7 +1568,11 @@ impl ProgressiveDecoder {
                     let Some(tile_state) = context.surface.get(x_idx, y_idx) else {
                         continue;
                     };
-                    let mut pixels = vec![0u8; usize::from(TILE_DIM) * usize::from(TILE_DIM) * TILE_BYTES_PER_PIXEL];
+                    let mut pixels =
+                        vec![
+                            0u8;
+                            usize::from(TILE_DIM) * usize::from(TILE_DIM) * TILE_BYTES_PER_PIXEL
+                        ];
                     tile_state.reconstruct_to_rgba(&mut pixels);
                     DecodedTile {
                         x_idx,
@@ -1575,13 +1644,12 @@ fn progressive_quant_for(
         });
     }
 
-    prog_quant_vals
-        .get(usize::from(quality))
-        .copied()
-        .ok_or(ProgressiveDecodeError::InvalidQuantIndex {
+    prog_quant_vals.get(usize::from(quality)).copied().ok_or(
+        ProgressiveDecodeError::InvalidQuantIndex {
             index: usize::from(quality),
             table_len: prog_quant_vals.len(),
-        })
+        },
+    )
 }
 
 #[expect(
@@ -1649,7 +1717,8 @@ fn decode_tile_block(
             )?;
             references.insert(reference_key, tile_state.coefficients);
 
-            let mut pixels = vec![0u8; usize::from(TILE_DIM) * usize::from(TILE_DIM) * TILE_BYTES_PER_PIXEL];
+            let mut pixels =
+                vec![0u8; usize::from(TILE_DIM) * usize::from(TILE_DIM) * TILE_BYTES_PER_PIXEL];
             tile_state.reconstruct_to_rgba(&mut pixels);
 
             Ok(vec![DecodedTile {
@@ -1708,7 +1777,8 @@ fn decode_tile_block(
             )?;
             references.insert(reference_key, tile_state.coefficients);
 
-            let mut pixels = vec![0u8; usize::from(TILE_DIM) * usize::from(TILE_DIM) * TILE_BYTES_PER_PIXEL];
+            let mut pixels =
+                vec![0u8; usize::from(TILE_DIM) * usize::from(TILE_DIM) * TILE_BYTES_PER_PIXEL];
             tile_state.reconstruct_to_rgba(&mut pixels);
 
             Ok(vec![DecodedTile {
@@ -1742,7 +1812,8 @@ fn decode_tile_block(
             )?;
             references.insert((surface_id, x_idx, y_idx), tile_state.coefficients);
 
-            let mut pixels = vec![0u8; usize::from(TILE_DIM) * usize::from(TILE_DIM) * TILE_BYTES_PER_PIXEL];
+            let mut pixels =
+                vec![0u8; usize::from(TILE_DIM) * usize::from(TILE_DIM) * TILE_BYTES_PER_PIXEL];
             tile_state.reconstruct_to_rgba(&mut pixels);
 
             Ok(vec![DecodedTile {
@@ -1766,16 +1837,21 @@ impl Default for ProgressiveDecoder {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[expect(clippy::as_conversions, clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap
+)]
 mod tests {
     use super::*;
 
     fn minimal_progressive_stream(include_context: bool) -> Vec<u8> {
-        use ironrdp_pdu::codecs::rfx::RfxRectangle;
         use ironrdp_pdu::codecs::rfx::progressive::{
-            ProgressiveBlock, ProgressiveContextPdu, ProgressiveFrameBeginPdu, ProgressiveFrameEndPdu,
-            ProgressiveRegion, ProgressiveSyncPdu, encode_progressive_stream,
+            encode_progressive_stream, ProgressiveBlock, ProgressiveContextPdu,
+            ProgressiveFrameBeginPdu, ProgressiveFrameEndPdu, ProgressiveRegion,
+            ProgressiveSyncPdu,
         };
+        use ironrdp_pdu::codecs::rfx::RfxRectangle;
 
         let region = ProgressiveRegion {
             tile_size: 0x40,
@@ -2199,7 +2275,8 @@ mod tests {
     fn decoder_reset_clears_contexts_but_preserves_sub_band_references() {
         let mut decoder = ProgressiveDecoder::new();
 
-        let result = decoder.decode_bitmap(1, 1, 64, 64, &simple_tile_stream(0, [64, -16, 24], true));
+        let result =
+            decoder.decode_bitmap(1, 1, 64, 64, &simple_tile_stream(0, [64, -16, 24], true));
         assert!(result.is_ok());
         assert_eq!(decoder.contexts.len(), 1);
         assert_eq!(decoder.references.len(), 1);
@@ -2254,27 +2331,39 @@ mod tests {
         let stream_with_context = minimal_progressive_stream(true);
         let stream_without_context = minimal_progressive_stream(false);
 
-        assert!(decoder.decode_bitmap(1, 0, 640, 480, &stream_with_context).is_ok());
+        assert!(decoder
+            .decode_bitmap(1, 0, 640, 480, &stream_with_context)
+            .is_ok());
         assert!(matches!(
             decoder.decode_bitmap(2, 0, 640, 480, &stream_without_context),
             Err(ProgressiveDecodeError::MissingBlock("CONTEXT"))
         ));
 
-        assert!(decoder.decode_bitmap(2, 0, 640, 480, &stream_with_context).is_ok());
-        assert!(decoder.decode_bitmap(2, 0, 640, 480, &stream_without_context).is_ok());
+        assert!(decoder
+            .decode_bitmap(2, 0, 640, 480, &stream_with_context)
+            .is_ok());
+        assert!(decoder
+            .decode_bitmap(2, 0, 640, 480, &stream_without_context)
+            .is_ok());
     }
 
     fn rect(x: u16, y: u16, width: u16, height: u16) -> ironrdp_pdu::codecs::rfx::RfxRectangle {
-        ironrdp_pdu::codecs::rfx::RfxRectangle { x, y, width, height }
+        ironrdp_pdu::codecs::rfx::RfxRectangle {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     #[test]
     fn decoder_bounds_region_clipping_work() {
-        use ironrdp_pdu::codecs::rfx::RfxRectangle;
         use ironrdp_pdu::codecs::rfx::progressive::{
-            ProgressiveBlock, ProgressiveContextPdu, ProgressiveFrameBeginPdu, ProgressiveFrameEndPdu,
-            ProgressiveRegion, ProgressiveSyncPdu, encode_progressive_stream,
+            encode_progressive_stream, ProgressiveBlock, ProgressiveContextPdu,
+            ProgressiveFrameBeginPdu, ProgressiveFrameEndPdu, ProgressiveRegion,
+            ProgressiveSyncPdu,
         };
+        use ironrdp_pdu::codecs::rfx::RfxRectangle;
 
         fn stream_with_rects(rects: Vec<RfxRectangle>) -> Vec<u8> {
             encode_progressive_stream(&[
@@ -2305,7 +2394,9 @@ mod tests {
         // 1,500 such inserts exceed the aggregate scan budget long before the
         // wire-format u16 rectangle count could drive quadratic work unchecked.
         const RECT_COUNT: u16 = 1_500;
-        let fragmented = (0..RECT_COUNT).map(|x| rect(x.saturating_mul(3), 0, 2, 2)).collect();
+        let fragmented = (0..RECT_COUNT)
+            .map(|x| rect(x.saturating_mul(3), 0, 2, 2))
+            .collect();
         let mut decoder = ProgressiveDecoder::new();
         let error = match decoder.decode_bitmap(1, 1, 8192, 64, &stream_with_rects(fragmented)) {
             Err(error) => error,
@@ -2316,16 +2407,18 @@ mod tests {
         // The limit tracks actual normalized-region work rather than rejecting
         // the same numRects when all rectangles collapse to one simple region.
         let collapsed = vec![rect(0, 0, 2, 2); usize::from(RECT_COUNT)];
-        assert!(
-            ProgressiveDecoder::new()
-                .decode_bitmap(1, 1, 4096, 64, &stream_with_rects(collapsed))
-                .is_ok()
-        );
+        assert!(ProgressiveDecoder::new()
+            .decode_bitmap(1, 1, 4096, 64, &stream_with_rects(collapsed))
+            .is_ok());
 
         // Intersecting a moderately fragmented region with an attacker-sized
         // accumulated tile set is charged to the same per-payload budget.
-        let rects = (0..100u16).map(|x| rect(x.saturating_mul(3), 0, 2, 2)).collect();
-        let frame_tiles = (0..11_000u16).map(|index| (index % 128, index / 128)).collect();
+        let rects = (0..100u16)
+            .map(|x| rect(x.saturating_mul(3), 0, 2, 2))
+            .collect();
+        let frame_tiles = (0..11_000u16)
+            .map(|index| (index % 128, index / 128))
+            .collect();
         let mut decoder = ProgressiveDecoder::new();
         decoder.begin_frame();
         decoder.frame_tiles.insert((1, 1), frame_tiles);
@@ -2339,9 +2432,9 @@ mod tests {
     #[test]
     fn decoder_ignores_regions_outside_frame() {
         use ironrdp_pdu::codecs::rfx::progressive::{
-            ComponentCodecQuant, ProgressiveBlock, ProgressiveContextPdu, ProgressiveFrameBeginPdu,
-            ProgressiveFrameEndPdu, ProgressiveRegion, ProgressiveSyncPdu, ProgressiveTile, TileSimple,
-            encode_progressive_stream,
+            encode_progressive_stream, ComponentCodecQuant, ProgressiveBlock,
+            ProgressiveContextPdu, ProgressiveFrameBeginPdu, ProgressiveFrameEndPdu,
+            ProgressiveRegion, ProgressiveSyncPdu, ProgressiveTile, TileSimple,
         };
 
         fn invalid_region() -> ProgressiveRegion<'static> {
@@ -2388,7 +2481,10 @@ mod tests {
 
         let mut decoder = ProgressiveDecoder::new();
         let tiles = decoder.decode_bitmap(1, 10, 64, 64, &outside).unwrap();
-        assert!(tiles.is_empty(), "out-of-frame regions must not produce tiles");
+        assert!(
+            tiles.is_empty(),
+            "out-of-frame regions must not produce tiles"
+        );
 
         // The same deliberately out-of-bounds REGION must still be decoded,
         // and fail, when it appears inside the frame.
@@ -2419,7 +2515,10 @@ mod tests {
         // Every other value still indexes the table the REGION carried.
         assert!(matches!(
             progressive_quant_for(0, &[]),
-            Err(ProgressiveDecodeError::InvalidQuantIndex { index: 0, table_len: 0 })
+            Err(ProgressiveDecodeError::InvalidQuantIndex {
+                index: 0,
+                table_len: 0
+            })
         ));
     }
 
@@ -2428,11 +2527,17 @@ mod tests {
         let e = ProgressiveDecodeError::MissingBlock("SYNC");
         assert!(e.to_string().contains("SYNC"));
 
-        let e = ProgressiveDecodeError::TileOutOfBounds { x_idx: 5, y_idx: 10 };
+        let e = ProgressiveDecodeError::TileOutOfBounds {
+            x_idx: 5,
+            y_idx: 10,
+        };
         assert!(e.to_string().contains("5"));
         assert!(e.to_string().contains("10"));
 
-        let e = ProgressiveDecodeError::InvalidQuantIndex { index: 3, table_len: 2 };
+        let e = ProgressiveDecodeError::InvalidQuantIndex {
+            index: 3,
+            table_len: 2,
+        };
         assert!(e.to_string().contains("3"));
     }
 
@@ -2501,7 +2606,11 @@ mod tests {
     #[test]
     fn base_quantization_handles_all_wire_factors() {
         for factor in 0..=15 {
-            let input = if factor < 6 { 1 } else { 1i16 << u32::from(factor - 6) };
+            let input = if factor < 6 {
+                1
+            } else {
+                1i16 << u32::from(factor - 6)
+            };
             let quant = ComponentCodecQuant {
                 ll3: factor,
                 hl3: factor,
@@ -2578,8 +2687,12 @@ mod tests {
         progressive_coefficients[0] = 7;
         progressive_coefficients[1] = -7;
         let mut encoded = [0u8; 8192];
-        let encoded_len = crate::rlgr::encode(EntropyAlgorithm::Rlgr1, &progressive_coefficients, &mut encoded)
-            .expect("RLGR encoding should succeed");
+        let encoded_len = crate::rlgr::encode(
+            EntropyAlgorithm::Rlgr1,
+            &progressive_coefficients,
+            &mut encoded,
+        )
+        .expect("RLGR encoding should succeed");
         let mut tile = TileState::new();
 
         tile.decode_first(
@@ -2616,7 +2729,10 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::similar_names, reason = "Cb and Cr are standard YCbCr component names")]
+    #[expect(
+        clippy::similar_names,
+        reason = "Cb and Cr are standard YCbCr component names"
+    )]
     fn progressive_fractional_base_quantization_reconstructs_rgb() {
         let base_quant = ComponentCodecQuant {
             ll3: 5,
@@ -2681,7 +2797,11 @@ mod tests {
         for actual in actual.chunks_exact(4) {
             for channel in 0..3 {
                 let difference = i16::from(expected[channel]) - i16::from(actual[channel]);
-                assert!(difference.abs() <= 2, "expected {expected:?}, got {:?}", &actual[..3]);
+                assert!(
+                    difference.abs() <= 2,
+                    "expected {expected:?}, got {:?}",
+                    &actual[..3]
+                );
             }
             assert_eq!(actual[3], 0xFF);
         }
@@ -2763,7 +2883,12 @@ mod tests {
             for actual in actual.chunks_exact(4) {
                 for channel in 0..3 {
                     let difference = i16::from(expected[channel]) - i16::from(actual[channel]);
-                    assert!(difference.abs() <= 2, "expected {:?}, got {:?}", expected, &actual[..3]);
+                    assert!(
+                        difference.abs() <= 2,
+                        "expected {:?}, got {:?}",
+                        expected,
+                        &actual[..3]
+                    );
                 }
                 assert_eq!(actual[3], 0xFF);
             }
@@ -2854,7 +2979,13 @@ mod tests {
         let base_quant = ComponentCodecQuant::LOSSLESS;
         let prog_quant = ComponentCodecQuant::LOSSLESS;
 
-        let result = encode_first_pass(&mut coefficients, &mut output, &base_quant, &prog_quant, false);
+        let result = encode_first_pass(
+            &mut coefficients,
+            &mut output,
+            &base_quant,
+            &prog_quant,
+            false,
+        );
 
         assert!(result.is_ok(), "RLGR encode failed: {:?}", result.err());
         let bytes_written = result.unwrap();
@@ -2901,8 +3032,14 @@ mod tests {
         )
         .unwrap();
 
-        assert!(srl_data.is_empty(), "no refinement bits, SRL should be empty");
-        assert!(raw_data.is_empty(), "no refinement bits, raw should be empty");
+        assert!(
+            srl_data.is_empty(),
+            "no refinement bits, SRL should be empty"
+        );
+        assert!(
+            raw_data.is_empty(),
+            "no refinement bits, raw should be empty"
+        );
     }
 
     // --- B12: Integration / round-trip tests ---
@@ -2921,7 +3058,14 @@ mod tests {
         let base_quant = ComponentCodecQuant::LOSSLESS;
         let prog_quant = ComponentCodecQuant::LOSSLESS;
 
-        let bytes = encode_first_pass(&mut encode_buf, &mut output, &base_quant, &prog_quant, false).unwrap();
+        let bytes = encode_first_pass(
+            &mut encode_buf,
+            &mut output,
+            &base_quant,
+            &prog_quant,
+            false,
+        )
+        .unwrap();
 
         let mut decoded = [0i16; COEFFICIENTS_PER_COMPONENT];
         let mut sign = [0i8; COEFFICIENTS_PER_COMPONENT];
@@ -2946,7 +3090,10 @@ mod tests {
             .max()
             .unwrap();
 
-        assert!(max_err <= 4, "flat data round-trip max error {max_err} exceeds 4");
+        assert!(
+            max_err <= 4,
+            "flat data round-trip max error {max_err} exceeds 4"
+        );
     }
 
     #[test]
@@ -2958,7 +3105,8 @@ mod tests {
         let base_quant = ComponentCodecQuant::LOSSLESS;
         let prog_quant = ComponentCodecQuant::LOSSLESS;
 
-        let bytes = encode_first_pass(&mut encode_buf, &mut output, &base_quant, &prog_quant, true).unwrap();
+        let bytes = encode_first_pass(&mut encode_buf, &mut output, &base_quant, &prog_quant, true)
+            .unwrap();
 
         let mut decoded = [0i16; COEFFICIENTS_PER_COMPONENT];
         let mut sign = [0i8; COEFFICIENTS_PER_COMPONENT];
@@ -3011,7 +3159,14 @@ mod tests {
         };
         let prog_quant = ComponentCodecQuant::LOSSLESS;
 
-        let bytes = encode_first_pass(&mut coefficients, &mut output, &base_quant, &prog_quant, false).unwrap();
+        let bytes = encode_first_pass(
+            &mut coefficients,
+            &mut output,
+            &base_quant,
+            &prog_quant,
+            false,
+        )
+        .unwrap();
         assert!(bytes > 0, "should produce encoded output");
 
         // Quantized data should compress better than lossless
@@ -3046,7 +3201,10 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::similar_names, reason = "y/cb/cr are standard YCbCr component names")]
+    #[expect(
+        clippy::similar_names,
+        reason = "y/cb/cr are standard YCbCr component names"
+    )]
     fn rgba_ycbcr_reconstruct_round_trip() {
         // RGB -> YCbCr -> RGB. ITU-R BT.601 fixed-point round-trip carries a
         // few units of integer-rounding error per channel. We assert a bounded
@@ -3070,9 +3228,21 @@ mod tests {
 
         // Verify Y is in expected range [-128..127] and Cb/Cr in [-128..127]
         for i in 0..4096 {
-            assert!(y[i] >= -128 && y[i] <= 127, "Y[{i}] = {} out of range", y[i]);
-            assert!(cb[i] >= -128 && cb[i] <= 127, "Cb[{i}] = {} out of range", cb[i]);
-            assert!(cr[i] >= -128 && cr[i] <= 127, "Cr[{i}] = {} out of range", cr[i]);
+            assert!(
+                y[i] >= -128 && y[i] <= 127,
+                "Y[{i}] = {} out of range",
+                y[i]
+            );
+            assert!(
+                cb[i] >= -128 && cb[i] <= 127,
+                "Cb[{i}] = {} out of range",
+                cb[i]
+            );
+            assert!(
+                cr[i] >= -128 && cr[i] <= 127,
+                "Cr[{i}] = {} out of range",
+                cr[i]
+            );
         }
 
         // Inverse YCbCr -> RGB using the same BT.601 matrix as
@@ -3266,11 +3436,12 @@ mod tests {
         quant_prog_vals: Vec<ProgressiveCodecQuant>,
         tile: ironrdp_pdu::codecs::rfx::progressive::ProgressiveTile<'_>,
     ) -> Vec<u8> {
-        use ironrdp_pdu::codecs::rfx::RfxRectangle;
         use ironrdp_pdu::codecs::rfx::progressive::{
-            ProgressiveBlock, ProgressiveContextPdu, ProgressiveFrameBeginPdu, ProgressiveFrameEndPdu,
-            ProgressiveRegion, ProgressiveSyncPdu, encode_progressive_stream,
+            encode_progressive_stream, ProgressiveBlock, ProgressiveContextPdu,
+            ProgressiveFrameBeginPdu, ProgressiveFrameEndPdu, ProgressiveRegion,
+            ProgressiveSyncPdu,
         };
+        use ironrdp_pdu::codecs::rfx::RfxRectangle;
 
         let mut blocks = vec![ProgressiveBlock::Sync(ProgressiveSyncPdu)];
         if include_context {
@@ -3429,7 +3600,13 @@ mod tests {
         let mut decoder = ProgressiveDecoder::new();
 
         let first_pixels = decoder
-            .decode_bitmap(1, 7, 64, 64, &simple_tile_stream(0, original_components, true))
+            .decode_bitmap(
+                1,
+                7,
+                64,
+                64,
+                &simple_tile_stream(0, original_components, true),
+            )
             .expect("original tile should decode")
             .pop()
             .expect("original tile should produce an update")
@@ -3442,7 +3619,13 @@ mod tests {
             .coefficients;
 
         decoder
-            .decode_bitmap(2, 8, 64, 64, &simple_tile_stream(0, other_surface_components, true))
+            .decode_bitmap(
+                2,
+                8,
+                64,
+                64,
+                &simple_tile_stream(0, other_surface_components, true),
+            )
             .expect("other surface tile should decode");
         let other_reference = decoder
             .contexts
@@ -3545,7 +3728,13 @@ mod tests {
                 7,
                 64,
                 64,
-                &first_tile_stream(0, &summed_data, ComponentCodecQuant::LOSSLESS, progressive_quant, true),
+                &first_tile_stream(
+                    0,
+                    &summed_data,
+                    ComponentCodecQuant::LOSSLESS,
+                    progressive_quant,
+                    true,
+                ),
             )
             .expect("summed first-pass tile should decode");
 
@@ -3572,7 +3761,13 @@ mod tests {
         let mut decoder = ProgressiveDecoder::new();
 
         decoder
-            .decode_bitmap(1, 7, 64, 64, &simple_tile_stream(0, original_components, true))
+            .decode_bitmap(
+                1,
+                7,
+                64,
+                64,
+                &simple_tile_stream(0, original_components, true),
+            )
             .expect("original tile should decode");
         decoder
             .decode_bitmap(
@@ -3584,12 +3779,24 @@ mod tests {
             )
             .expect("difference tile should decode");
         let replacement = decoder
-            .decode_bitmap(1, 7, 64, 64, &simple_tile_stream(0, replacement_components, false))
+            .decode_bitmap(
+                1,
+                7,
+                64,
+                64,
+                &simple_tile_stream(0, replacement_components, false),
+            )
             .expect("replacement tile should decode");
 
         let mut standalone_decoder = ProgressiveDecoder::new();
         let standalone = standalone_decoder
-            .decode_bitmap(1, 7, 64, 64, &simple_tile_stream(0, replacement_components, true))
+            .decode_bitmap(
+                1,
+                7,
+                64,
+                64,
+                &simple_tile_stream(0, replacement_components, true),
+            )
             .expect("standalone replacement tile should decode");
 
         assert_eq!(replacement[0].pixels, standalone[0].pixels);
@@ -3630,15 +3837,23 @@ mod tests {
         difference_coefficients[4032] = 5;
         let original_data = {
             let mut encoded = vec![0; 16 * 1024];
-            let len = crate::rlgr::encode(EntropyAlgorithm::Rlgr1, &original_coefficients, &mut encoded)
-                .expect("original RLGR encoding should succeed");
+            let len = crate::rlgr::encode(
+                EntropyAlgorithm::Rlgr1,
+                &original_coefficients,
+                &mut encoded,
+            )
+            .expect("original RLGR encoding should succeed");
             encoded.truncate(len);
             encoded
         };
         let difference_data = {
             let mut encoded = vec![0; 16 * 1024];
-            let len = crate::rlgr::encode(EntropyAlgorithm::Rlgr1, &difference_coefficients, &mut encoded)
-                .expect("difference RLGR encoding should succeed");
+            let len = crate::rlgr::encode(
+                EntropyAlgorithm::Rlgr1,
+                &difference_coefficients,
+                &mut encoded,
+            )
+            .expect("difference RLGR encoding should succeed");
             encoded.truncate(len);
             encoded
         };
@@ -3733,7 +3948,13 @@ mod tests {
         let mut decoder = ProgressiveDecoder::new();
 
         decoder
-            .decode_bitmap(1, 7, 64, 64, &simple_tile_stream(0, original_components, true))
+            .decode_bitmap(
+                1,
+                7,
+                64,
+                64,
+                &simple_tile_stream(0, original_components, true),
+            )
             .expect("original tile should decode");
         let reference = *decoder
             .references
@@ -3760,8 +3981,10 @@ mod tests {
             .expect("difference tile state should be retained")
             .coefficients;
 
-        for ((updated_component, reference_component), delta_component) in
-            updated.iter().zip(reference.iter()).zip(expected_delta.iter())
+        for ((updated_component, reference_component), delta_component) in updated
+            .iter()
+            .zip(reference.iter())
+            .zip(expected_delta.iter())
         {
             for ((updated, retained), delta) in updated_component
                 .iter()
@@ -3795,7 +4018,13 @@ mod tests {
         let difference_components = [7, -3, 5];
 
         decoder
-            .decode_bitmap(1, 7, 64, 64, &simple_tile_stream(0, original_components, true))
+            .decode_bitmap(
+                1,
+                7,
+                64,
+                64,
+                &simple_tile_stream(0, original_components, true),
+            )
             .expect("original tile should decode");
         let reference = *decoder
             .references
@@ -3822,13 +4051,16 @@ mod tests {
             .references
             .get(&(1, 0, 0))
             .expect("difference tile should update the retained reference");
-        for ((updated_component, reference_component), delta_component) in
-            updated.iter().zip(reference.iter()).zip(expected_delta.iter())
+        for ((updated_component, reference_component), delta_component) in updated
+            .iter()
+            .zip(reference.iter())
+            .zip(expected_delta.iter())
         {
-            for ((updated_coefficient, reference_coefficient), delta_coefficient) in updated_component
-                .iter()
-                .zip(reference_component.iter())
-                .zip(delta_component.iter())
+            for ((updated_coefficient, reference_coefficient), delta_coefficient) in
+                updated_component
+                    .iter()
+                    .zip(reference_component.iter())
+                    .zip(delta_component.iter())
             {
                 assert_eq!(
                     *updated_coefficient,
@@ -3913,7 +4145,11 @@ mod tests {
         let mut delta = TileState::new();
         delta
             .decode_first(
-                [&difference_data[0], &difference_data[1], &difference_data[2]],
+                [
+                    &difference_data[0],
+                    &difference_data[1],
+                    &difference_data[2],
+                ],
                 base_quants,
                 prog_quants,
                 [0; 3],
@@ -3923,7 +4159,11 @@ mod tests {
             .expect("valid difference payload should decode");
         state
             .decode_first_with_difference(
-                [&difference_data[0], &difference_data[1], &difference_data[2]],
+                [
+                    &difference_data[0],
+                    &difference_data[1],
+                    &difference_data[2],
+                ],
                 base_quants,
                 prog_quants,
                 Some(&coefficients),

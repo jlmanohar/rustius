@@ -49,7 +49,13 @@ impl Region {
 
                 if !bands.is_empty() {
                     let next_band = bands[0];
-                    handle_rectangle_between_bands(&rectangle, band, next_band, &mut dst, top_inter_band);
+                    handle_rectangle_between_bands(
+                        &rectangle,
+                        band,
+                        next_band,
+                        &mut dst,
+                        top_inter_band,
+                    );
                 }
             }
 
@@ -66,7 +72,11 @@ impl Region {
     pub fn intersect_rectangle(&self, rectangle: &InclusiveRectangle) -> Self {
         match self.rectangles.len() {
             0 => Self::new(),
-            1 => self.extents.intersect(rectangle).map(Self::from).unwrap_or_default(),
+            1 => self
+                .extents
+                .intersect(rectangle)
+                .map(Self::from)
+                .unwrap_or_default(),
             _ => {
                 let rectangles = self
                     .rectangles
@@ -76,7 +86,10 @@ impl Region {
                     .collect::<Vec<_>>();
                 let extents = InclusiveRectangle::union_all(rectangles.as_slice());
 
-                let mut region = Self { rectangles, extents };
+                let mut region = Self {
+                    rectangles,
+                    extents,
+                };
                 region.simplify();
 
                 region
@@ -107,14 +120,19 @@ impl Region {
                 < self.rectangles.len()
         {
             let current_band = get_current_band(&self.rectangles[current_band_start..]);
-            let next_band = get_current_band(&self.rectangles[current_band_start + current_band.len()..]);
+            let next_band =
+                get_current_band(&self.rectangles[current_band_start + current_band.len()..]);
 
-            if current_band[0].bottom == next_band[0].top && bands_internals_equal(current_band, next_band) {
+            if current_band[0].bottom == next_band[0].top
+                && bands_internals_equal(current_band, next_band)
+            {
                 let first_band_len = current_band.len();
                 let second_band_len = next_band.len();
                 let second_band_bottom = next_band[0].bottom;
-                self.rectangles
-                    .drain(current_band_start + first_band_len..current_band_start + first_band_len + second_band_len);
+                self.rectangles.drain(
+                    current_band_start + first_band_len
+                        ..current_band_start + first_band_len + second_band_len,
+                );
                 self.rectangles
                     .iter_mut()
                     .skip(current_band_start)
@@ -249,7 +267,10 @@ fn handle_rectangle_between_bands(
     let band_bottom = band[0].bottom;
 
     let next_band_top = next_band[0].top;
-    if next_band_top != band_bottom && band_bottom < rectangle.bottom && rectangle.top < next_band_top {
+    if next_band_top != band_bottom
+        && band_bottom < rectangle.bottom
+        && rectangle.top < next_band_top
+    {
         dst.push(InclusiveRectangle {
             top: top_inter_band,
             bottom: min(next_band_top, rectangle.bottom),
@@ -321,7 +342,10 @@ fn copy_band_with_union(
             right: r.right,
         })
         .take_while(|r| r.right < union_rectangle.left);
-    let items_before_union_rectangle_len = items_before_union_rectangle.clone().map(|_| 1).sum::<usize>();
+    let items_before_union_rectangle_len = items_before_union_rectangle
+        .clone()
+        .map(|_| 1)
+        .sum::<usize>();
     dst.extend(items_before_union_rectangle);
     band = &band[items_before_union_rectangle_len..];
 
@@ -352,7 +376,12 @@ fn copy_band_with_union(
     copy_band(band, dst, band_top, band_bottom);
 }
 
-fn copy_band(band: &[InclusiveRectangle], dst: &mut Vec<InclusiveRectangle>, band_top: u16, band_bottom: u16) {
+fn copy_band(
+    band: &[InclusiveRectangle],
+    dst: &mut Vec<InclusiveRectangle>,
+    band_top: u16,
+    band_bottom: u16,
+) {
     dst.extend(band.iter().map(|r| InclusiveRectangle {
         top: band_top,
         bottom: band_bottom,
@@ -384,13 +413,18 @@ fn get_current_band(rectangles: &[InclusiveRectangle]) -> &[InclusiveRectangle] 
     rectangles
 }
 
-fn bands_internals_equal(first_band: &[InclusiveRectangle], second_band: &[InclusiveRectangle]) -> bool {
+fn bands_internals_equal(
+    first_band: &[InclusiveRectangle],
+    second_band: &[InclusiveRectangle],
+) -> bool {
     if first_band.len() != second_band.len() {
         return false;
     }
 
     for (first_band_rect, second_band_rect) in first_band.iter().zip(second_band.iter()) {
-        if first_band_rect.left != second_band_rect.left || first_band_rect.right != second_band_rect.right {
+        if first_band_rect.left != second_band_rect.left
+            || first_band_rect.right != second_band_rect.right
+        {
             return false;
         }
     }
@@ -705,7 +739,8 @@ mod tests {
     }
 
     #[test]
-    fn union_rectangle_cuts_new_rectangle_higher_and_lower_part_which_crosses_band_on_top_and_bottom() {
+    fn union_rectangle_cuts_new_rectangle_higher_and_lower_part_which_crosses_band_on_top_and_bottom(
+    ) {
         let existing_band_rectangle = InclusiveRectangle {
             left: 2,
             top: 3,
@@ -758,7 +793,8 @@ mod tests {
     }
 
     #[test]
-    fn union_rectangle_inserts_new_rectangle_in_band_of_3_rectangles_without_merging_with_rectangles() {
+    fn union_rectangle_inserts_new_rectangle_in_band_of_3_rectangles_without_merging_with_rectangles(
+    ) {
         let mut region = Region {
             extents: InclusiveRectangle {
                 left: 2,
@@ -834,7 +870,8 @@ mod tests {
     }
 
     #[test]
-    fn union_rectangle_inserts_new_rectangle_in_band_of_3_rectangles_with_merging_with_side_rectangles() {
+    fn union_rectangle_inserts_new_rectangle_in_band_of_3_rectangles_with_merging_with_side_rectangles(
+    ) {
         let mut region = Region {
             extents: InclusiveRectangle {
                 left: 2,
@@ -898,7 +935,8 @@ mod tests {
     }
 
     #[test]
-    fn union_rectangle_inserts_new_rectangle_in_band_of_3_rectangles_with_merging_with_side_rectangles_on_board() {
+    fn union_rectangle_inserts_new_rectangle_in_band_of_3_rectangles_with_merging_with_side_rectangles_on_board(
+    ) {
         let mut region = Region {
             extents: InclusiveRectangle {
                 left: 2,
@@ -1553,7 +1591,8 @@ mod tests {
     }
 
     #[test]
-    fn intersect_rectangle_returns_region_with_parts_of_rectangles_that_intersect_input_rectangle() {
+    fn intersect_rectangle_returns_region_with_parts_of_rectangles_that_intersect_input_rectangle()
+    {
         let region = &*REGION_FOR_RECTANGLES_INTERSECTION;
         let expected_region = Region {
             extents: InclusiveRectangle {

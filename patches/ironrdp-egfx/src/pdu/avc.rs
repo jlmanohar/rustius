@@ -4,8 +4,8 @@ use bit_field::BitField as _;
 use bitflags::bitflags;
 use ironrdp_pdu::geometry::ExclusiveRectangle;
 use ironrdp_pdu::{
-    Decode, DecodeResult, Encode, EncodeResult, ReadCursor, WriteCursor, cast_length, ensure_fixed_part_size,
-    ensure_size, invalid_field_err,
+    cast_length, ensure_fixed_part_size, ensure_size, invalid_field_err, Decode, DecodeResult,
+    Encode, EncodeResult, ReadCursor, WriteCursor,
 };
 use tracing::warn;
 
@@ -42,7 +42,9 @@ impl Encode for QuantQuality {
         ensure_fixed_part_size!(in: dst);
 
         if 0x3F < self.quantization_parameter {
-            return Err(invalid_field_err!("quantization_parameter", "must fit in 6 bits", in: dst));
+            return Err(
+                invalid_field_err!("quantization_parameter", "must fit in 6 bits", in: dst),
+            );
         }
 
         let mut data = 0u8;
@@ -137,7 +139,10 @@ impl<'de> Decode<'de> for Avc420BitmapStream<'de> {
         ensure_fixed_part_size!(in: src);
 
         let num_regions = src.read_u32();
-        #[expect(clippy::as_conversions, reason = "num_regions bounded by practical limits")]
+        #[expect(
+            clippy::as_conversions,
+            reason = "num_regions bounded by practical limits"
+        )]
         let num_regions_usize = num_regions as usize;
         // Cap pre-allocation against the remaining buffer to avoid OOM from a
         // malicious num_regions: each region needs at least one rectangle
@@ -421,7 +426,10 @@ pub fn is_avc_format(data: &[u8]) -> bool {
         if offset == data.len() {
             return !data.is_empty();
         }
-        let Some(len_bytes) = data.get(offset..offset + 4).and_then(|b| <[u8; 4]>::try_from(b).ok()) else {
+        let Some(len_bytes) = data
+            .get(offset..offset + 4)
+            .and_then(|b| <[u8; 4]>::try_from(b).ok())
+        else {
             return false;
         };
         let next = usize::try_from(u32::from_be_bytes(len_bytes))
@@ -491,14 +499,22 @@ pub fn avc_to_annex_b_into(data: &[u8], out: &mut Vec<u8>) {
     let mut offset = 0;
 
     while offset + 4 <= data.len() {
-        let nal_len = u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
+        let nal_len = u32::from_be_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]);
 
         #[expect(clippy::as_conversions, reason = "NAL length from wire format")]
         let nal_len = nal_len as usize;
         offset += 4;
 
         let Some(end) = offset.checked_add(nal_len) else {
-            warn!(nal_len, offset, "AVC NAL length overflow, discarding remaining data");
+            warn!(
+                nal_len,
+                offset, "AVC NAL length overflow, discarding remaining data"
+            );
             break;
         };
         if end > data.len() {
@@ -642,9 +658,11 @@ pub const fn align_to_16(dimension: u32) -> u32 {
 /// `qp` field holds.
 #[must_use]
 pub fn encode_avc420_bitmap_stream(regions: &[Avc420Region], h264_data: &[u8]) -> Vec<u8> {
-    let rectangles: Vec<ExclusiveRectangle> = regions.iter().map(Avc420Region::to_rectangle).collect();
+    let rectangles: Vec<ExclusiveRectangle> =
+        regions.iter().map(Avc420Region::to_rectangle).collect();
 
-    let quant_qual_vals: Vec<QuantQuality> = regions.iter().map(Avc420Region::to_quant_quality).collect();
+    let quant_qual_vals: Vec<QuantQuality> =
+        regions.iter().map(Avc420Region::to_quant_quality).collect();
 
     let stream = Avc420BitmapStream {
         rectangles,

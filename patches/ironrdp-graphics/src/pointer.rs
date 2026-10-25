@@ -242,14 +242,18 @@ impl DecodedPointer {
         for row_idx in 0..data.height {
             // For non-monochrome cursors we read strides from bottom to top
             let (mut xor_stride_cursor, mut and_stride_cursor) = if flip_vertical {
-                let xor_stride_cursor =
-                    ReadCursor::new(&data.xor_mask[usize::from(data.height - row_idx - 1) * xor_stride.length..]);
-                let and_stride_cursor =
-                    ReadCursor::new(&and_mask[usize::from(data.height - row_idx - 1) * and_stride.length..]);
+                let xor_stride_cursor = ReadCursor::new(
+                    &data.xor_mask[usize::from(data.height - row_idx - 1) * xor_stride.length..],
+                );
+                let and_stride_cursor = ReadCursor::new(
+                    &and_mask[usize::from(data.height - row_idx - 1) * and_stride.length..],
+                );
                 (xor_stride_cursor, and_stride_cursor)
             } else {
-                let xor_stride_cursor = ReadCursor::new(&data.xor_mask[usize::from(row_idx) * xor_stride.length..]);
-                let and_stride_cursor = ReadCursor::new(&and_mask[usize::from(row_idx) * and_stride.length..]);
+                let xor_stride_cursor =
+                    ReadCursor::new(&data.xor_mask[usize::from(row_idx) * xor_stride.length..]);
+                let and_stride_cursor =
+                    ReadCursor::new(&and_mask[usize::from(row_idx) * and_stride.length..]);
                 (xor_stride_cursor, and_stride_cursor)
             };
 
@@ -377,7 +381,11 @@ enum ColorStrideReader<'a> {
 }
 
 impl<'a> ColorStrideReader<'a> {
-    fn new(bpp: u16, stride: Stride, palette: Option<&'a [[u8; 3]; 256]>) -> Result<Self, PointerError> {
+    fn new(
+        bpp: u16,
+        stride: Stride,
+        palette: Option<&'a [[u8; 3]; 256]>,
+    ) -> Result<Self, PointerError> {
         Ok(match bpp {
             1 => Self::Bitmask(BitmaskStrideReader::new(stride)),
             4 | 8 => Self::Indexed(IndexedStrideReader::new(bpp, stride, palette)?),
@@ -426,7 +434,12 @@ impl<'a> ColorStrideReader<'a> {
                     32 => {
                         *read_stide_bytes += 4;
                         let color_32bit = cursor.read_array::<4>();
-                        [color_32bit[2], color_32bit[1], color_32bit[0], color_32bit[3]]
+                        [
+                            color_32bit[2],
+                            color_32bit[1],
+                            color_32bit[0],
+                            color_32bit[3],
+                        ]
                     }
                     _ => unreachable!("per the invariant on self.bpp, this path is unreachable"),
                 }
@@ -457,7 +470,11 @@ struct IndexedStrideReader<'a> {
 }
 
 impl<'a> IndexedStrideReader<'a> {
-    fn new(bpp: u16, stride: Stride, palette: Option<&'a [[u8; 3]; 256]>) -> Result<Self, PointerError> {
+    fn new(
+        bpp: u16,
+        stride: Stride,
+        palette: Option<&'a [[u8; 3]; 256]>,
+    ) -> Result<Self, PointerError> {
         let palette = palette.ok_or(PointerError::NotSupportedBpp { bpp })?;
 
         Ok(Self {

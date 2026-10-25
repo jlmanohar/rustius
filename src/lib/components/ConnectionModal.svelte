@@ -1,5 +1,6 @@
 <script lang="ts">
   import { marked } from 'marked';
+  import DOMPurify from 'dompurify';
   import { invoke } from '@tauri-apps/api/core';
   import { appState } from '../stores/appState.svelte';
   import type { Connection, ConnectionType, TreeNode, SecretRef, CredentialProfile } from '../types';
@@ -199,7 +200,8 @@
         existingSecretRef = c.auth.secret_ref;
       }
       if (c.ssh_config) {
-        keepalive = c.ssh_config.keepalive_interval_secs;
+        keepalive = c.ssh_config.keepalive_interval_secs ?? 30;
+        connectTimeout = c.ssh_config.connect_timeout_secs ?? 15;
         legacyCiphers = c.ssh_config.legacy_ciphers;
         legacyKex = c.ssh_config.legacy_kex;
       }
@@ -250,6 +252,7 @@
   let legacyCiphers = $state(false);
   let legacyKex = $state(false);
   let keepalive = $state(30);
+  let connectTimeout = $state(15);
 
   // RDP options
   let overrideRdpSettings = $state(false);
@@ -379,9 +382,10 @@
   function renderMarkdown(md: string): string {
     if (!md || !md.trim()) return '';
     try {
-      return marked.parse(md, { gfm: true, breaks: true }) as string;
+      const raw = marked.parse(md, { gfm: true, breaks: true }) as string;
+      return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
     } catch {
-      return md;
+      return '';
     }
   }
 
@@ -443,14 +447,14 @@
         ? {
             type: 'password' as const,
             username: finalUsername,
-            password: password ? password : (existingSecretRef ? undefined : undefined),
+            password: password || undefined,
             secret_ref: password ? undefined : existingSecretRef,
           }
         : {
             type: 'keyfile' as const,
             username: finalUsername,
             key_path: keyPath.trim(),
-            passphrase: passphrase ? passphrase : (existingSecretRef ? undefined : undefined),
+            passphrase: passphrase || undefined,
             secret_ref: passphrase ? undefined : existingSecretRef,
           };
 
@@ -472,7 +476,7 @@
       ssh_config:
         connType === 'ssh' || connType === 'sftp'
           ? {
-              connect_timeout_secs: 15,
+              connect_timeout_secs: connectTimeout,
               keepalive_interval_secs: keepalive,
               legacy_ciphers: legacyCiphers,
               legacy_kex: legacyKex,
@@ -788,7 +792,7 @@
               <input
                 id="conn-pass"
                 type={showPassword ? 'text' : 'password'}
-                placeholder={selectedProfile ? 'Inherited from Profile (OS Keyring)' : (existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave empty to keep)' : '••••••••')}
+                placeholder={selectedProfile ? 'Inherited from Profile (OS Keyring)' : (existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave empty to keep)' : (existingSecretRef?.type === 'vault' ? 'Stored in Vault (leave empty to keep)' : '••••••••'))}
                 bind:value={password}
                 disabled={!!selectedProfile}
                 class="input-field has-toggle"
@@ -847,7 +851,7 @@
             <input
               id="conn-passphrase"
               type={showPassphrase ? 'text' : 'password'}
-              placeholder={selectedProfile ? 'Inherited from Profile (OS Keyring)' : (existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave empty to keep)' : 'Key passphrase')}
+              placeholder={selectedProfile ? 'Inherited from Profile (OS Keyring)' : (existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave empty to keep)' : (existingSecretRef?.type === 'vault' ? 'Stored in Vault (leave empty to keep)' : 'Key passphrase'))}
               bind:value={passphrase}
               disabled={!!selectedProfile}
               class="input-field has-toggle"

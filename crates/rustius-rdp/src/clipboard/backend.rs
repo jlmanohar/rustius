@@ -293,7 +293,9 @@ impl CliprdrBackend for RustiusCliprdrBackend {
                         let safe_name = std::path::Path::new(raw_name)
                             .file_name()
                             .and_then(|n| n.to_str())
-                            .filter(|n| !n.is_empty() && *n != "." && *n != ".." && !raw_name.contains(':'));
+                            .filter(|n| {
+                                !n.is_empty() && *n != "." && *n != ".." && !raw_name.contains(':')
+                            });
 
                         if let Some(safe_name) = safe_name {
                             let dest_path = self.remote_staging_dir.join(safe_name);

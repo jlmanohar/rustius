@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use rustius_terminal::pty::LocalTerminal;
 
@@ -17,11 +17,12 @@ pub async fn pty_spawn(
     tab_id: String,
     cols: u16,
     rows: u16,
+    on_data: tauri::ipc::Channel<tauri::ipc::Response>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     info!("Spawning local PTY session for tab: {}", tab_id);
-    let (output_tx, mut output_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (output_tx, mut output_rx) = mpsc::channel::<Vec<u8>>(128);
     let (exit_tx, mut exit_rx) = mpsc::channel::<u32>(1);
 
     let terminal =
@@ -38,8 +39,7 @@ pub async fn pty_spawn(
         terminals.insert(tab_id.clone(), terminal);
     }
 
-    // Spawn async background task to forward bytes to Tauri event
-    let data_event = format!("terminal-data-{}", tab_id);
+    // Spawn async background task to forward bytes to Tauri Channel
     let exit_event = format!("terminal-exit-{}", tab_id);
     let app_clone = app.clone();
     let tab_id_clone = tab_id.clone();
@@ -49,15 +49,12 @@ pub async fn pty_spawn(
         loop {
             tokio::select! {
                 Some(bytes) = output_rx.recv() => {
-                    if let Err(e) = app_clone.emit(&data_event, bytes) {
-                        error!("Failed to emit terminal data event: {:?}", e);
-                        break;
-                    }
+                    let _ = on_data.send(tauri::ipc::Response::new(bytes));
                 }
                 Some(code) = exit_rx.recv() => {
                     // Drain any remaining buffered output bytes from the PTY
                     while let Ok(bytes) = output_rx.try_recv() {
-                        let _ = app_clone.emit(&data_event, bytes);
+                        let _ = on_data.send(tauri::ipc::Response::new(bytes));
                     }
                     info!("PTY session exited with code: {} for tab: {}", code, tab_id_clone);
                     let _ = app_clone.emit(&exit_event, code);

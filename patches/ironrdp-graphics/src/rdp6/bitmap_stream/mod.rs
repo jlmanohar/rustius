@@ -101,7 +101,13 @@ mod tests {
         );
     }
 
-    fn assert_encoded_image(expected_pdu: &[u8], bmp: &[u8], width: usize, height: usize, rle: bool) {
+    fn assert_encoded_image(
+        expected_pdu: &[u8],
+        bmp: &[u8],
+        width: usize,
+        height: usize,
+        rle: bool,
+    ) {
         let image = buffer_from_bmp(bmp, width, height);
 
         let mut pdu = vec![0; width * height * 4 + 2];
@@ -144,36 +150,66 @@ mod tests {
     #[test]
     fn encode_decode_32x64_rgb_raw() {
         // RGB (No alpha), no RLE
-        encode_decode_test(include_bytes!("../test_assets/32x64_rgb_raw.bmp"), 32, 64, false);
+        encode_decode_test(
+            include_bytes!("../test_assets/32x64_rgb_raw.bmp"),
+            32,
+            64,
+            false,
+        );
     }
 
     #[test]
     fn encode_decode_32x64_rgb_rle() {
         // RGB (No alpha), with RLE
-        encode_decode_test(include_bytes!("../test_assets/32x64_rgb_raw.bmp"), 32, 64, true);
+        encode_decode_test(
+            include_bytes!("../test_assets/32x64_rgb_raw.bmp"),
+            32,
+            64,
+            true,
+        );
     }
 
     #[test]
     fn encode_decode_64x24_rgb_raw() {
         // RGB (No alpha), no RLE
-        encode_decode_test(include_bytes!("../test_assets/64x24_argb_rle.bmp"), 32, 64, false);
+        encode_decode_test(
+            include_bytes!("../test_assets/64x24_argb_rle.bmp"),
+            32,
+            64,
+            false,
+        );
     }
 
     #[test]
     fn encode_decode_64x24_rgb_rle() {
         // RGB (No alpha), with RLE
-        encode_decode_test(include_bytes!("../test_assets/64x24_argb_rle.bmp"), 32, 64, true);
+        encode_decode_test(
+            include_bytes!("../test_assets/64x24_argb_rle.bmp"),
+            32,
+            64,
+            true,
+        );
     }
 
     #[test]
     fn encode_decode_64x64_rgb_raw() {
         // RGB (No alpha), no RLE
-        encode_decode_test(include_bytes!("../test_assets/64x64_aycocg_rle.bmp"), 64, 64, false);
+        encode_decode_test(
+            include_bytes!("../test_assets/64x64_aycocg_rle.bmp"),
+            64,
+            64,
+            false,
+        );
     }
 
     #[test]
     fn encode_decode_64x64_rgb_rle() {
         // RGB (No alpha), with RLE
-        encode_decode_test(include_bytes!("../test_assets/64x64_aycocg_rle.bmp"), 64, 64, true);
+        encode_decode_test(
+            include_bytes!("../test_assets/64x64_aycocg_rle.bmp"),
+            64,
+            64,
+            true,
+        );
     }
 }

@@ -60,7 +60,7 @@ export class AppStore {
   prompt(options: Omit<DialogOptions, 'type'>): Promise<string | null> {
     return new Promise((resolve) => {
       this.activeDialog = {
-        id: 'dialog-' + Date.now(),
+        id: 'dialog-' + crypto.randomUUID(),
         options: { ...options, type: 'prompt' },
         resolve,
       };
@@ -70,7 +70,7 @@ export class AppStore {
   confirm(options: Omit<DialogOptions, 'type'>): Promise<boolean> {
     return new Promise((resolve) => {
       this.activeDialog = {
-        id: 'dialog-' + Date.now(),
+        id: 'dialog-' + crypto.randomUUID(),
         options: { ...options, type: 'confirm' },
         resolve,
       };
@@ -81,7 +81,7 @@ export class AppStore {
     const opts = typeof options === 'string' ? { title: 'Notice', message: options } : options;
     return new Promise((resolve) => {
       this.activeDialog = {
-        id: 'dialog-' + Date.now(),
+        id: 'dialog-' + crypto.randomUUID(),
         options: { ...opts, type: 'alert' },
         resolve: () => resolve(),
       };
@@ -272,8 +272,12 @@ export class AppStore {
       await this.loadConfig();
     } catch (err) {
       console.error('Failed to add folder via Tauri:', err);
+      const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+      if (isTauri) {
+        throw err;
+      }
       const newFolder: Folder = {
-        id: 'folder-' + Date.now(),
+        id: 'folder-' + crypto.randomUUID(),
         name,
         parent_id: parentFolderId || undefined,
         children: [],
@@ -294,6 +298,10 @@ export class AppStore {
       await this.loadConfig();
     } catch (err) {
       console.error('Failed to remove node:', err);
+      const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+      if (isTauri) {
+        throw err;
+      }
       this.removeNodeLocally(this.config.tree, id);
     }
   }
@@ -323,6 +331,10 @@ export class AppStore {
       return id;
     } catch (err) {
       console.error('Failed to add credential:', err);
+      const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+      if (isTauri) {
+        throw err;
+      }
       if (!this.config.credentials) {
         this.config.credentials = [];
       }
@@ -337,6 +349,10 @@ export class AppStore {
       await this.loadConfig();
     } catch (err) {
       console.error('Failed to update credential:', err);
+      const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+      if (isTauri) {
+        throw err;
+      }
       if (this.config.credentials) {
         const idx = this.config.credentials.findIndex((c) => c.id === cred.id);
         if (idx !== -1) {
@@ -352,6 +368,10 @@ export class AppStore {
       await this.loadConfig();
     } catch (err) {
       console.error('Failed to delete credential:', err);
+      const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+      if (isTauri) {
+        throw err;
+      }
       if (this.config.credentials) {
         this.config.credentials = this.config.credentials.filter((c) => c.id !== id);
       }
@@ -456,7 +476,7 @@ export class AppStore {
     if (!title) {
       title = session.type === 'local_terminal' ? 'Local Shell' : 'Session';
     }
-    const id = 'tab-' + Date.now();
+    const id = 'tab-' + crypto.randomUUID();
     const newTab: TabSession = { ...session, id, title };
     this.tabs.push(newTab);
     this.activeTabId = id;

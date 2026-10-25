@@ -71,14 +71,15 @@ pub async fn ironrdp_connect(
 
     let app_settings = state.config_manager.get_config().await.app_settings;
 
-    let scale = scale_factor.filter(|&s| s >= 100).or_else(|| {
-        conn.rdp_config
-            .as_ref()
-            .and_then(|r| r.scale_factor)
-            .filter(|&s| s >= 100)
-    }).or_else(|| {
-        Some(app_settings.default_rdp_scale_factor).filter(|&s| s >= 100)
-    });
+    let scale = scale_factor
+        .filter(|&s| s >= 100)
+        .or_else(|| {
+            conn.rdp_config
+                .as_ref()
+                .and_then(|r| r.scale_factor)
+                .filter(|&s| s >= 100)
+        })
+        .or_else(|| Some(app_settings.default_rdp_scale_factor).filter(|&s| s >= 100));
 
     let egfx = conn
         .rdp_config
@@ -201,10 +202,7 @@ pub async fn ironrdp_mouse_button(
 
 /// Release all held keys and mouse buttons (e.g. on window blur or visibility loss).
 #[tauri::command]
-pub async fn ironrdp_release_all(
-    tab_id: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn ironrdp_release_all(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let sess = {
         let map = state.ironrdp_sessions.read().await;
         map.get(&tab_id).cloned()
@@ -268,7 +266,10 @@ pub async fn ironrdp_resize(
         s.resize(width, height, scale_factor.unwrap_or(100))?;
         Ok(())
     } else {
-        Err(format!("No active IronRDP session found for tab {}", tab_id))
+        Err(format!(
+            "No active IronRDP session found for tab {}",
+            tab_id
+        ))
     }
 }
 

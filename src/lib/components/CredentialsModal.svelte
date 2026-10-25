@@ -275,14 +275,14 @@
         type: 'keyfile' as const,
         username: formUsername.trim(),
         key_path: formKeyPath.trim(),
-        passphrase: formPassphrase ? formPassphrase : (existingSecretRef ? undefined : undefined),
+        passphrase: formPassphrase || undefined,
         secret_ref: formPassphrase ? undefined : existingSecretRef,
       };
     } else {
       auth = {
         type: 'password' as const,
         username: formUsername.trim(),
-        password: formPassword ? formPassword : (existingSecretRef ? undefined : undefined),
+        password: formPassword || undefined,
         secret_ref: formPassword ? undefined : existingSecretRef,
       };
     }
@@ -588,7 +588,7 @@
                 <input
                   id="cred-pass"
                   type={showFormPassword ? 'text' : 'password'}
-                  placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave blank to keep)' : '••••••••'}
+                  placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave blank to keep)' : (existingSecretRef?.type === 'vault' ? 'Stored in Vault (leave blank to keep)' : '••••••••')}
                   bind:value={formPassword}
                   class="input-field has-toggle"
                 />
@@ -641,7 +641,7 @@
                 <input
                   id="cred-pass"
                   type={showFormPassword ? 'text' : 'password'}
-                  placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave blank to keep)' : '••••••••'}
+                  placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave blank to keep)' : (existingSecretRef?.type === 'vault' ? 'Stored in Vault (leave blank to keep)' : '••••••••')}
                   bind:value={formPassword}
                   class="input-field has-toggle"
                 />
@@ -704,7 +704,7 @@
                 <input
                   id="cred-passphrase"
                   type={showFormPassphrase ? 'text' : 'password'}
-                  placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave blank to keep)' : 'Key passphrase'}
+                  placeholder={existingSecretRef?.type === 'keyring' ? 'Stored in OS Keyring (leave blank to keep)' : (existingSecretRef?.type === 'vault' ? 'Stored in Vault (leave blank to keep)' : 'Key passphrase')}
                   bind:value={formPassphrase}
                   class="input-field has-toggle"
                 />

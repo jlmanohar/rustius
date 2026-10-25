@@ -33,7 +33,9 @@ impl core::fmt::Display for SrlError {
             Self::MagnitudeOutOfRange { magnitude, max } => {
                 write!(f, "srl magnitude {magnitude} exceeds maximum {max}")
             }
-            Self::ZeroRunTooLong => write!(f, "srl zero run exceeds the component coefficient count"),
+            Self::ZeroRunTooLong => {
+                write!(f, "srl zero run exceeds the component coefficient count")
+            }
         }
     }
 }
@@ -116,7 +118,8 @@ impl<'a> SrlDecoder<'a> {
             };
 
             if bit {
-                let tail = usize::try_from(self.reader.read_bits(k)?).map_err(|_| SrlError::ZeroRunTooLong)?;
+                let tail = usize::try_from(self.reader.read_bits(k)?)
+                    .map_err(|_| SrlError::ZeroRunTooLong)?;
                 self.kp = self.kp.saturating_sub(6);
 
                 let zeros = zeros.checked_add(tail).ok_or(SrlError::ZeroRunTooLong)?;
@@ -183,7 +186,10 @@ impl SrlEncoder {
         let maximum = max_magnitude(num_bits)?;
         for &value in values {
             if value == 0 {
-                let zeros = self.pending_zeros.checked_add(1).ok_or(SrlError::ZeroRunTooLong)?;
+                let zeros = self
+                    .pending_zeros
+                    .checked_add(1)
+                    .ok_or(SrlError::ZeroRunTooLong)?;
                 self.pending_zeros = (zeros <= MAX_ZERO_RUN)
                     .then_some(zeros)
                     .ok_or(SrlError::ZeroRunTooLong)?;
@@ -233,8 +239,10 @@ impl SrlEncoder {
 
         let k = self.kp / 8;
         self.writer.write_bit(true);
-        self.writer
-            .write_bits(u32::try_from(zeros).map_err(|_| SrlError::ZeroRunTooLong)?, k);
+        self.writer.write_bits(
+            u32::try_from(zeros).map_err(|_| SrlError::ZeroRunTooLong)?,
+            k,
+        );
         self.kp = self.kp.saturating_sub(6);
 
         Ok(())
@@ -403,13 +411,19 @@ mod tests {
     fn rejects_out_of_range_magnitude() {
         assert_eq!(
             encode_srl(&[8], 3),
-            Err(SrlError::MagnitudeOutOfRange { magnitude: 8, max: 7 })
+            Err(SrlError::MagnitudeOutOfRange {
+                magnitude: 8,
+                max: 7
+            })
         );
     }
 
     #[test]
     fn rejects_zero_run_longer_than_component() {
-        assert_eq!(encode_srl(&vec![0; MAX_ZERO_RUN + 1], 1), Err(SrlError::ZeroRunTooLong));
+        assert_eq!(
+            encode_srl(&vec![0; MAX_ZERO_RUN + 1], 1),
+            Err(SrlError::ZeroRunTooLong)
+        );
     }
 
     #[test]
@@ -428,7 +442,10 @@ mod tests {
         assert_eq!(decoder.decode(1, 4), Ok(vec![-1]));
         assert_eq!(decoder.decode(1, 4), Ok(vec![0]));
         assert_eq!(decoder.decode(1, 4), Ok(vec![3]));
-        assert_eq!(decode_srl(&encoded, original.len(), 4), Ok(original.to_vec()));
+        assert_eq!(
+            decode_srl(&encoded, original.len(), 4),
+            Ok(original.to_vec())
+        );
     }
 
     #[test]

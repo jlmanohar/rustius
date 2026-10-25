@@ -30,7 +30,9 @@ impl GlyphCache {
 
     /// Look up a glyph by its cache index.
     pub fn get(&self, index: u16) -> Option<&GlyphEntry> {
-        self.entries.get(usize::from(index)).and_then(|slot| slot.as_ref())
+        self.entries
+            .get(usize::from(index))
+            .and_then(|slot| slot.as_ref())
     }
 
     /// Store a glyph at the given index.

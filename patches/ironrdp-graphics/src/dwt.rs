@@ -54,7 +54,14 @@ fn dwt_vertical<const SUBBAND_WIDTH: usize>(buffer: &[i16], dwt: &mut [i16]) {
             dwt[h_index] = i32_to_i16_possible_truncation(
                 (i32::from(buffer[src_index + total_width])
                     - ((i32::from(buffer[src_index])
-                        + i32::from(buffer[src_index + if n < SUBBAND_WIDTH - 1 { 2 * total_width } else { 0 }]))
+                        + i32::from(
+                            buffer[src_index
+                                + if n < SUBBAND_WIDTH - 1 {
+                                    2 * total_width
+                                } else {
+                                    0
+                                }],
+                        ))
                         >> 1))
                     >> 1,
             );
@@ -92,7 +99,9 @@ fn dwt_horizontal<const SUBBAND_WIDTH: usize>(mut buffer: &mut [i16], dwt: &[i16
             // HL
             hl[n] = i32_to_i16_possible_truncation(
                 (i32::from(l_src[x + 1])
-                    - ((i32::from(l_src[x]) + i32::from(l_src[if n < SUBBAND_WIDTH - 1 { x + 2 } else { x }])) >> 1))
+                    - ((i32::from(l_src[x])
+                        + i32::from(l_src[if n < SUBBAND_WIDTH - 1 { x + 2 } else { x }]))
+                        >> 1))
                     >> 1,
             );
             // LL
@@ -113,7 +122,9 @@ fn dwt_horizontal<const SUBBAND_WIDTH: usize>(mut buffer: &mut [i16], dwt: &[i16
             // HH
             hh[n] = i32_to_i16_possible_truncation(
                 (i32::from(h_src[x + 1])
-                    - ((i32::from(h_src[x]) + i32::from(h_src[if n < SUBBAND_WIDTH - 1 { x + 2 } else { x }])) >> 1))
+                    - ((i32::from(h_src[x])
+                        + i32::from(h_src[if n < SUBBAND_WIDTH - 1 { x + 2 } else { x }]))
+                        >> 1))
                     >> 1,
             );
             // LH
@@ -162,8 +173,16 @@ fn inverse_horizontal<const SUBBAND_WIDTH: usize>(buffer: &[i16], temp_buffer: &
 
     for r in 0..sw {
         let row = r * sw;
-        horizontal_band::<SUBBAND_WIDTH>(&ll[row..][..sw], &hl[row..][..sw], &mut l_dst[r * tw..][..tw]);
-        horizontal_band::<SUBBAND_WIDTH>(&lh[row..][..sw], &hh[row..][..sw], &mut h_dst[r * tw..][..tw]);
+        horizontal_band::<SUBBAND_WIDTH>(
+            &ll[row..][..sw],
+            &hl[row..][..sw],
+            &mut l_dst[r * tw..][..tw],
+        );
+        horizontal_band::<SUBBAND_WIDTH>(
+            &lh[row..][..sw],
+            &hh[row..][..sw],
+            &mut h_dst[r * tw..][..tw],
+        );
     }
 }
 
@@ -193,7 +212,11 @@ fn horizontal_band<const SUBBAND_WIDTH: usize>(low: &[i16], high: &[i16], dst: &
     // EVEN: ev[n] = low[n] - ceil_avg(high[n-1], high[n]).
     let mut n = 0;
     while n < sw {
-        vst(&mut ev, n, vld(low, n) - ceil_avg(vld(&high_pad, n), vld(high, n)));
+        vst(
+            &mut ev,
+            n,
+            vld(low, n) - ceil_avg(vld(&high_pad, n), vld(high, n)),
+        );
         n += 8;
     }
 
@@ -208,7 +231,8 @@ fn horizontal_band<const SUBBAND_WIDTH: usize>(low: &[i16], high: &[i16], dst: &
         n += 8;
     }
     // n = sw-1 has no right neighbour.
-    od[sw - 1] = i32_to_i16_possible_truncation((i32::from(high[sw - 1]) << 1) + i32::from(ev[sw - 1]));
+    od[sw - 1] =
+        i32_to_i16_possible_truncation((i32::from(high[sw - 1]) << 1) + i32::from(ev[sw - 1]));
 
     // INTERLEAVE: dst[2n] = ev[n], dst[2n+1] = od[n].
     for n in 0..sw {
@@ -235,7 +259,11 @@ fn inverse_vertical<const SUBBAND_WIDTH: usize>(buffer: &mut [i16], temp_buffer:
     let mut cb = 0;
     while cb < tw {
         // Row 0: L0 - ((H0*2 + 1) >> 1) == L0 - H0.
-        vst(buffer, cb, vld(temp_buffer, cb) - vld(temp_buffer, cb + sw * tw));
+        vst(
+            buffer,
+            cb,
+            vld(temp_buffer, cb) - vld(temp_buffer, cb + sw * tw),
+        );
 
         for k in 1..sw {
             let l = vld(temp_buffer, cb + k * tw);
@@ -246,7 +274,11 @@ fn inverse_vertical<const SUBBAND_WIDTH: usize>(buffer: &mut [i16], temp_buffer:
             vst(buffer, cb + k * 2 * tw, even);
 
             let d0 = vld(buffer, cb + (k - 1) * 2 * tw);
-            vst(buffer, cb + (2 * k - 1) * tw, (lh << 1) + floor_avg(d0, even));
+            vst(
+                buffer,
+                cb + (2 * k - 1) * tw,
+                (lh << 1) + floor_avg(d0, even),
+            );
         }
 
         // Final odd row: (lhN << 1) + ((d0 + d0) >> 1) == (lhN << 1) + d0.

@@ -11,7 +11,7 @@ use std::{collections::HashMap, io::Write as _};
 
 use bitvec::prelude::*;
 
-use super::{FixedCircularBuffer, HISTORY_SIZE, TOKEN_TABLE, ZgfxError};
+use super::{FixedCircularBuffer, ZgfxError, HISTORY_SIZE, TOKEN_TABLE};
 const MIN_MATCH_LENGTH: usize = 3;
 const MAX_MATCH_LENGTH: usize = 65535;
 /// Maximum back-reference distance (last token in MS-RDPEGFX table)
@@ -136,7 +136,8 @@ impl Compressor {
                 *positions = positions[keep_from..].to_vec();
             }
         }
-        self.match_table.retain(|_, positions| !positions.is_empty());
+        self.match_table
+            .retain(|_, positions| !positions.is_empty());
 
         if self.match_table.len() <= COMPACT_TARGET_ENTRIES {
             return;
@@ -180,7 +181,8 @@ impl Compressor {
             let Some(distance) = total.checked_sub(hist_pos).filter(|d| *d <= search_limit) else {
                 continue;
             };
-            let distance = usize::try_from(distance).expect("distance is at most MAX_MATCH_DISTANCE");
+            let distance =
+                usize::try_from(distance).expect("distance is at most MAX_MATCH_DISTANCE");
 
             // Prefix already matched via hash table; extend from byte 3 onward.
             // INVARIANT: match_len < distance, so the match reads only bytes
@@ -277,7 +279,11 @@ impl Compressor {
         clippy::cast_possible_truncation,
         reason = "distance_value bounded by token table, value fits u32"
     )]
-    fn encode_match(writer: &mut BitWriter, distance: usize, length: usize) -> Result<(), ZgfxError> {
+    fn encode_match(
+        writer: &mut BitWriter,
+        distance: usize,
+        length: usize,
+    ) -> Result<(), ZgfxError> {
         let match_token = Self::find_match_token(distance);
 
         writer.write_bits_from_slice(match_token.prefix);
@@ -304,7 +310,8 @@ impl Compressor {
         if length == 3 {
             writer.write_bit(false);
         } else {
-            let length_token_size = usize::try_from(length.ilog2()).expect("ilog2 of usize fits usize") - 1;
+            let length_token_size =
+                usize::try_from(length.ilog2()).expect("ilog2 of usize fits usize") - 1;
             let base = 1 << (length_token_size + 1);
             let value = length - base;
 
@@ -358,7 +365,9 @@ impl History {
 
     fn push(&mut self, bytes: &[u8]) {
         // The ring keeps only the last HISTORY_SIZE bytes of an input larger than itself.
-        self.ring.write_all(bytes).expect("writing to the ring cannot fail");
+        self.ring
+            .write_all(bytes)
+            .expect("writing to the ring cannot fail");
         self.total += as_u64(bytes.len());
     }
 
@@ -501,7 +510,9 @@ mod tests {
         let compressed = compressor.compress(data).unwrap();
 
         let mut output = Vec::new();
-        decompressor.decompress_segment(&compressed, &mut output).unwrap();
+        decompressor
+            .decompress_segment(&compressed, &mut output)
+            .unwrap();
 
         assert_eq!(&output, data);
     }
@@ -517,7 +528,9 @@ mod tests {
         let compressed = compressor.compress(data).unwrap();
 
         let mut output = Vec::new();
-        decompressor.decompress_segment(&compressed, &mut output).unwrap();
+        decompressor
+            .decompress_segment(&compressed, &mut output)
+            .unwrap();
 
         assert_eq!(&output, data);
     }
@@ -538,7 +551,9 @@ mod tests {
         let compressed = compressor.compress(&data).unwrap();
 
         let mut output = Vec::new();
-        decompressor.decompress_segment(&compressed, &mut output).unwrap();
+        decompressor
+            .decompress_segment(&compressed, &mut output)
+            .unwrap();
 
         assert_eq!(output, data);
     }
@@ -565,7 +580,9 @@ mod tests {
 
         let mut decompressor = Decompressor::new();
         let mut output = Vec::new();
-        decompressor.decompress_segment(&compressed, &mut output).unwrap();
+        decompressor
+            .decompress_segment(&compressed, &mut output)
+            .unwrap();
         assert_eq!(output, data);
 
         assert!(
@@ -587,10 +604,11 @@ mod tests {
             state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             u8::try_from(state >> 24).unwrap()
         };
-        let blocks: Vec<Vec<u8>> =
-            core::iter::repeat_with(|| core::iter::repeat_with(&mut next_byte).take(4096).collect())
-                .take(64)
-                .collect();
+        let blocks: Vec<Vec<u8>> = core::iter::repeat_with(|| {
+            core::iter::repeat_with(&mut next_byte).take(4096).collect()
+        })
+        .take(64)
+        .collect();
 
         let mut compressor = Compressor::new();
         let mut decompressor = Decompressor::new();
@@ -607,8 +625,13 @@ mod tests {
 
             let compressed = compressor.compress(&segment).unwrap();
             let mut output = Vec::new();
-            decompressor.decompress_segment(&compressed, &mut output).unwrap();
-            assert_eq!(output, segment, "segment {segment_index} after {total} bytes");
+            decompressor
+                .decompress_segment(&compressed, &mut output)
+                .unwrap();
+            assert_eq!(
+                output, segment,
+                "segment {segment_index} after {total} bytes"
+            );
             total += segment.len();
         }
         assert!(compressor.history.total() > u64::try_from(2 * HISTORY_SIZE).unwrap());
@@ -676,7 +699,9 @@ mod tests {
         );
 
         // A push larger than the ring keeps only its tail.
-        let big: Vec<u8> = (0..HISTORY_SIZE + 7).map(|i| u8::try_from(i % 251).unwrap()).collect();
+        let big: Vec<u8> = (0..HISTORY_SIZE + 7)
+            .map(|i| u8::try_from(i % 251).unwrap())
+            .collect();
         history.push(&big);
         assert_eq!(history.len(), HISTORY_SIZE);
         assert_eq!(history.byte_back(1), *big.last().unwrap());

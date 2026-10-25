@@ -304,10 +304,14 @@ impl ConfigManager {
         Ok(resolved)
     }
 
-
     /// Helper: extracts plaintext passwords/passphrases from an AuthMethod, stores them
     /// into the active secret backend under `key`, and points `secret_ref` to the storage.
-    pub fn secure_auth_method(&self, auth: &mut AuthMethod, key: &str, entity_type: &str) {
+    pub fn secure_auth_method(
+        &self,
+        auth: &mut AuthMethod,
+        key: &str,
+        entity_type: &str,
+    ) -> Result<()> {
         let backend = self.effective_vault_backend_sync();
         let (secret_opt, target_ref) = match auth {
             AuthMethod::Password {
@@ -320,7 +324,7 @@ impl ConfigManager {
                 secret_ref,
                 ..
             } => (passphrase, secret_ref),
-            _ => return,
+            _ => return Ok(()),
         };
 
         if let Some(p) = secret_opt.take() {
@@ -328,50 +332,51 @@ impl ConfigManager {
                 match backend {
                     VaultBackend::MasterPassword => {
                         if let Err(e) = self.secret_manager.set_vault_secret(key, &p) {
-                            warn!(
+                            return Err(anyhow::anyhow!(
                                 "Failed to store {} secret in vault for {}: {}",
-                                entity_type, key, e
-                            );
-                            *secret_opt = Some(p);
-                        } else {
-                            *target_ref = Some(SecretRef::Vault {
-                                key: key.to_string(),
-                            });
+                                entity_type,
+                                key,
+                                e
+                            ));
                         }
+                        *target_ref = Some(SecretRef::Vault {
+                            key: key.to_string(),
+                        });
                     }
                     _ => {
                         if let Err(e) = self.secret_manager.set_secret(key, &p) {
-                            warn!(
+                            return Err(anyhow::anyhow!(
                                 "Failed to store {} secret in OS keyring for {}: {}",
-                                entity_type, key, e
-                            );
-                            *secret_opt = Some(p);
-                        } else {
-                            *target_ref = Some(SecretRef::Keyring {
-                                key: key.to_string(),
-                            });
+                                entity_type,
+                                key,
+                                e
+                            ));
                         }
+                        *target_ref = Some(SecretRef::Keyring {
+                            key: key.to_string(),
+                        });
                     }
                 }
             }
         }
+        Ok(())
     }
 
-    pub fn secure_connection(&self, conn: &mut Connection) {
+    pub fn secure_connection(&self, conn: &mut Connection) -> Result<()> {
         let key = format!("connection:{}", conn.id);
-        self.secure_auth_method(&mut conn.auth, &key, "connection");
+        self.secure_auth_method(&mut conn.auth, &key, "connection")
     }
 
     /// Secure a credential profile before writing to disk:
     /// Moves plaintext passwords and passphrases into the active secret backend under "credential:<id>".
-    pub fn secure_credential(&self, cred: &mut CredentialProfile) {
+    pub fn secure_credential(&self, cred: &mut CredentialProfile) -> Result<()> {
         let key = format!("credential:{}", cred.id);
-        self.secure_auth_method(&mut cred.auth, &key, "profile");
+        self.secure_auth_method(&mut cred.auth, &key, "profile")
     }
 
     /// Add a credential profile to configuration and secure its secrets.
     pub async fn add_credential(&self, mut cred: CredentialProfile) -> Result<Uuid> {
-        self.secure_credential(&mut cred);
+        self.secure_credential(&mut cred)?;
         let id = cred.id;
         self.update_config(|config| {
             if let Some(pos) = config.credentials.iter().position(|c| c.id == id) {
@@ -387,7 +392,7 @@ impl ConfigManager {
 
     /// Update an existing credential profile and secure its secrets.
     pub async fn update_credential(&self, mut cred: CredentialProfile) -> Result<()> {
-        self.secure_credential(&mut cred);
+        self.secure_credential(&mut cred)?;
         let id = cred.id;
         self.update_config(|config| {
             if let Some(pos) = config.credentials.iter().position(|c| c.id == id) {
@@ -556,7 +561,7 @@ impl ConfigManager {
         mut connection: Connection,
         parent_folder_id: Option<Uuid>,
     ) -> Result<()> {
-        self.secure_connection(&mut connection);
+        self.secure_connection(&mut connection)?;
         self.update_config(|config| {
             // If connection with this ID already exists, update it in place
             if Self::update_in_tree(&mut config.tree, &connection) {
@@ -723,8 +728,16 @@ impl ConfigManager {
                     to_delete: &mut Vec<String>,
                 ) {
                     let (secret_opt, target_ref) = match auth {
-                        AuthMethod::Password { password, secret_ref, .. } => (password, secret_ref),
-                        AuthMethod::KeyFile { passphrase, secret_ref, .. } => (passphrase, secret_ref),
+                        AuthMethod::Password {
+                            password,
+                            secret_ref,
+                            ..
+                        } => (password, secret_ref),
+                        AuthMethod::KeyFile {
+                            passphrase,
+                            secret_ref,
+                            ..
+                        } => (passphrase, secret_ref),
                         _ => return,
                     };
 
@@ -732,7 +745,9 @@ impl ConfigManager {
                     if let Some(plain) = secret_opt.take() {
                         if !plain.is_empty() {
                             batch.push((key.to_string(), plain));
-                            *target_ref = Some(SecretRef::Vault { key: key.to_string() });
+                            *target_ref = Some(SecretRef::Vault {
+                                key: key.to_string(),
+                            });
                             return;
                         }
                     }
@@ -752,7 +767,9 @@ impl ConfigManager {
                     if let Some(SecretRef::Plaintext { value }) = target_ref.as_ref() {
                         let val = value.clone();
                         batch.push((key.to_string(), val));
-                        *target_ref = Some(SecretRef::Vault { key: key.to_string() });
+                        *target_ref = Some(SecretRef::Vault {
+                            key: key.to_string(),
+                        });
                     }
                 }
 
@@ -783,7 +800,13 @@ impl ConfigManager {
                 // 1. Reusable credentials
                 for cred in &mut config.credentials {
                     let key = format!("credential:{}", cred.id);
-                    migrate_auth_to_vault(&mut cred.auth, &key, &self.secret_manager, &mut vault_batch, &mut keyring_keys_to_delete);
+                    migrate_auth_to_vault(
+                        &mut cred.auth,
+                        &key,
+                        &self.secret_manager,
+                        &mut vault_batch,
+                        &mut keyring_keys_to_delete,
+                    );
                 }
 
                 // 2. Tree connections
@@ -814,14 +837,18 @@ impl ConfigManager {
         } else {
             // Migrating to Keyring
             self.update_config(|config| {
-                fn migrate_auth_to_keyring(
-                    auth: &mut AuthMethod,
-                    key: &str,
-                    sm: &SecretManager,
-                ) {
+                fn migrate_auth_to_keyring(auth: &mut AuthMethod, key: &str, sm: &SecretManager) {
                     let (secret_opt, target_ref) = match auth {
-                        AuthMethod::Password { password, secret_ref, .. } => (password, secret_ref),
-                        AuthMethod::KeyFile { passphrase, secret_ref, .. } => (passphrase, secret_ref),
+                        AuthMethod::Password {
+                            password,
+                            secret_ref,
+                            ..
+                        } => (password, secret_ref),
+                        AuthMethod::KeyFile {
+                            passphrase,
+                            secret_ref,
+                            ..
+                        } => (passphrase, secret_ref),
                         _ => return,
                     };
 
@@ -832,7 +859,9 @@ impl ConfigManager {
                                 warn!("Failed to write secret to keyring for key {key}: {e}");
                                 *secret_opt = Some(plain);
                             } else {
-                                *target_ref = Some(SecretRef::Keyring { key: key.to_string() });
+                                *target_ref = Some(SecretRef::Keyring {
+                                    key: key.to_string(),
+                                });
                             }
                             return;
                         }
@@ -858,7 +887,9 @@ impl ConfigManager {
                         if let Err(e) = sm.set_secret(key, &val) {
                             warn!("Failed to write plaintext secret to keyring for key {key}: {e}");
                         } else {
-                            *target_ref = Some(SecretRef::Keyring { key: key.to_string() });
+                            *target_ref = Some(SecretRef::Keyring {
+                                key: key.to_string(),
+                            });
                         }
                     }
                 }
@@ -920,8 +951,16 @@ impl ConfigManager {
                         TreeNode::Connection(c) => {
                             let key = format!("connection:{}", c.id);
                             let (secret_opt, target_ref) = match &mut c.auth {
-                                AuthMethod::Password { password, secret_ref, .. } => (password, secret_ref),
-                                AuthMethod::KeyFile { passphrase, secret_ref, .. } => (passphrase, secret_ref),
+                                AuthMethod::Password {
+                                    password,
+                                    secret_ref,
+                                    ..
+                                } => (password, secret_ref),
+                                AuthMethod::KeyFile {
+                                    passphrase,
+                                    secret_ref,
+                                    ..
+                                } => (passphrase, secret_ref),
                                 _ => continue,
                             };
                             if let Some(plain) = secret_opt.take() {
@@ -940,7 +979,8 @@ impl ConfigManager {
                                         }
                                     }
                                 }
-                            } else if let Some(SecretRef::Plaintext { value }) = target_ref.as_ref() {
+                            } else if let Some(SecretRef::Plaintext { value }) = target_ref.as_ref()
+                            {
                                 let val = value.clone();
                                 match backend {
                                     VaultBackend::MasterPassword => {
@@ -966,8 +1006,16 @@ impl ConfigManager {
             for cred in &mut config.credentials {
                 let key = format!("credential:{}", cred.id);
                 let (secret_opt, target_ref) = match &mut cred.auth {
-                    AuthMethod::Password { password, secret_ref, .. } => (password, secret_ref),
-                    AuthMethod::KeyFile { passphrase, secret_ref, .. } => (passphrase, secret_ref),
+                    AuthMethod::Password {
+                        password,
+                        secret_ref,
+                        ..
+                    } => (password, secret_ref),
+                    AuthMethod::KeyFile {
+                        passphrase,
+                        secret_ref,
+                        ..
+                    } => (passphrase, secret_ref),
                     _ => continue,
                 };
                 if let Some(plain) = secret_opt.take() {
@@ -1003,7 +1051,12 @@ impl ConfigManager {
             }
 
             // 2. Tree
-            secure_node_plaintext(&mut config.tree, &self.secret_manager, backend, &mut vault_batch);
+            secure_node_plaintext(
+                &mut config.tree,
+                &self.secret_manager,
+                backend,
+                &mut vault_batch,
+            );
 
             if !vault_batch.is_empty() {
                 let batch_refs: Vec<(&str, &str)> = vault_batch
@@ -1013,7 +1066,10 @@ impl ConfigManager {
                 if let Err(e) = self.secret_manager.set_vault_secrets_batch(&batch_refs) {
                     warn!("Failed to batch write plaintext secrets to vault: {}", e);
                 } else {
-                    info!("Successfully secured {} plaintext secrets into vault", vault_batch.len());
+                    info!(
+                        "Successfully secured {} plaintext secrets into vault",
+                        vault_batch.len()
+                    );
                 }
             }
         })
@@ -1032,7 +1088,7 @@ impl ConfigManager {
         for node in nodes {
             match node {
                 TreeNode::Connection(conn) => {
-                    self.secure_connection(conn);
+                    let _ = self.secure_connection(conn);
                 }
                 TreeNode::Folder(folder) => {
                     self.secure_tree_nodes(&mut folder.children);

@@ -131,7 +131,10 @@ impl fmt::Display for RleError {
             RleError::InvalidBpp { bpp } => write!(f, "invalid bytes per pixel: {bpp}"),
             RleError::BadOrderCode => write!(f, "bad RLE order code"),
             RleError::NotEnoughBytes { expected, actual } => {
-                write!(f, "not enough bytes: expected {expected} bytes, but got {actual}")
+                write!(
+                    f,
+                    "not enough bytes: expected {expected} bytes, but got {actual}"
+                )
             }
             RleError::InvalidImageSize {
                 maximum_additional,
@@ -215,7 +218,11 @@ macro_rules! ensure_size {
 /// `src`: source buffer containing compressed bitmap
 /// `dst`: destination buffer
 /// `row_delta`: scanline length in bytes
-fn decompress_impl<Mode: DepthMode>(src: &[u8], dst: &mut [u8], row_delta: usize) -> Result<(), RleError> {
+fn decompress_impl<Mode: DepthMode>(
+    src: &[u8],
+    dst: &mut [u8],
+    row_delta: usize,
+) -> Result<(), RleError> {
     let mut src = Buf::new(src);
     let mut dst = BufMut::new(dst);
 
@@ -491,15 +498,22 @@ impl Code {
     /// Extract the run length of a compression order.
     fn extract_run_length(self, header: u8, src: &mut Buf<'_>) -> Result<usize, RleError> {
         match self {
-            Self::REGULAR_FGBG_IMAGE => extract_run_length_fg_bg(header, MASK_REGULAR_RUN_LENGTH, src),
-
-            Self::LITE_SET_FG_FGBG_IMAGE => extract_run_length_fg_bg(header, MASK_LITE_RUN_LENGTH, src),
-
-            Self::REGULAR_BG_RUN | Self::REGULAR_FG_RUN | Self::REGULAR_COLOR_RUN | Self::REGULAR_COLOR_IMAGE => {
-                extract_run_length_regular(header, src)
+            Self::REGULAR_FGBG_IMAGE => {
+                extract_run_length_fg_bg(header, MASK_REGULAR_RUN_LENGTH, src)
             }
 
-            Self::LITE_SET_FG_FG_RUN | Self::LITE_DITHERED_RUN => extract_run_length_lite(header, src),
+            Self::LITE_SET_FG_FGBG_IMAGE => {
+                extract_run_length_fg_bg(header, MASK_LITE_RUN_LENGTH, src)
+            }
+
+            Self::REGULAR_BG_RUN
+            | Self::REGULAR_FG_RUN
+            | Self::REGULAR_COLOR_RUN
+            | Self::REGULAR_COLOR_IMAGE => extract_run_length_regular(header, src),
+
+            Self::LITE_SET_FG_FG_RUN | Self::LITE_DITHERED_RUN => {
+                extract_run_length_lite(header, src)
+            }
 
             Self::MEGA_MEGA_BG_RUN
             | Self::MEGA_MEGA_FG_RUN
@@ -510,7 +524,10 @@ impl Code {
             | Self::MEGA_MEGA_SET_FGBG_IMAGE
             | Self::MEGA_MEGA_COLOR_IMAGE => extract_run_length_mega_mega(src),
 
-            Self::SPECIAL_FGBG_1 | Self::SPECIAL_FGBG_2 | Self::SPECIAL_WHITE | Self::SPECIAL_BLACK => Ok(0),
+            Self::SPECIAL_FGBG_1
+            | Self::SPECIAL_FGBG_2
+            | Self::SPECIAL_WHITE
+            | Self::SPECIAL_BLACK => Ok(0),
 
             _ => Ok(0),
         }
@@ -521,7 +538,11 @@ const MASK_REGULAR_RUN_LENGTH: u8 = 0x1F;
 const MASK_LITE_RUN_LENGTH: u8 = 0x0F;
 
 /// Extract the run length of a Foreground/Background Image Order.
-fn extract_run_length_fg_bg(header: u8, length_mask: u8, src: &mut Buf<'_>) -> Result<usize, RleError> {
+fn extract_run_length_fg_bg(
+    header: u8,
+    length_mask: u8,
+    src: &mut Buf<'_>,
+) -> Result<usize, RleError> {
     match header & length_mask {
         0 => {
             ensure_size!(from: src, size: 1);
@@ -574,7 +595,10 @@ struct Buf<'a> {
 
 impl<'a> Buf<'a> {
     fn new(bytes: &'a [u8]) -> Self {
-        Self { inner: bytes, pos: 0 }
+        Self {
+            inner: bytes,
+            pos: 0,
+        }
     }
 
     fn remaining_len(&self) -> usize {
@@ -620,7 +644,10 @@ struct BufMut<'a> {
 
 impl<'a> BufMut<'a> {
     fn new(bytes: &'a mut [u8]) -> Self {
-        Self { inner: bytes, pos: 0 }
+        Self {
+            inner: bytes,
+            pos: 0,
+        }
     }
 
     fn remaining_len(&self) -> usize {
@@ -914,7 +941,10 @@ mod tests {
                 height: 1
             }
         );
-        assert!(output.is_empty(), "must reject before touching the output buffer");
+        assert!(
+            output.is_empty(),
+            "must reject before touching the output buffer"
+        );
     }
 
     #[test]
@@ -930,7 +960,10 @@ mod tests {
                 height: MAX_DECODE_DIM + 1
             }
         );
-        assert!(output.is_empty(), "must reject before touching the output buffer");
+        assert!(
+            output.is_empty(),
+            "must reject before touching the output buffer"
+        );
     }
 
     #[test]
@@ -946,6 +979,9 @@ mod tests {
         let format = decompress_24_bpp(&[], &mut output, MAX_DECODE_DIM, MAX_DECODE_DIM).unwrap();
 
         assert_eq!(format, RlePixelFormat::Rgb24);
-        assert_eq!(output.len(), Mode24Bpp::COLOR_DEPTH * MAX_DECODE_DIM * MAX_DECODE_DIM);
+        assert_eq!(
+            output.len(),
+            Mode24Bpp::COLOR_DEPTH * MAX_DECODE_DIM * MAX_DECODE_DIM
+        );
     }
 }

@@ -19,6 +19,10 @@ pub fn describe_auth_method(method: &AuthMethod) -> &'static str {
 
 /// Authenticate an active russh client handle against the specified `AuthMethod`.
 pub async fn authenticate<H: Handler>(handle: &mut Handle<H>, auth: &AuthMethod) -> Result<()> {
+    tracing::debug!(
+        "Authenticating using {} strategy",
+        describe_auth_method(auth)
+    );
     match auth {
         AuthMethod::Password {
             username, password, ..

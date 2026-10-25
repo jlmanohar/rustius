@@ -153,8 +153,11 @@ mod openh264_impl {
         pub fn from_library_path(library_path: &std::path::Path) -> EncoderResult<Self> {
             let api = openh264::OpenH264API::from_blob_path(library_path)
                 .map_err(|e| EncoderError::new("failed to load OpenH264 library", e))?;
-            let encoder = openh264::encoder::Encoder::with_api_config(api, openh264::encoder::EncoderConfig::default())
-                .map_err(|e| EncoderError::new("failed to create OpenH264 encoder", e))?;
+            let encoder = openh264::encoder::Encoder::with_api_config(
+                api,
+                openh264::encoder::EncoderConfig::default(),
+            )
+            .map_err(|e| EncoderError::new("failed to create OpenH264 encoder", e))?;
 
             Ok(Self { encoder })
         }
@@ -162,19 +165,29 @@ mod openh264_impl {
 
     impl H264Encoder for OpenH264Encoder {
         fn encode(&mut self, frame: EncodeFrame<'_>) -> EncoderResult<Vec<u8>> {
-            if frame.width == 0 || frame.height == 0 || frame.width % 2 != 0 || frame.height % 2 != 0 {
-                return Err(EncoderError::msg("frame dimensions must be non-zero and even"));
+            if frame.width == 0
+                || frame.height == 0
+                || frame.width % 2 != 0
+                || frame.height % 2 != 0
+            {
+                return Err(EncoderError::msg(
+                    "frame dimensions must be non-zero and even",
+                ));
             }
 
-            let width = usize::try_from(frame.width).map_err(|e| EncoderError::new("frame width", e))?;
-            let height = usize::try_from(frame.height).map_err(|e| EncoderError::new("frame height", e))?;
+            let width =
+                usize::try_from(frame.width).map_err(|e| EncoderError::new("frame width", e))?;
+            let height =
+                usize::try_from(frame.height).map_err(|e| EncoderError::new("frame height", e))?;
 
             let expected_len = width
                 .checked_mul(height)
                 .and_then(|s| s.checked_mul(4))
                 .ok_or_else(|| EncoderError::msg("frame dimensions overflow"))?;
             if frame.data.len() != expected_len {
-                return Err(EncoderError::msg("frame buffer length does not match dimensions"));
+                return Err(EncoderError::msg(
+                    "frame buffer length does not match dimensions",
+                ));
             }
 
             let rgba = openh264::formats::RgbaSliceU8::new(frame.data, (width, height));
@@ -217,7 +230,10 @@ pub struct EncoderError {
 
 impl EncoderError {
     /// Create an encoder error with a source error
-    pub fn new(context: impl Into<String>, source: impl core::error::Error + Send + Sync + 'static) -> Self {
+    pub fn new(
+        context: impl Into<String>,
+        source: impl core::error::Error + Send + Sync + 'static,
+    ) -> Self {
         Self {
             context: context.into(),
             source: Some(Box::new(source)),
@@ -306,25 +322,21 @@ mod tests {
         let mut encoder = OpenH264Encoder::new().expect("bundled encoder");
 
         let buf = vec![0u8; 63 * 64 * 4];
-        assert!(
-            encoder
-                .encode(EncodeFrame {
-                    data: &buf,
-                    width: 63,
-                    height: 64,
-                })
-                .is_err()
-        );
+        assert!(encoder
+            .encode(EncodeFrame {
+                data: &buf,
+                width: 63,
+                height: 64,
+            })
+            .is_err());
 
         let buf = vec![0u8; 8];
-        assert!(
-            encoder
-                .encode(EncodeFrame {
-                    data: &buf,
-                    width: 64,
-                    height: 64,
-                })
-                .is_err()
-        );
+        assert!(encoder
+            .encode(EncodeFrame {
+                data: &buf,
+                width: 64,
+                height: 64,
+            })
+            .is_err());
     }
 }

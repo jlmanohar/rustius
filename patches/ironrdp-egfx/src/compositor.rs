@@ -255,7 +255,11 @@ impl Compositor {
     /// Handle `MapSurfaceToOutput`: record the mapping and make the surface's
     /// current contents visible at `(origin_x, origin_y)`.
     pub(crate) fn map_surface(&mut self, id: u16, origin_x: u32, origin_y: u32) {
-        let Some((width, height)) = self.surfaces.get(&id).map(|surface| (surface.width, surface.height)) else {
+        let Some((width, height)) = self
+            .surfaces
+            .get(&id)
+            .map(|surface| (surface.width, surface.height))
+        else {
             return;
         };
 
@@ -303,7 +307,12 @@ impl Compositor {
     }
 
     /// Fill each rectangle of a surface with a solid, opaque color (`SolidFill`).
-    pub(crate) fn solid_fill(&mut self, surface_id: u16, color: &Color, rects: &[ExclusiveRectangle]) {
+    pub(crate) fn solid_fill(
+        &mut self,
+        surface_id: u16,
+        color: &Color,
+        rects: &[ExclusiveRectangle],
+    ) {
         let px = [color.r, color.g, color.b, 0xFF];
         for rect in rects {
             let x = rect.left;
@@ -360,7 +369,12 @@ impl Compositor {
 
     /// Copy a surface rectangle into a cache slot (`SurfaceToCache`). The cache is
     /// off-screen, so this produces no output delta.
-    pub(crate) fn surface_to_cache(&mut self, surface_id: u16, cache_slot: u16, src_rect: &ExclusiveRectangle) {
+    pub(crate) fn surface_to_cache(
+        &mut self,
+        surface_id: u16,
+        cache_slot: u16,
+        src_rect: &ExclusiveRectangle,
+    ) {
         // Size the tile in a scope that ends the surface borrow, so the budget calls
         // below can take `&mut self` while the charge still precedes the allocation.
         let (w, h) = {
@@ -405,7 +419,14 @@ impl Compositor {
             return;
         };
 
-        let data = copy_region(&surface.data, surface.width, src_rect.left, src_rect.top, w, h);
+        let data = copy_region(
+            &surface.data,
+            surface.width,
+            src_rect.left,
+            src_rect.top,
+            w,
+            h,
+        );
         self.cache.insert(
             cache_slot,
             CachedTile {
@@ -418,7 +439,12 @@ impl Compositor {
 
     /// Render a cached tile onto a surface at each destination point
     /// (`CacheToSurface`).
-    pub(crate) fn cache_to_surface(&mut self, cache_slot: u16, surface_id: u16, dst_points: &[Point]) {
+    pub(crate) fn cache_to_surface(
+        &mut self,
+        cache_slot: u16,
+        surface_id: u16,
+        dst_points: &[Point],
+    ) {
         let Some(tile) = self.cache.get(&cache_slot) else {
             return;
         };
@@ -473,10 +499,12 @@ impl Compositor {
     /// The region arrives clipped to its surface and is mapped against the output
     /// mapping in force now rather than the one active when it was drawn.
     fn materialize(&mut self, dirty: &DirtyRegion) {
-        let Some((mapping, source_width, source_height)) = self
-            .surfaces
-            .get(&dirty.surface_id)
-            .and_then(|surface| surface.mapping.map(|mapping| (mapping, surface.width, surface.height)))
+        let Some((mapping, source_width, source_height)) =
+            self.surfaces.get(&dirty.surface_id).and_then(|surface| {
+                surface
+                    .mapping
+                    .map(|mapping| (mapping, surface.width, surface.height))
+            })
         else {
             return;
         };
@@ -537,12 +565,25 @@ impl Compositor {
             right,
             bottom,
         };
-        let data =
-            if mapping.target_width == u32::from(source_width) && mapping.target_height == u32::from(source_height) {
-                copy_region(&surface.data, source_width, dirty.rect.left, dirty.rect.top, w, h)
-            } else {
-                copy_scaled_region(&surface.data, (source_width, source_height), mapping, &output_rect)
-            };
+        let data = if mapping.target_width == u32::from(source_width)
+            && mapping.target_height == u32::from(source_height)
+        {
+            copy_region(
+                &surface.data,
+                source_width,
+                dirty.rect.left,
+                dirty.rect.top,
+                w,
+                h,
+            )
+        } else {
+            copy_scaled_region(
+                &surface.data,
+                (source_width, source_height),
+                mapping,
+                &output_rect,
+            )
+        };
         self.ready.push(OutputUpdate {
             region: output_rect,
             data,
@@ -598,7 +639,10 @@ impl Compositor {
 
 /// Whether `outer` fully contains `inner`, both in the exclusive convention.
 fn covers(outer: &ExclusiveRectangle, inner: &ExclusiveRectangle) -> bool {
-    outer.left <= inner.left && outer.top <= inner.top && outer.right >= inner.right && outer.bottom >= inner.bottom
+    outer.left <= inner.left
+        && outer.top <= inner.top
+        && outer.right >= inner.right
+        && outer.bottom >= inner.bottom
 }
 
 /// Return the target-space edge for a source-space edge with nearest-neighbor
@@ -609,7 +653,8 @@ fn scaled_edge(source_edge: u16, source_length: u16, target_length: u32) -> u32 
         return 0;
     }
 
-    let scaled = (u64::from(source_edge) * u64::from(target_length)).div_ceil(u64::from(source_length));
+    let scaled =
+        (u64::from(source_edge) * u64::from(target_length)).div_ceil(u64::from(source_length));
     u32::try_from(scaled).unwrap_or(u32::MAX)
 }
 
@@ -663,7 +708,8 @@ fn copy_scaled_region(
         .map(|x| {
             usize::from(
                 u16::try_from(
-                    (u64::from(target_left) + u64::from(x)) * u64::from(src_width) / u64::from(mapping.target_width),
+                    (u64::from(target_left) + u64::from(x)) * u64::from(src_width)
+                        / u64::from(mapping.target_width),
                 )
                 .unwrap_or(u16::MAX),
             ) * BYTES_PER_PIXEL
@@ -672,13 +718,15 @@ fn copy_scaled_region(
 
     for y in 0..height {
         let source_y = u16::try_from(
-            (u64::from(target_top) + u64::from(y)) * u64::from(src_height) / u64::from(mapping.target_height),
+            (u64::from(target_top) + u64::from(y)) * u64::from(src_height)
+                / u64::from(mapping.target_height),
         )
         .unwrap_or(u16::MAX);
         let source_row_offset = usize::from(source_y) * usize::from(src_width) * BYTES_PER_PIXEL;
         for x in 0..width {
             let source_offset = source_row_offset + source_column_offsets[usize::from(x)];
-            let target_offset = (usize::from(y) * usize::from(width) + usize::from(x)) * BYTES_PER_PIXEL;
+            let target_offset =
+                (usize::from(y) * usize::from(width) + usize::from(x)) * BYTES_PER_PIXEL;
             if source_offset + BYTES_PER_PIXEL <= src.len() {
                 out[target_offset..target_offset + BYTES_PER_PIXEL]
                     .copy_from_slice(&src[source_offset..source_offset + BYTES_PER_PIXEL]);
@@ -705,7 +753,8 @@ fn blit_region(dst: CanvasMut<'_>, x: u16, y: u16, w: u16, h: u16, src: &[u8]) {
         let dstart = dst_y * dst_stride + usize::from(x) * BYTES_PER_PIXEL;
         let sstart = row * src_stride;
         if dstart + copy_bytes <= dst.data.len() && sstart + copy_bytes <= src.len() {
-            dst.data[dstart..dstart + copy_bytes].copy_from_slice(&src[sstart..sstart + copy_bytes]);
+            dst.data[dstart..dstart + copy_bytes]
+                .copy_from_slice(&src[sstart..sstart + copy_bytes]);
         }
     }
 }
@@ -785,7 +834,8 @@ mod tests {
             1,
             &rect(0, 0, 2, 2),
             &[
-                0x10, 0x11, 0x12, 0xFF, 0x20, 0x21, 0x22, 0xFF, 0x30, 0x31, 0x32, 0xFF, 0x40, 0x41, 0x42, 0xFF,
+                0x10, 0x11, 0x12, 0xFF, 0x20, 0x21, 0x22, 0xFF, 0x30, 0x31, 0x32, 0xFF, 0x40, 0x41,
+                0x42, 0xFF,
             ],
         );
         c.end_frame();
@@ -798,9 +848,9 @@ mod tests {
         assert_eq!(
             updates[0].data,
             [
-                0x10, 0x11, 0x12, 0xFF, 0x10, 0x11, 0x12, 0xFF, 0x20, 0x21, 0x22, 0xFF, 0x10, 0x11, 0x12, 0xFF, 0x10,
-                0x11, 0x12, 0xFF, 0x20, 0x21, 0x22, 0xFF, 0x30, 0x31, 0x32, 0xFF, 0x30, 0x31, 0x32, 0xFF, 0x40, 0x41,
-                0x42, 0xFF,
+                0x10, 0x11, 0x12, 0xFF, 0x10, 0x11, 0x12, 0xFF, 0x20, 0x21, 0x22, 0xFF, 0x10, 0x11,
+                0x12, 0xFF, 0x10, 0x11, 0x12, 0xFF, 0x20, 0x21, 0x22, 0xFF, 0x30, 0x31, 0x32, 0xFF,
+                0x30, 0x31, 0x32, 0xFF, 0x40, 0x41, 0x42, 0xFF,
             ]
         );
 
@@ -843,7 +893,11 @@ mod tests {
         let mut c = Compositor::default();
         c.reset(u32::from(u16::MAX), 1);
         c.create_surface(1, 2, 1);
-        c.apply_bitmap(1, &rect(0, 0, 2, 1), &[0x10, 0x11, 0x12, 0xFF, 0x20, 0x21, 0x22, 0xFF]);
+        c.apply_bitmap(
+            1,
+            &rect(0, 0, 2, 1),
+            &[0x10, 0x11, 0x12, 0xFF, 0x20, 0x21, 0x22, 0xFF],
+        );
         c.end_frame();
 
         c.map_surface_scaled(1, 0, 0, u32::MAX, 1);
@@ -1059,7 +1113,10 @@ mod tests {
         c.reset(1920, 1080);
         c.create_surface(1, MAX_SURFACE_DIM, MAX_SURFACE_DIM);
 
-        assert!(c.surfaces.is_empty(), "a 1 GiB surface must not be allocated");
+        assert!(
+            c.surfaces.is_empty(),
+            "a 1 GiB surface must not be allocated"
+        );
         assert_eq!(c.allocated_bytes, 0);
     }
 
@@ -1078,10 +1135,18 @@ mod tests {
         for id in 0..u16::try_from(fit).unwrap() {
             c.create_surface(id, EDGE, EDGE);
         }
-        assert_eq!(c.surfaces.len(), fit, "every surface within budget must be allocated");
+        assert_eq!(
+            c.surfaces.len(),
+            fit,
+            "every surface within budget must be allocated"
+        );
 
         c.create_surface(u16::try_from(fit).unwrap(), EDGE, EDGE);
-        assert_eq!(c.surfaces.len(), fit, "the surface crossing the budget must be refused");
+        assert_eq!(
+            c.surfaces.len(),
+            fit,
+            "the surface crossing the budget must be refused"
+        );
         assert!(c.allocated_bytes <= MAX_COMPOSITOR_BYTES);
     }
 
@@ -1098,7 +1163,10 @@ mod tests {
         assert!(charged > 0);
 
         c.delete_surface(1);
-        assert_eq!(c.allocated_bytes, 0, "the charge must be released on delete");
+        assert_eq!(
+            c.allocated_bytes, 0,
+            "the charge must be released on delete"
+        );
 
         // And the freed budget is usable again.
         c.create_surface(2, EDGE, EDGE);
@@ -1121,7 +1189,10 @@ mod tests {
             c.create_surface(1, EDGE, EDGE);
         }
 
-        assert_eq!(c.allocated_bytes, once, "re-creating one id must not accumulate charge");
+        assert_eq!(
+            c.allocated_bytes, once,
+            "re-creating one id must not accumulate charge"
+        );
         assert_eq!(c.surfaces.len(), 1);
     }
 
@@ -1160,7 +1231,11 @@ mod tests {
         }
         assert_eq!(c.cache.len(), slots_that_fit);
 
-        c.surface_to_cache(1, u16::try_from(slots_that_fit).unwrap(), &rect(0, 0, EDGE, EDGE));
+        c.surface_to_cache(
+            1,
+            u16::try_from(slots_that_fit).unwrap(),
+            &rect(0, 0, EDGE, EDGE),
+        );
         assert_eq!(
             c.cache.len(),
             slots_that_fit,
@@ -1237,7 +1312,11 @@ mod tests {
         c.end_frame();
 
         let updates = c.drain_output();
-        assert_eq!(updates.len(), 2, "each destination point produces its own delta");
+        assert_eq!(
+            updates.len(),
+            2,
+            "each destination point produces its own delta"
+        );
         for update in &updates {
             assert_eq!(&update.data[0..4], &[0x30, 0x20, 0x10, 0xFF]);
         }
@@ -1271,7 +1350,11 @@ mod tests {
         c.end_frame();
 
         let updates = c.drain_output();
-        assert_eq!(updates.len(), 1, "identical rectangles must collapse to one delta");
+        assert_eq!(
+            updates.len(),
+            1,
+            "identical rectangles must collapse to one delta"
+        );
     }
 
     /// Pixels are read at `EndFrame`, so a region painted twice within a frame
@@ -1408,7 +1491,11 @@ mod tests {
             c.solid_fill(1, &black, &[rect(0, 0, 64, 63), rect(0, 1, 64, 64)]);
         }
 
-        assert_eq!(c.frame.len(), FIT, "the frame must stop growing at the budget");
+        assert_eq!(
+            c.frame.len(),
+            FIT,
+            "the frame must stop growing at the budget"
+        );
         assert_eq!(c.allocated_bytes, MAX_COMPOSITOR_BYTES);
     }
 
@@ -1423,7 +1510,10 @@ mod tests {
 
         c.map_surface(1, 0, 0);
         c.end_frame();
-        assert!(c.allocated_bytes > surface_only, "the queued delta must be charged");
+        assert!(
+            c.allocated_bytes > surface_only,
+            "the queued delta must be charged"
+        );
 
         let _ = c.drain_output();
         assert_eq!(
@@ -1443,12 +1533,18 @@ mod tests {
         c.create_surface(1, 2048, 2048);
         c.map_surface(1, 2048, 2048);
         c.end_frame();
-        assert!(!c.ready.is_empty(), "the mapped surface must have committed a delta");
+        assert!(
+            !c.ready.is_empty(),
+            "the mapped surface must have committed a delta"
+        );
 
         // Shrinking the output is the case that matters: the queued region sits
         // outside the new bounds entirely.
         c.reset(1920, 1080);
-        assert!(c.drain_output().is_empty(), "pre-reset deltas must not be drainable");
+        assert!(
+            c.drain_output().is_empty(),
+            "pre-reset deltas must not be drainable"
+        );
         assert_eq!(c.allocated_bytes, 0);
     }
 }

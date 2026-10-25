@@ -8,7 +8,12 @@ pub struct Rect {
 
 impl Rect {
     pub fn new(x: usize, y: usize, width: usize, height: usize) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     #[must_use]
@@ -55,26 +60,29 @@ fn find_different_tiles<const BPP: usize>(
     let tiles_y = height.div_ceil(TILE_SIZE);
     let mut tile_differences = vec![false; tiles_x * tiles_y];
 
-    tile_differences.iter_mut().enumerate().for_each(|(idx, diff)| {
-        let tile_start_x = (idx % tiles_x) * TILE_SIZE;
-        let tile_end_x = (tile_start_x + TILE_SIZE).min(width);
-        let tile_start_y = (idx / tiles_x) * TILE_SIZE;
-        let tile_end_y = (tile_start_y + TILE_SIZE).min(height);
+    tile_differences
+        .iter_mut()
+        .enumerate()
+        .for_each(|(idx, diff)| {
+            let tile_start_x = (idx % tiles_x) * TILE_SIZE;
+            let tile_end_x = (tile_start_x + TILE_SIZE).min(width);
+            let tile_start_y = (idx / tiles_x) * TILE_SIZE;
+            let tile_end_y = (tile_start_y + TILE_SIZE).min(height);
 
-        // Check for any difference in tile using slice comparisons
-        let has_diff = (tile_start_y..tile_end_y).any(|y| {
-            let row_start1 = y * stride1;
-            let row_start2 = y * stride2;
-            let tile_row_start1 = row_start1 + tile_start_x * BPP;
-            let tile_row_end1 = row_start1 + tile_end_x * BPP;
-            let tile_row_start2 = row_start2 + tile_start_x * BPP;
-            let tile_row_end2 = row_start2 + tile_end_x * BPP;
+            // Check for any difference in tile using slice comparisons
+            let has_diff = (tile_start_y..tile_end_y).any(|y| {
+                let row_start1 = y * stride1;
+                let row_start2 = y * stride2;
+                let tile_row_start1 = row_start1 + tile_start_x * BPP;
+                let tile_row_end1 = row_start1 + tile_end_x * BPP;
+                let tile_row_start2 = row_start2 + tile_start_x * BPP;
+                let tile_row_end2 = row_start2 + tile_end_x * BPP;
 
-            image1[tile_row_start1..tile_row_end1] != image2[tile_row_start2..tile_row_end2]
+                image1[tile_row_start1..tile_row_end1] != image2[tile_row_start2..tile_row_end2]
+            });
+
+            *diff = has_diff;
         });
-
-        *diff = has_diff;
-    });
 
     tile_differences
 }
@@ -87,7 +95,8 @@ fn find_different_rects<const BPP: usize>(
     width: usize,
     height: usize,
 ) -> Vec<Rect> {
-    let mut tile_differences = find_different_tiles::<BPP>(image1, stride1, image2, stride2, width, height);
+    let mut tile_differences =
+        find_different_tiles::<BPP>(image1, stride1, image2, stride2, width, height);
 
     let mod_width = width % TILE_SIZE;
     let mod_height = height % TILE_SIZE;
@@ -231,8 +240,14 @@ mod tests {
         let image1 = vec![0u32; SIZE * SIZE];
         let mut image2 = vec![0u32; SIZE * SIZE];
         image2[65 * 128 + 65] = 1;
-        let result =
-            find_different_rects::<4>(cast_slice(&image1), SIZE * 4, cast_slice(&image2), SIZE * 4, SIZE, SIZE);
+        let result = find_different_rects::<4>(
+            cast_slice(&image1),
+            SIZE * 4,
+            cast_slice(&image2),
+            SIZE * 4,
+            SIZE,
+            SIZE,
+        );
         assert_eq!(
             result,
             vec![Rect {
@@ -252,8 +267,14 @@ mod tests {
         // Modify two adjacent tiles
         image2[65 * SIZE + 65] = 1;
         image2[65 * SIZE + 129] = 1;
-        let result =
-            find_different_rects::<4>(cast_slice(&image1), SIZE * 4, cast_slice(&image2), SIZE * 4, SIZE, SIZE);
+        let result = find_different_rects::<4>(
+            cast_slice(&image1),
+            SIZE * 4,
+            cast_slice(&image2),
+            SIZE * 4,
+            SIZE,
+            SIZE,
+        );
         assert_eq!(
             result,
             vec![Rect {
@@ -271,8 +292,14 @@ mod tests {
         let image1 = vec![0u32; SIZE * SIZE];
         let mut image2 = vec![0u32; SIZE * SIZE];
         image2[65 * SIZE + 65] = 1;
-        let result =
-            find_different_rects::<4>(cast_slice(&image1), SIZE * 4, cast_slice(&image2), SIZE * 4, SIZE, SIZE);
+        let result = find_different_rects::<4>(
+            cast_slice(&image1),
+            SIZE * 4,
+            cast_slice(&image2),
+            SIZE * 4,
+            SIZE,
+            SIZE,
+        );
         assert_eq!(
             result,
             vec![Rect {
@@ -290,8 +317,14 @@ mod tests {
         let image1 = vec![0u32; SIZE * SIZE];
         let mut image2 = vec![0u32; SIZE * SIZE];
         image2[95 * 100 + 95] = 1;
-        let _result =
-            find_different_rects::<4>(cast_slice(&image1), SIZE * 4, cast_slice(&image2), SIZE * 4, SIZE, SIZE);
+        let _result = find_different_rects::<4>(
+            cast_slice(&image1),
+            SIZE * 4,
+            cast_slice(&image2),
+            SIZE * 4,
+            SIZE,
+            SIZE,
+        );
     }
 
     #[test]

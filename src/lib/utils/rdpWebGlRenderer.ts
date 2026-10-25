@@ -265,6 +265,11 @@ export class RdpWebGlRenderer {
   private handleContextRestored(): void {
     console.info('WebGL2 context restored; recreating pipeline');
     this.isContextLost = false;
+    this.program = null;
+    this.textureUniformLocation = null;
+    this.vao = null;
+    this.vbo = null;
+    this.texture = null;
     this.textureWidth = 0;
     this.textureHeight = 0;
     this.setupPipeline();

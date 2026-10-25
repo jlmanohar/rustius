@@ -45,10 +45,16 @@ impl DecodedFrame {
     pub fn new(data: Vec<u8>, width: u32, height: u32) -> Self {
         debug_assert_eq!(
             data.len() as u64,
-            u64::from(width).saturating_mul(u64::from(height)).saturating_mul(4),
+            u64::from(width)
+                .saturating_mul(u64::from(height))
+                .saturating_mul(4),
             "DecodedFrame buffer must be RGBA8888 (width * height * 4 bytes)",
         );
-        Self { data, width, height }
+        Self {
+            data,
+            width,
+            height,
+        }
     }
 
     /// RGBA pixel data (4 bytes per pixel).
@@ -96,7 +102,10 @@ pub struct DecoderError {
 
 impl DecoderError {
     /// Create a decoder error with a source error
-    pub fn new(context: impl Into<String>, source: impl core::error::Error + Send + Sync + 'static) -> Self {
+    pub fn new(
+        context: impl Into<String>,
+        source: impl core::error::Error + Send + Sync + 'static,
+    ) -> Self {
         Self {
             context: context.into(),
             source: Some(Box::new(source)),
@@ -278,15 +287,18 @@ mod openh264_impl {
                 clippy::cast_possible_truncation,
                 reason = "strides are bounded by frame dimensions, which fit in u32"
             )]
-            let [y_stride, u_stride, v_stride] = [y_stride as u32, u_stride as u32, v_stride as u32];
+            let [y_stride, u_stride, v_stride] =
+                [y_stride as u32, u_stride as u32, v_stride as u32];
 
-            let rgba_stride = w32
-                .checked_mul(4)
-                .ok_or_else(|| DecoderError::msg("frame dimensions too large for RGBA allocation"))?;
+            let rgba_stride = w32.checked_mul(4).ok_or_else(|| {
+                DecoderError::msg("frame dimensions too large for RGBA allocation")
+            })?;
             let rgba_size = width
                 .checked_mul(height)
                 .and_then(|s| s.checked_mul(4))
-                .ok_or_else(|| DecoderError::msg("frame dimensions too large for RGBA allocation"))?;
+                .ok_or_else(|| {
+                    DecoderError::msg("frame dimensions too large for RGBA allocation")
+                })?;
             let mut rgba = vec![0u8; rgba_size];
 
             // MS-RDPEGFX AVC420 streams carry full-range BT.709 YUV420,

@@ -19,11 +19,18 @@ pub enum RleDecodeError {
 impl core::fmt::Display for RleDecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            RleDecodeError::ReadCompressedData(_error) => write!(f, "failed to read RLE-compressed data"),
-            RleDecodeError::WriteDecompressedData(_error) => write!(f, "failed to write decompressed data"),
+            RleDecodeError::ReadCompressedData(_error) => {
+                write!(f, "failed to read RLE-compressed data")
+            }
+            RleDecodeError::WriteDecompressedData(_error) => {
+                write!(f, "failed to write decompressed data")
+            }
             RleDecodeError::InvalidSegmentHeader => write!(f, "invalid RLE segment header"),
             RleDecodeError::SegmentDoNotFitScanline => {
-                write!(f, "decoded scanline segments length exceeds scanline length")
+                write!(
+                    f,
+                    "decoded scanline segments length exceeds scanline length"
+                )
             }
         }
     }
@@ -261,7 +268,11 @@ impl RlePlaneEncoder {
         Self { width, height }
     }
 
-    fn encode(&self, mut src: impl Iterator<Item = u8>, dst: &mut WriteCursor<'_>) -> Result<usize, RleEncodeError> {
+    fn encode(
+        &self,
+        mut src: impl Iterator<Item = u8>,
+        dst: &mut WriteCursor<'_>,
+    ) -> Result<usize, RleEncodeError> {
         let mut written = 0;
 
         for _ in 0..self.height {
@@ -315,7 +326,12 @@ impl RlePlaneEncoder {
         Ok(written)
     }
 
-    fn encode_segment(&self, mut raw: &[u8], run: usize, dst: &mut WriteCursor<'_>) -> Result<usize, RleEncodeError> {
+    fn encode_segment(
+        &self,
+        mut raw: &[u8],
+        run: usize,
+        dst: &mut WriteCursor<'_>,
+    ) -> Result<usize, RleEncodeError> {
         if raw.is_empty() {
             return Err(RleEncodeError::NotEnoughBytes);
         }
@@ -327,7 +343,8 @@ impl RlePlaneEncoder {
             raw = &raw[15..];
         }
 
-        let raw_len = u8::try_from(raw.len()).expect("max value is guaranteed to be 15 due to the prior while loop");
+        let raw_len = u8::try_from(raw.len())
+            .expect("max value is guaranteed to be 15 due to the prior while loop");
         let run_capped = u8::try_from(cmp::min(run, 15)).expect("max value is guaranteed to be 15");
 
         let control = (raw_len << 4) + run_capped;
@@ -410,15 +427,30 @@ mod tests {
     use super::*;
 
     /// Performs decompression of 8bpp color plane into vector. Vector will be resized to fit decompressed data.
-    fn decompress(src: &[u8], dst: &mut Vec<u8>, width: usize, height: usize) -> Result<usize, RleDecodeError> {
+    fn decompress(
+        src: &[u8],
+        dst: &mut Vec<u8>,
+        width: usize,
+        height: usize,
+    ) -> Result<usize, RleDecodeError> {
         // Ensure dest buffer have enough space for decompressed data
         dst.resize(width * height, 0);
 
         decompress_8bpp_plane(src, dst.as_mut_slice(), width, height)
     }
 
-    fn compress(src: &[u8], dst: &mut [u8], width: usize, height: usize) -> Result<usize, RleEncodeError> {
-        compress_8bpp_plane(src.iter().copied(), &mut WriteCursor::new(dst), width, height)
+    fn compress(
+        src: &[u8],
+        dst: &mut [u8],
+        width: usize,
+        height: usize,
+    ) -> Result<usize, RleEncodeError> {
+        compress_8bpp_plane(
+            src.iter().copied(),
+            &mut WriteCursor::new(dst),
+            width,
+            height,
+        )
     }
 
     #[test]
@@ -464,8 +496,8 @@ mod tests {
         let height = 3usize;
 
         let expected = &[
-            0x13, 0xFF, 0x20, 0xFE, 0xFD, 0x60, 0x01, 0x7D, 0xF5, 0xC2, 0x9A, 0x38, 0x60, 0x01, 0x67, 0x8B, 0xA3, 0x78,
-            0xAF,
+            0x13, 0xFF, 0x20, 0xFE, 0xFD, 0x60, 0x01, 0x7D, 0xF5, 0xC2, 0x9A, 0x38, 0x60, 0x01,
+            0x67, 0x8B, 0xA3, 0x78, 0xAF,
         ];
 
         let mut compressed = vec![0; 255];
@@ -493,8 +525,8 @@ mod tests {
     fn multiline_decode() {
         // Example from 3.1.9.2.3 of [MS-RDPEGDI].
         let src = [
-            0x13, 0xFF, 0x20, 0xFE, 0xFD, 0x60, 0x01, 0x7D, 0xF5, 0xC2, 0x9A, 0x38, 0x60, 0x01, 0x67, 0x8B, 0xA3, 0x78,
-            0xAF,
+            0x13, 0xFF, 0x20, 0xFE, 0xFD, 0x60, 0x01, 0x7D, 0xF5, 0xC2, 0x9A, 0x38, 0x60, 0x01,
+            0x67, 0x8B, 0xA3, 0x78, 0xAF,
         ];
 
         let width = 6usize;
@@ -529,8 +561,8 @@ mod tests {
     #[test]
     fn complex_encode_decode() {
         let src = [
-            19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 18, 18, 18, 19, 19, 18, 18, 18,
-            18, 18, 18, 18, 18,
+            19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 18, 18, 18,
+            19, 19, 18, 18, 18, 18, 18, 18, 18, 18,
         ];
 
         let width = src.len();
@@ -601,7 +633,8 @@ mod tests {
 
         // Same test, but fail on non-first line
         let src = [
-            0x17, 0xFF, 0x18, 0xFF, // Will produce 9 bytes which is out of bounds for 8x2 image
+            0x17, 0xFF, 0x18,
+            0xFF, // Will produce 9 bytes which is out of bounds for 8x2 image
         ];
 
         let width = 8usize;

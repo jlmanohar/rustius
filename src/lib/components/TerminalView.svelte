@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
-  import { invoke } from '@tauri-apps/api/core';
+  import { invoke, Channel } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { appState } from '../stores/appState.svelte';
   import { DisposableStore } from '../utils/disposable';
@@ -142,23 +142,17 @@
 
       if (session.type === 'local_terminal') {
         try {
-          const unlisten = await listen<number[]>(`terminal-data-${session.id}`, (event) => {
-            if (term && event.payload) {
-              term.write(new Uint8Array(event.payload));
+          const onData = new Channel<ArrayBuffer>((payload) => {
+            if (term && payload) {
+              term.write(new Uint8Array(payload));
             }
           });
-
-          // Check if session was superseded or component unmounted while awaiting listen
-          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
-            unlisten();
-            return;
-          }
-          sessionDisposables.add(unlisten);
 
           await invoke('pty_spawn', {
             tabId: session.id,
             cols: term?.cols || 80,
             rows: term?.rows || 24,
+            onData,
           });
 
           if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
@@ -185,22 +179,17 @@
         }
       } else if (session.type === 'ssh' && session.connectionId) {
         try {
-          const unlisten = await listen<number[]>(`terminal-data-${session.id}`, (event) => {
-            if (term && event.payload) {
-              term.write(new Uint8Array(event.payload));
+          const onData = new Channel<ArrayBuffer>((payload) => {
+            if (term && payload) {
+              term.write(new Uint8Array(payload));
             }
           });
-
-          if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {
-            unlisten();
-            return;
-          }
-          sessionDisposables.add(unlisten);
 
           await invoke('ssh_connect', {
             tabId: session.id,
             connectionId: session.connectionId,
             credentialsOverride: session.credentialsOverride,
+            onData,
           });
 
           if (currentGen !== sessionGeneration || componentDisposables.isDisposed) {

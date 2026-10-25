@@ -1,8 +1,9 @@
 use std::io;
 
 use yuv::{
-    BufferStoreMut, YuvError, YuvPlanarImage, YuvPlanarImageMut, rdp_abgr_to_yuv444, rdp_argb_to_yuv444,
-    rdp_bgra_to_yuv444, rdp_rgba_to_yuv444, rdp_yuv444_to_argb, rdp_yuv444_to_rgba,
+    rdp_abgr_to_yuv444, rdp_argb_to_yuv444, rdp_bgra_to_yuv444, rdp_rgba_to_yuv444,
+    rdp_yuv444_to_argb, rdp_yuv444_to_rgba, BufferStoreMut, YuvError, YuvPlanarImage,
+    YuvPlanarImageMut,
 };
 
 use crate::image_processing::PixelFormat;
@@ -85,11 +86,17 @@ pub fn to_64x64_ycbcr_tile(
 ///
 /// Layout: `[0, R4:R0, G4:G0, B4:B0]` -- MSB unused, 5 bits per channel.
 pub fn rdp_15bit_to_rgb(color: u16) -> [u8; 3] {
-    #[expect(clippy::missing_panics_doc, reason = "unreachable panic (checked integer underflow)")]
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "unreachable panic (checked integer underflow)"
+    )]
     let out = {
-        let r = u8::try_from(((((color >> 10) & 0x1f) * 527) + 23) >> 6).expect("max possible value is 255");
-        let g = u8::try_from(((((color >> 5) & 0x1f) * 527) + 23) >> 6).expect("max possible value is 255");
-        let b = u8::try_from((((color & 0x1f) * 527) + 23) >> 6).expect("max possible value is 255");
+        let r = u8::try_from(((((color >> 10) & 0x1f) * 527) + 23) >> 6)
+            .expect("max possible value is 255");
+        let g = u8::try_from(((((color >> 5) & 0x1f) * 527) + 23) >> 6)
+            .expect("max possible value is 255");
+        let b =
+            u8::try_from((((color & 0x1f) * 527) + 23) >> 6).expect("max possible value is 255");
         [r, g, b]
     };
 
@@ -99,11 +106,17 @@ pub fn rdp_15bit_to_rgb(color: u16) -> [u8; 3] {
 /// Convert a 16-bit RDP color (RGB565) to RGB. Input value should be represented in
 /// little-endian format.
 pub fn rdp_16bit_to_rgb(color: u16) -> [u8; 3] {
-    #[expect(clippy::missing_panics_doc, reason = "unreachable panic (checked integer underflow)")]
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "unreachable panic (checked integer underflow)"
+    )]
     let out = {
-        let r = u8::try_from(((((color >> 11) & 0x1f) * 527) + 23) >> 6).expect("max possible value is 255");
-        let g = u8::try_from(((((color >> 5) & 0x3f) * 259) + 33) >> 6).expect("max possible value is 255");
-        let b = u8::try_from((((color & 0x1f) * 527) + 23) >> 6).expect("max possible value is 255");
+        let r = u8::try_from(((((color >> 11) & 0x1f) * 527) + 23) >> 6)
+            .expect("max possible value is 255");
+        let g = u8::try_from(((((color >> 5) & 0x3f) * 259) + 33) >> 6)
+            .expect("max possible value is 255");
+        let b =
+            u8::try_from((((color & 0x1f) * 527) + 23) >> 6).expect("max possible value is 255");
         [r, g, b]
     };
 

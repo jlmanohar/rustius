@@ -21,7 +21,7 @@ impl LocalTerminal {
     pub fn spawn(
         cols: u16,
         rows: u16,
-        output_tx: mpsc::UnboundedSender<Vec<u8>>,
+        output_tx: mpsc::Sender<Vec<u8>>,
         exit_tx: mpsc::Sender<u32>,
     ) -> Result<Self> {
         let pty_system = native_pty_system();
@@ -86,7 +86,7 @@ impl LocalTerminal {
                             break;
                         }
                         Ok(n) => {
-                            if output_tx.send(buffer[..n].to_vec()).is_err() {
+                            if output_tx.blocking_send(buffer[..n].to_vec()).is_err() {
                                 debug!("PTY receiver disconnected");
                                 break;
                             }
@@ -152,7 +152,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_spawn_and_write() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(128);
         let (exit_tx, mut _exit_rx) = mpsc::channel(1);
         let terminal =
             LocalTerminal::spawn(80, 24, tx, exit_tx).expect("Failed to spawn local terminal");

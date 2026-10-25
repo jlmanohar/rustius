@@ -9,7 +9,7 @@ mod wrapper;
 use std::io::{self, Write as _};
 use std::sync::LazyLock;
 
-pub use api::{CompressionMode, compress_and_wrap_egfx};
+pub use api::{compress_and_wrap_egfx, CompressionMode};
 use bitvec::bits;
 use bitvec::field::BitField as _;
 use bitvec::order::Msb0;
@@ -126,9 +126,16 @@ impl Decompressor {
         }
     }
 
-    fn handle_segment(&mut self, segment: &BulkEncodedData<'_>, output: &mut Vec<u8>) -> Result<usize, ZgfxError> {
+    fn handle_segment(
+        &mut self,
+        segment: &BulkEncodedData<'_>,
+        output: &mut Vec<u8>,
+    ) -> Result<usize, ZgfxError> {
         if !segment.data.is_empty() {
-            if segment.compression_flags.contains(CompressionFlags::COMPRESSED) {
+            if segment
+                .compression_flags
+                .contains(CompressionFlags::COMPRESSED)
+            {
                 self.decompress_segment(segment.data, output)
             } else {
                 self.history.write_all(segment.data)?;
@@ -141,7 +148,11 @@ impl Decompressor {
         }
     }
 
-    fn decompress_segment(&mut self, encoded_data: &[u8], output: &mut Vec<u8>) -> Result<usize, ZgfxError> {
+    fn decompress_segment(
+        &mut self,
+        encoded_data: &[u8],
+        output: &mut Vec<u8>,
+    ) -> Result<usize, ZgfxError> {
         if encoded_data.is_empty() {
             return Ok(0);
         }
@@ -156,7 +167,8 @@ impl Decompressor {
         // decoding it.
         // Use checked arithmetic so attacker-controlled trailing-bit counts that exceed the
         // available bit budget surface as a typed error rather than an unsigned underflow panic.
-        let trailing_unused = usize::from(*encoded_data.last().expect("encoded_data is not empty") & 0x07);
+        let trailing_unused =
+            usize::from(*encoded_data.last().expect("encoded_data is not empty") & 0x07);
         let bit_count = 8usize
             .checked_mul(encoded_data.len() - 1)
             .and_then(|n| n.checked_sub(trailing_unused))
@@ -171,7 +183,10 @@ impl Decompressor {
             // as TokenBitsNotFound rather than an out-of-range slice panic.
             let token = TOKEN_TABLE
                 .iter()
-                .find(|token| bits.get(..token.prefix.len()).is_some_and(|s| s == token.prefix))
+                .find(|token| {
+                    bits.get(..token.prefix.len())
+                        .is_some_and(|s| s == token.prefix)
+                })
                 .ok_or(ZgfxError::TokenBitsNotFound)?;
             // The prefix length was just validated by the find above; this split
             // cannot exceed the remaining bit budget.
@@ -204,12 +219,12 @@ impl Decompressor {
                     distance_value_size,
                     distance_base,
                 } => {
-                    let max_remaining = MAX_DECOMPRESSED_PER_SEGMENT.checked_sub(bytes_written).ok_or(
-                        ZgfxError::SegmentDecompressedSizeExceedsLimit {
+                    let max_remaining = MAX_DECOMPRESSED_PER_SEGMENT
+                        .checked_sub(bytes_written)
+                        .ok_or(ZgfxError::SegmentDecompressedSizeExceedsLimit {
                             decompressed: bytes_written,
                             limit: MAX_DECOMPRESSED_PER_SEGMENT,
-                        },
-                    )?;
+                        })?;
                     let written = handle_match(
                         &mut bits,
                         distance_value_size,
@@ -262,11 +277,14 @@ fn handle_match(
             remaining: bits.len(),
         })?
         .load_be::<u32>();
-    let full_distance = distance_base
-        .checked_add(distance_value)
-        .ok_or(ZgfxError::InvalidIntegralConversion("token's full distance"))?;
-    let distance =
-        usize::try_from(full_distance).map_err(|_| ZgfxError::InvalidIntegralConversion("token's full distance"))?;
+    let full_distance =
+        distance_base
+            .checked_add(distance_value)
+            .ok_or(ZgfxError::InvalidIntegralConversion(
+                "token's full distance",
+            ))?;
+    let distance = usize::try_from(full_distance)
+        .map_err(|_| ZgfxError::InvalidIntegralConversion("token's full distance"))?;
 
     if distance == 0 {
         read_unencoded_bytes(bits, history, output, max_remaining)
@@ -328,13 +346,15 @@ fn read_unencoded_bytes(
     // any supported platform (max ~262 Kbits). Use checked_mul for defence anyway.
     let unencoded_bit_count = length
         .checked_mul(8)
-        .ok_or(ZgfxError::InvalidIntegralConversion("unencoded byte-run bit count"))?;
-    let unencoded_bits = bits
-        .try_split_to(unencoded_bit_count)
-        .ok_or(ZgfxError::IncompleteBitStream {
-            needed: unencoded_bit_count,
-            remaining: bits.len(),
-        })?;
+        .ok_or(ZgfxError::InvalidIntegralConversion(
+            "unencoded byte-run bit count",
+        ))?;
+    let unencoded_bits =
+        bits.try_split_to(unencoded_bit_count)
+            .ok_or(ZgfxError::IncompleteBitStream {
+                needed: unencoded_bit_count,
+                remaining: bits.len(),
+            })?;
 
     // FIXME: not very efficient, but we need to rework the `Bits` helper and refactor a bit otherwise
     let unencoded_bits = unencoded_bits.to_bitvec();
@@ -361,10 +381,11 @@ fn read_encoded_bytes(
     let prefix_len = length_token_size
         .checked_add(1)
         .ok_or(ZgfxError::LengthTokenSizeTooLarge(length_token_size))?;
-    bits.try_split_to(prefix_len).ok_or(ZgfxError::IncompleteBitStream {
-        needed: prefix_len,
-        remaining: bits.len(),
-    })?;
+    bits.try_split_to(prefix_len)
+        .ok_or(ZgfxError::IncompleteBitStream {
+            needed: prefix_len,
+            remaining: bits.len(),
+        })?;
 
     let length = if length_token_size == 0 {
         // special case
@@ -376,8 +397,8 @@ fn read_encoded_bytes(
         let value_bits = length_token_size
             .checked_add(1)
             .ok_or(ZgfxError::LengthTokenSizeTooLarge(length_token_size))?;
-        let usize_bits =
-            usize::try_from(usize::BITS).map_err(|_| ZgfxError::LengthTokenSizeTooLarge(length_token_size))?;
+        let usize_bits = usize::try_from(usize::BITS)
+            .map_err(|_| ZgfxError::LengthTokenSizeTooLarge(length_token_size))?;
         if value_bits >= usize_bits {
             return Err(ZgfxError::LengthTokenSizeTooLarge(length_token_size));
         }
@@ -389,7 +410,8 @@ fn read_encoded_bytes(
             })?
             .load_be::<usize>();
 
-        let exponent = u32::try_from(value_bits).map_err(|_| ZgfxError::LengthTokenSizeTooLarge(length_token_size))?;
+        let exponent = u32::try_from(value_bits)
+            .map_err(|_| ZgfxError::LengthTokenSizeTooLarge(length_token_size))?;
         let base = 1usize
             .checked_shl(exponent)
             .ok_or(ZgfxError::LengthTokenSizeTooLarge(length_token_size))?;
@@ -443,103 +465,153 @@ static TOKEN_TABLE: LazyLock<[Token; 40]> = LazyLock::new(|| {
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 0, 0, 0],
-            ty: TokenType::Literal { literal_value: 0x00 },
+            ty: TokenType::Literal {
+                literal_value: 0x00,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 0, 0, 1],
-            ty: TokenType::Literal { literal_value: 0x01 },
+            ty: TokenType::Literal {
+                literal_value: 0x01,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 0, 1, 0, 0],
-            ty: TokenType::Literal { literal_value: 0x02 },
+            ty: TokenType::Literal {
+                literal_value: 0x02,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 0, 1, 0, 1],
-            ty: TokenType::Literal { literal_value: 0x03 },
+            ty: TokenType::Literal {
+                literal_value: 0x03,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 0, 1, 1, 0],
-            ty: TokenType::Literal { literal_value: 0x0ff },
+            ty: TokenType::Literal {
+                literal_value: 0x0ff,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 0, 1, 1, 1, 0],
-            ty: TokenType::Literal { literal_value: 0x04 },
+            ty: TokenType::Literal {
+                literal_value: 0x04,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 0, 1, 1, 1, 1],
-            ty: TokenType::Literal { literal_value: 0x05 },
+            ty: TokenType::Literal {
+                literal_value: 0x05,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 0, 0, 0, 0],
-            ty: TokenType::Literal { literal_value: 0x06 },
+            ty: TokenType::Literal {
+                literal_value: 0x06,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 0, 0, 0, 1],
-            ty: TokenType::Literal { literal_value: 0x07 },
+            ty: TokenType::Literal {
+                literal_value: 0x07,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 0, 0, 1, 0],
-            ty: TokenType::Literal { literal_value: 0x08 },
+            ty: TokenType::Literal {
+                literal_value: 0x08,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 0, 0, 1, 1],
-            ty: TokenType::Literal { literal_value: 0x09 },
+            ty: TokenType::Literal {
+                literal_value: 0x09,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 0, 1, 0, 0],
-            ty: TokenType::Literal { literal_value: 0x0a },
+            ty: TokenType::Literal {
+                literal_value: 0x0a,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 0, 1, 0, 1],
-            ty: TokenType::Literal { literal_value: 0x0b },
+            ty: TokenType::Literal {
+                literal_value: 0x0b,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 0, 1, 1, 0],
-            ty: TokenType::Literal { literal_value: 0x3a },
+            ty: TokenType::Literal {
+                literal_value: 0x3a,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 0, 1, 1, 1],
-            ty: TokenType::Literal { literal_value: 0x3b },
+            ty: TokenType::Literal {
+                literal_value: 0x3b,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 1, 0, 0, 0],
-            ty: TokenType::Literal { literal_value: 0x3c },
+            ty: TokenType::Literal {
+                literal_value: 0x3c,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 1, 0, 0, 1],
-            ty: TokenType::Literal { literal_value: 0x3d },
+            ty: TokenType::Literal {
+                literal_value: 0x3d,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 1, 0, 1, 0],
-            ty: TokenType::Literal { literal_value: 0x3e },
+            ty: TokenType::Literal {
+                literal_value: 0x3e,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 1, 0, 1, 1],
-            ty: TokenType::Literal { literal_value: 0x3f },
+            ty: TokenType::Literal {
+                literal_value: 0x3f,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 1, 1, 0, 0],
-            ty: TokenType::Literal { literal_value: 0x40 },
+            ty: TokenType::Literal {
+                literal_value: 0x40,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 1, 1, 0, 1],
-            ty: TokenType::Literal { literal_value: 0x80 },
+            ty: TokenType::Literal {
+                literal_value: 0x80,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 1, 1, 1, 0, 0],
-            ty: TokenType::Literal { literal_value: 0x0c },
+            ty: TokenType::Literal {
+                literal_value: 0x0c,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 1, 1, 1, 0, 1],
-            ty: TokenType::Literal { literal_value: 0x38 },
+            ty: TokenType::Literal {
+                literal_value: 0x38,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 1, 1, 1, 1, 0],
-            ty: TokenType::Literal { literal_value: 0x39 },
+            ty: TokenType::Literal {
+                literal_value: 0x39,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 1, 1, 1, 1, 1, 1, 1],
-            ty: TokenType::Literal { literal_value: 0x66 },
+            ty: TokenType::Literal {
+                literal_value: 0x66,
+            },
         },
         Token {
             prefix: bits![static u8, Msb0; 1, 0, 0, 0, 1],
@@ -799,11 +871,15 @@ mod tests {
             .copied()
             .zip(DECODED_ZGFX_SINGLE.iter().copied());
         let mut zgfx = Decompressor::new();
-        let mut decompressed = Vec::with_capacity(pairs.clone().map(|(_, d)| d.len()).max().unwrap());
+        let mut decompressed =
+            Vec::with_capacity(pairs.clone().map(|(_, d)| d.len()).max().unwrap());
         for (i, (encode, decode)) in pairs.enumerate() {
             let bytes_written = zgfx.decompress(encode.as_ref(), &mut decompressed).unwrap();
             assert_eq!(decode.len(), bytes_written);
-            assert_eq!(decompressed, *decode, "Failed to decompress encoded PDU #{i}");
+            assert_eq!(
+                decompressed, *decode,
+                "Failed to decompress encoded PDU #{i}"
+            );
             decompressed.clear();
         }
     }
@@ -815,7 +891,8 @@ mod tests {
 
         let mut zgfx = Decompressor::new();
         let mut decompressed = Vec::with_capacity(expected.len());
-        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed).unwrap();
+        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed)
+            .unwrap();
         assert_eq!(decompressed, expected);
     }
 
@@ -831,7 +908,8 @@ mod tests {
 
         let mut zgfx = Decompressor::new();
         let mut decompressed = Vec::with_capacity(expected.len());
-        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed).unwrap();
+        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed)
+            .unwrap();
         assert_eq!(decompressed, expected);
     }
 
@@ -842,7 +920,8 @@ mod tests {
 
         let mut zgfx = Decompressor::new();
         let mut decompressed = Vec::with_capacity(expected.len());
-        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed).unwrap();
+        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed)
+            .unwrap();
         assert_eq!(decompressed, expected);
     }
 
@@ -853,7 +932,8 @@ mod tests {
 
         let mut zgfx = Decompressor::new();
         let mut decompressed = Vec::with_capacity(expected.len());
-        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed).unwrap();
+        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed)
+            .unwrap();
         assert_eq!(decompressed, expected);
     }
 
@@ -864,7 +944,8 @@ mod tests {
 
         let mut zgfx = Decompressor::new();
         let mut decompressed = Vec::with_capacity(expected.len());
-        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed).unwrap();
+        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed)
+            .unwrap();
         assert_eq!(decompressed, expected);
     }
 
@@ -884,7 +965,8 @@ mod tests {
 
         let mut zgfx = Decompressor::new();
         let mut decompressed = Vec::with_capacity(expected.len());
-        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed).unwrap();
+        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed)
+            .unwrap();
         assert_eq!(decompressed, expected);
     }
 
@@ -897,7 +979,8 @@ mod tests {
 
         let mut zgfx = Decompressor::new();
         let mut decompressed = Vec::with_capacity(expected.len());
-        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed).unwrap();
+        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed)
+            .unwrap();
         assert_eq!(decompressed, expected);
     }
 
@@ -909,14 +992,16 @@ mod tests {
             0x2B, 0x00, 0x00, 0x00, // 0x0000002B total bytes uncompressed
             0x11, 0x00, 0x00, 0x00, // first segment is the next 17 bytes:
             0x04, // type 4, not PACKET_COMPRESSED
-            0x54, 0x68, 0x65, 0x20, 0x71, 0x75, 0x69, 0x63, 0x6B, 0x20, 0x62, 0x72, 0x6F, 0x77, 0x6E,
-            0x20, // "The quick brown "
+            0x54, 0x68, 0x65, 0x20, 0x71, 0x75, 0x69, 0x63, 0x6B, 0x20, 0x62, 0x72, 0x6F, 0x77,
+            0x6E, 0x20, // "The quick brown "
             0x0E, 0x00, 0x00, 0x00, // second segment is the next 14 bytes:
             0x04, // type 4, not PACKET_COMPRESSED
-            0x66, 0x6F, 0x78, 0x20, 0x6A, 0x75, 0x6D, 0x70, 0x73, 0x20, 0x6F, 0x76, 0x65, // "fox jumps ove"
+            0x66, 0x6F, 0x78, 0x20, 0x6A, 0x75, 0x6D, 0x70, 0x73, 0x20, 0x6F, 0x76,
+            0x65, // "fox jumps ove"
             0x10, 0x00, 0x00, 0x00, // third segment is the next 16 bytes
             0x24, // type 4 + PACKET_COMPRESSED
-            0x39, 0x08, 0x0E, 0x91, 0xF8, 0xD8, 0x61, 0x3D, 0x1E, 0x44, 0x06, 0x43, 0x79, 0x9C, // encoded:
+            0x39, 0x08, 0x0E, 0x91, 0xF8, 0xD8, 0x61, 0x3D, 0x1E, 0x44, 0x06, 0x43, 0x79,
+            0x9C, // encoded:
             // 0 01110010 = literal 0x72 = "r"
             // 0 00100000 = literal 0x20 = " "
             // 0 01110100 = literal 0x74 = "t"
@@ -939,18 +1024,21 @@ mod tests {
         let mut decompressed = Vec::with_capacity(expected.len());
         let bytes_written = zgfx.decompress(buffer.as_ref(), &mut decompressed).unwrap();
         assert_eq!(expected.len(), bytes_written);
-        assert_eq!(decompressed, expected, "\n{decompressed:x?} != \n{expected:x?}");
+        assert_eq!(
+            decompressed, expected,
+            "\n{decompressed:x?} != \n{expected:x?}"
+        );
     }
 
     #[test]
     fn zgfx_decompresses_single_match_unencoded_block() {
         let buffer = [
-            0xe0, 0x04, 0x13, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x01, 0x06, 0x0a, 0x00, 0x04, 0x00, 0x00, 0x00,
-            0x20, 0x00, 0x00, 0x00,
+            0xe0, 0x04, 0x13, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x01, 0x06, 0x0a, 0x00,
+            0x04, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00,
         ];
         let expected = vec![
-            0x13, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x01, 0x06, 0x0a, 0x00, 0x04, 0x00, 0x00, 0x00, 0x20, 0x00,
-            0x00, 0x00,
+            0x13, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x01, 0x06, 0x0a, 0x00, 0x04, 0x00,
+            0x00, 0x00, 0x20, 0x00, 0x00, 0x00,
         ];
 
         let mut zgfx = Decompressor::new();
@@ -962,12 +1050,20 @@ mod tests {
 
     #[test]
     fn zgfx_decompresses_unencoded_block_without_padding() {
-        let buffer = [0b1110_0101, 0b0001_0000, 0b0000_0000, 0b00000001, 0b1111_0000, 0x0];
+        let buffer = [
+            0b1110_0101,
+            0b0001_0000,
+            0b0000_0000,
+            0b00000001,
+            0b1111_0000,
+            0x0,
+        ];
         let expected = vec![0x08, 0xf0];
 
         let mut zgfx = Decompressor::new();
         let mut decompressed = Vec::with_capacity(expected.len());
-        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed).unwrap();
+        zgfx.decompress_segment(buffer.as_ref(), &mut decompressed)
+            .unwrap();
         assert_eq!(decompressed, expected);
     }
 

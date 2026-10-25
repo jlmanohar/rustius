@@ -1,8 +1,8 @@
 //! High-level ZGFX compression API for EGFX PDU preparation.
 
-use super::ZgfxError;
 use super::compressor::Compressor;
-use super::wrapper::{ZGFX_SEGMENTED_MAXSIZE, wrap_compressed, wrap_uncompressed};
+use super::wrapper::{wrap_compressed, wrap_uncompressed, ZGFX_SEGMENTED_MAXSIZE};
+use super::ZgfxError;
 
 /// Controls whether ZGFX compression is applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,7 +69,8 @@ mod tests {
         let mut compressor = Compressor::new();
         let data = b"Test data";
 
-        let wrapped = compress_and_wrap_egfx(data, &mut compressor, CompressionMode::Never).unwrap();
+        let wrapped =
+            compress_and_wrap_egfx(data, &mut compressor, CompressionMode::Never).unwrap();
 
         assert_eq!(wrapped[0], 0xE0);
         assert_eq!(wrapped[1], 0x04); // RDP8, not compressed
@@ -80,7 +81,8 @@ mod tests {
         let mut compressor = Compressor::new();
         let data = b"Test data";
 
-        let wrapped = compress_and_wrap_egfx(data, &mut compressor, CompressionMode::Always).unwrap();
+        let wrapped =
+            compress_and_wrap_egfx(data, &mut compressor, CompressionMode::Always).unwrap();
 
         assert_eq!(wrapped[0], 0xE0);
         assert_eq!(wrapped[1], 0x24); // RDP8 + COMPRESSED
@@ -104,7 +106,11 @@ mod tests {
         let data = b"Test data with some repetition: AAAA BBBB CCCC";
         let mut decompressor = Decompressor::new();
 
-        for mode in [CompressionMode::Never, CompressionMode::Auto, CompressionMode::Always] {
+        for mode in [
+            CompressionMode::Never,
+            CompressionMode::Auto,
+            CompressionMode::Always,
+        ] {
             let mut compressor = Compressor::new();
             let wrapped = compress_and_wrap_egfx(data, &mut compressor, mode).unwrap();
 

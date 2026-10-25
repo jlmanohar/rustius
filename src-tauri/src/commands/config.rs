@@ -4,7 +4,9 @@ use tauri::State;
 
 #[tauri::command]
 pub async fn get_config(state: State<'_, AppState>) -> Result<RustiusConfig, String> {
-    Ok(state.config_manager.get_config().await)
+    let mut config = state.config_manager.get_config().await;
+    config.sanitize_for_ipc();
+    Ok(config)
 }
 
 #[tauri::command]
@@ -254,10 +256,6 @@ pub async fn vault_get_status(state: State<'_, AppState>) -> Result<VaultStatus,
     let has_vault_file = state.config_manager.secret_manager().has_vault_file();
     let is_unlocked = state.config_manager.secret_manager().is_vault_unlocked();
 
-    if is_unlocked {
-        let _ = state.config_manager.secure_all_unencrypted_secrets().await;
-    }
-
     Ok(VaultStatus {
         is_portable,
         configured_backend,
@@ -269,10 +267,10 @@ pub async fn vault_get_status(state: State<'_, AppState>) -> Result<VaultStatus,
 
 #[tauri::command]
 pub async fn vault_unlock(password: String, state: State<'_, AppState>) -> Result<bool, String> {
-    let unlocked = state
-        .config_manager
-        .secret_manager()
-        .unlock_vault(&password)
+    let sm = state.config_manager.secret_manager().clone();
+    let unlocked = tokio::task::spawn_blocking(move || sm.unlock_vault(&password))
+        .await
+        .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
 
     if unlocked {
@@ -292,10 +290,10 @@ pub async fn vault_set_master_password(
     password: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    state
-        .config_manager
-        .secret_manager()
-        .set_master_password(&password)
+    let sm = state.config_manager.secret_manager().clone();
+    tokio::task::spawn_blocking(move || sm.set_master_password(&password))
+        .await
+        .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
 
     let _ = state.config_manager.secure_all_unencrypted_secrets().await;

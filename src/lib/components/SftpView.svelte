@@ -207,9 +207,11 @@
     if (!isConnected) return;
     const isWindows = localPath.includes('\\') || /^[A-Za-z]:/.test(localPath);
     const sep = isWindows ? '\\' : '/';
+    const cleanFileName = file.name.split(/[\\/]/).pop()?.replace(/^[:.]+/, '') || 'downloaded_file';
+    if (!cleanFileName || cleanFileName === '.' || cleanFileName === '..') return;
     const destLocal = localPath.endsWith(sep)
-      ? `${localPath}${file.name}`
-      : `${localPath}${sep}${file.name}`;
+      ? `${localPath}${cleanFileName}`
+      : `${localPath}${sep}${cleanFileName}`;
 
     const transferId = Math.random().toString(36).substring(2, 9);
     const item: TransferItem = {
@@ -343,7 +345,8 @@
       const home = await invoke<string>('local_get_home_dir');
       await loadLocalDir(home);
     } catch {
-      await loadLocalDir('C:\\');
+      const isWindows = typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows');
+      await loadLocalDir(isWindows ? 'C:\\' : '/');
     }
 
     if (session.connectionId) {

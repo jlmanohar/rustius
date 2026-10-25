@@ -9,7 +9,6 @@ description = "RDP client implementation for Rustius"
 rustius-core = { path = "../rustius-core" }
 tokio.workspace = true
 anyhow.workspace = true
-thiserror.workspace = true
 tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true

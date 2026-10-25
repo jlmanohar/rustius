@@ -3,12 +3,13 @@ use core::{fmt, iter};
 use bit_field::BitField as _;
 use bitflags::bitflags;
 use ironrdp_core::{
-    Decode, DecodeResult, Encode, EncodeResult, ReadCursor, WriteCursor, ensure_fixed_part_size, invalid_field_err,
+    ensure_fixed_part_size, invalid_field_err, Decode, DecodeResult, Encode, EncodeResult,
+    ReadCursor, WriteCursor,
 };
 use ironrdp_dvc::DvcEncode;
 use ironrdp_pdu::gcc::Monitor;
 use ironrdp_pdu::geometry::ExclusiveRectangle;
-use ironrdp_pdu::{DecodeError, cast_length, ensure_size, read_padding, write_padding};
+use ironrdp_pdu::{cast_length, ensure_size, read_padding, write_padding, DecodeError};
 use tracing::warn;
 
 use super::{Color, PixelFormat, Point};
@@ -108,12 +109,19 @@ impl Encode for GfxPdu {
             GfxPdu::CapabilitiesConfirm(pdu) => (RDPGFX_CMDID_CAPSCONFIRM, pdu.size()),
             GfxPdu::MapSurfaceToWindow(pdu) => (RDPGFX_CMDID_MAPSURFACETOWINDOW, pdu.size()),
             GfxPdu::QoeFrameAcknowledge(pdu) => (RDPGFX_CMDID_QOEFRAMEACKNOWLEDGE, pdu.size()),
-            GfxPdu::MapSurfaceToScaledOutput(pdu) => (RDPGFX_CMDID_MAPSURFACETOSCALEDOUTPUT, pdu.size()),
-            GfxPdu::MapSurfaceToScaledWindow(pdu) => (RDPGFX_CMDID_MAPSURFACETOSCALEDWINDOW, pdu.size()),
+            GfxPdu::MapSurfaceToScaledOutput(pdu) => {
+                (RDPGFX_CMDID_MAPSURFACETOSCALEDOUTPUT, pdu.size())
+            }
+            GfxPdu::MapSurfaceToScaledWindow(pdu) => {
+                (RDPGFX_CMDID_MAPSURFACETOSCALEDWINDOW, pdu.size())
+            }
         };
 
         // This will never overflow as per invariants.
-        #[expect(clippy::arithmetic_side_effects, reason = "guaranteed by GfxPdu invariants")]
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "guaranteed by GfxPdu invariants"
+        )]
         let pdu_size = payload_length + Self::FIXED_PART_SIZE;
 
         // Write `RDPGFX_HEADER` fields.
@@ -157,7 +165,10 @@ impl Encode for GfxPdu {
 
     fn size(&self) -> usize {
         // As per invariants: This will never overflow.
-        #[expect(clippy::arithmetic_side_effects, reason = "guaranteed by GfxPdu invariants")]
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "guaranteed by GfxPdu invariants"
+        )]
         let size = Self::FIXED_PART_SIZE
             + match self {
                 GfxPdu::WireToSurface1(pdu) => pdu.size(),
@@ -617,7 +628,12 @@ impl Encode for SurfaceToSurfacePdu {
     }
 
     fn size(&self) -> usize {
-        Self::FIXED_PART_SIZE + self.destination_points.iter().map(|r| r.size()).sum::<usize>()
+        Self::FIXED_PART_SIZE
+            + self
+                .destination_points
+                .iter()
+                .map(|r| r.size())
+                .sum::<usize>()
     }
 }
 
@@ -738,7 +754,12 @@ impl Encode for CacheToSurfacePdu {
     }
 
     fn size(&self) -> usize {
-        Self::FIXED_PART_SIZE + self.destination_points.iter().map(|p| p.size()).sum::<usize>()
+        Self::FIXED_PART_SIZE
+            + self
+                .destination_points
+                .iter()
+                .map(|p| p.size())
+                .sum::<usize>()
     }
 }
 
@@ -947,7 +968,10 @@ impl<'a> Decode<'a> for StartFramePdu {
         let timestamp = Timestamp::decode(src)?;
         let frame_id = src.read_u32();
 
-        Ok(Self { timestamp, frame_id })
+        Ok(Self {
+            timestamp,
+            frame_id,
+        })
     }
 }
 
@@ -1173,7 +1197,9 @@ impl ResetGraphicsPdu {
     const FIXED_PART_SIZE: usize = 4 /* Width */ + 4 /* Height */ + 4 /* nMonitors */;
 
     fn padding_size(&self) -> usize {
-        RESET_GRAPHICS_PDU_SIZE - Self::FIXED_PART_SIZE - self.monitors.iter().map(|m| m.size()).sum::<usize>()
+        RESET_GRAPHICS_PDU_SIZE
+            - Self::FIXED_PART_SIZE
+            - self.monitors.iter().map(|m| m.size()).sum::<usize>()
     }
 }
 
@@ -1199,7 +1225,9 @@ impl Encode for ResetGraphicsPdu {
     }
 
     fn size(&self) -> usize {
-        Self::FIXED_PART_SIZE + self.monitors.iter().map(|m| m.size()).sum::<usize>() + self.padding_size()
+        Self::FIXED_PART_SIZE
+            + self.monitors.iter().map(|m| m.size()).sum::<usize>()
+            + self.padding_size()
     }
 }
 
@@ -1443,7 +1471,10 @@ impl<'a> Decode<'a> for CacheEntryMetadata {
         let cache_key = src.read_u64();
         let bitmap_len = src.read_u32();
 
-        Ok(Self { cache_key, bitmap_len })
+        Ok(Self {
+            cache_key,
+            bitmap_len,
+        })
     }
 }
 

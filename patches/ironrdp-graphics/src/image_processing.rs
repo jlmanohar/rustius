@@ -76,7 +76,8 @@ impl ImageRegion<'_> {
             for y in 0..height {
                 let src_start = (y + src_point.y) * src_step + src_point.x * src_byte;
                 let dst_start = (y + dst_point.y) * dst_step + dst_point.x * dst_byte;
-                other.data[dst_start..dst_start + width].clone_from_slice(&self.data[src_start..src_start + width]);
+                other.data[dst_start..dst_start + width]
+                    .clone_from_slice(&self.data[src_start..src_start + width]);
             }
         } else {
             for y in 0..height {
@@ -84,7 +85,9 @@ impl ImageRegion<'_> {
                 let dst = &mut other.data[((y + dst_point.y) * dst_step)..];
 
                 for x in 0..width {
-                    let color = self.pixel_format.read_color(&src[((x + src_point.x) * src_byte)..])?;
+                    let color = self
+                        .pixel_format
+                        .read_color(&src[((x + src_point.x) * src_byte)..])?;
                     other
                         .pixel_format
                         .write_color(color, &mut dst[((x + dst_point.x) * dst_byte)..])?;
@@ -190,7 +193,11 @@ impl PixelFormat {
             r: buffer[ri],
             g: buffer[gi],
             b: buffer[bi],
-            a: if self.has_alpha() { buffer[ai] } else { ALPHA_OPAQUE },
+            a: if self.has_alpha() {
+                buffer[ai]
+            } else {
+                ALPHA_OPAQUE
+            },
         })
     }
 
@@ -206,7 +213,11 @@ impl PixelFormat {
         buffer[ri] = color.r;
         buffer[gi] = color.g;
         buffer[bi] = color.b;
-        buffer[ai] = if self.has_alpha() { color.a } else { ALPHA_OPAQUE };
+        buffer[ai] = if self.has_alpha() {
+            color.a
+        } else {
+            ALPHA_OPAQUE
+        };
         Ok(())
     }
 }

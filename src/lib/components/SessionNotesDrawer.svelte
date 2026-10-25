@@ -1,14 +1,14 @@
 <script lang="ts">
   import { appState } from '../stores/appState.svelte';
   import { marked } from 'marked';
+  import DOMPurify from 'dompurify';
   import {
     X,
     Pencil,
     FileText,
     BookOpen,
     Copy,
-    Check,
-    ExternalLink
+    Check
   } from '@lucide/svelte';
 
   let activeConn = $derived(appState.getActiveConnection());
@@ -17,10 +17,11 @@
   let renderedHtml = $derived.by(() => {
     if (!activeConn?.notes?.trim()) return '';
     try {
-      return marked.parse(activeConn.notes, {
+      const raw = marked.parse(activeConn.notes, {
         gfm: true,
         breaks: true,
       }) as string;
+      return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
     } catch (e) {
       console.error('Failed to parse Markdown:', e);
       return `<p class="error-msg">Failed to parse notes markdown</p>`;
