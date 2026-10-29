@@ -271,7 +271,7 @@
       <!-- Rustius crab icon -->
       <img src="/rustius_icon.svg" alt="Rustius" class="brand-icon" width="18" height="18" />
       <span class="brand-title">RUSTIUS</span>
-      <span class="brand-version">0.1.3</span>
+      <span class="brand-version">0.1.4</span>
     </div>
     <div class="brand-right">
       <button
