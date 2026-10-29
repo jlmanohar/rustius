@@ -118,9 +118,11 @@
 
   async function handleReconnect() {
     if (onreconnect && isTerminalDisconnected) {
+      wasDisconnected = false;
       onreconnect();
+    } else {
+      await initSession();
     }
-    await initSession();
   }
 
   // Transfer notification toast
@@ -178,7 +180,7 @@
   });
 
   async function initSession() {
-    if (!connectionId) return;
+    if (!connectionId || isLoading) return;
     isLoading = true;
     errorMessage = null;
     try {
@@ -374,8 +376,11 @@
     modalInputValue = '';
   }
 
+  let isSubmitting = $state(false);
+
   async function submitModal() {
-    if (!activeModal) return;
+    if (!activeModal || isSubmitting) return;
+    isSubmitting = true;
     try {
       if (activeModal === 'new_folder') {
         const name = modalInputValue.trim();
@@ -403,6 +408,8 @@
       closeModal();
     } catch (err: any) {
       errorMessage = `Action failed: ${err?.message || err}`;
+    } finally {
+      isSubmitting = false;
     }
   }
 
@@ -724,12 +731,14 @@
         </div>
 
         <div class="modal-footer">
-          <button class="btn secondary" onclick={closeModal}>Cancel</button>
+          <button class="btn secondary" disabled={isSubmitting} onclick={closeModal}>Cancel</button>
           <button
             class="btn {activeModal === 'delete' ? 'danger' : 'primary'}"
+            disabled={isSubmitting}
             onclick={submitModal}
           >
-            {#if activeModal === 'new_folder'}Create
+            {#if isSubmitting}Processing...
+            {:else if activeModal === 'new_folder'}Create
             {:else if activeModal === 'rename'}Rename
             {:else}Delete
             {/if}

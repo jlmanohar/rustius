@@ -268,9 +268,12 @@
     modalInput = '';
   }
 
+  let isSubmitting = $state(false);
+
   // Execute modal actions
   async function handleModalSubmit() {
-    if (!modalAction) return;
+    if (!modalAction || isSubmitting) return;
+    isSubmitting = true;
 
     try {
       if (modalAction === 'new_folder') {
@@ -322,6 +325,8 @@
       closeModal();
     } catch (err: any) {
       errorMessage = `Operation failed: ${err?.message || err}`;
+    } finally {
+      isSubmitting = false;
     }
   }
 
@@ -791,12 +796,13 @@
         </div>
 
         <div class="modal-actions">
-          <button class="btn btn-secondary" onclick={closeModal}>Cancel</button>
+          <button class="btn btn-secondary" disabled={isSubmitting} onclick={closeModal}>Cancel</button>
           <button
             class="btn {modalAction === 'delete' ? 'btn-danger' : 'btn-primary'}"
+            disabled={isSubmitting}
             onclick={handleModalSubmit}
           >
-            {modalAction === 'delete' ? 'Delete' : 'Save'}
+            {isSubmitting ? 'Processing...' : modalAction === 'delete' ? 'Delete' : 'Save'}
           </button>
         </div>
       </div>

@@ -74,7 +74,13 @@
     aria-modal="true"
     tabindex="-1"
     onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => e.stopPropagation()}
+    onkeydown={(e) => {
+      if (e.key === 'Escape') {
+        handleKeyDown(e);
+      } else {
+        e.stopPropagation();
+      }
+    }}
   >
     <!-- Modal Header -->
     <div class="modal-top">

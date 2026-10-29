@@ -92,6 +92,8 @@ pub async fn ironrdp_connect(
         .map(|r| r.clipboard_sharing)
         .or(Some(app_settings.default_rdp_clipboard_sharing));
 
+    let session_id = uuid::Uuid::new_v4();
+
     let rdp_config = IronRdpConfig {
         host,
         port,
@@ -104,11 +106,13 @@ pub async fn ironrdp_connect(
         egfx,
         clipboard_sharing,
         known_hosts_path: Some(state.rdp_known_hosts_path()),
+        session_id: Some(session_id),
     };
 
     let app_clone = app_handle.clone();
     let tab_id_clone = tab_id.clone();
     let on_frame_clone = on_frame.clone();
+    let sessions_map = state.ironrdp_sessions.clone();
 
     let session = IronRdpSession::connect(rdp_config, move |event| match event {
         IronRdpEvent::Connected => {
@@ -123,14 +127,35 @@ pub async fn ironrdp_connect(
         IronRdpEvent::PointerHidden => {
             let _ = app_clone.emit(&format!("rdp-pointer-hidden-{}", tab_id_clone), ());
         }
-        IronRdpEvent::PointerPosition { x, y } => {
-            let _ = app_clone.emit(&format!("rdp-pointer-position-{}", tab_id_clone), (x, y));
+        IronRdpEvent::PointerPosition { .. } => {
+            // Pointer position events are handled client-side; no IPC emission needed
         }
         IronRdpEvent::PointerBitmap(bitmap) => {
             let _ = app_clone.emit(&format!("rdp-pointer-bitmap-{}", tab_id_clone), bitmap);
         }
         IronRdpEvent::Terminated(diag) => {
-            let _ = app_clone.emit(&format!("rdp-exit-{}", tab_id_clone), diag);
+            let map = sessions_map.clone();
+            let tid = tab_id_clone.clone();
+            let app = app_clone.clone();
+            let sid = session_id;
+            tokio::spawn(async move {
+                let session = {
+                    let mut guard = map.write().await;
+                    if let Some(curr) = guard.get(&tid) {
+                        if curr.id == sid {
+                            guard.remove(&tid)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+                if let Some(s) = session {
+                    let _ = app.emit(&format!("rdp-exit-{}", tid), diag);
+                    s.disconnect();
+                }
+            });
         }
     })
     .await

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use crate::encrypted_storage::EncryptedStorage;
+use crate::storage::atomic_write_file;
 
 /// Default service name under which Rustius credentials are registered in the OS keyring.
 pub const KEYRING_SERVICE: &str = "rustius";
@@ -36,6 +37,20 @@ pub struct VaultState {
 }
 
 /// Helper for managing credentials in both native OS keyring and encrypted file vault.
+fn run_blocking_or_direct<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let is_multi_thread = tokio::runtime::Handle::try_current()
+        .map(|h| h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)
+        .unwrap_or(false);
+    if is_multi_thread {
+        tokio::task::block_in_place(f)
+    } else {
+        f()
+    }
+}
+
 #[derive(Clone)]
 pub struct SecretManager {
     service: String,
@@ -79,8 +94,13 @@ impl SecretManager {
             let bytes = std::fs::read(&self.vault_path).with_context(|| {
                 format!("Failed to read vault file: {}", self.vault_path.display())
             })?;
-            let storage = EncryptedStorage::new(master_password);
-            match storage.decrypt(&bytes) {
+            let pwd = master_password.to_string();
+            let decrypted_res = run_blocking_or_direct(move || -> Result<String> {
+                let storage = EncryptedStorage::new(&pwd);
+                storage.decrypt(&bytes)
+            });
+
+            match decrypted_res {
                 Ok(json) => {
                     let secrets: HashMap<String, String> = serde_json::from_str(&json)
                         .context("Failed to deserialize decrypted vault contents")?;
@@ -104,13 +124,15 @@ impl SecretManager {
             }
         } else {
             // Initialize fresh empty vault
-            let storage = EncryptedStorage::new(master_password);
-            let empty_json = serde_json::to_string(&HashMap::<String, String>::new())?;
-            let bytes = storage.encrypt(&empty_json)?;
-            if let Some(parent) = self.vault_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            std::fs::write(&self.vault_path, bytes)?;
+            let pwd = master_password.to_string();
+            let vault_path = self.vault_path.clone();
+            run_blocking_or_direct(move || -> Result<()> {
+                let storage = EncryptedStorage::new(&pwd);
+                let empty_json = serde_json::to_string(&HashMap::<String, String>::new())?;
+                let bytes = storage.encrypt(&empty_json)?;
+                atomic_write_file(&vault_path, &bytes)?;
+                Ok(())
+            })?;
 
             let mut guard = self
                 .vault_state
@@ -139,15 +161,17 @@ impl SecretManager {
         let password = guard
             .master_password
             .as_deref()
-            .context("Cannot persist vault without master password in memory")?;
-        let storage = EncryptedStorage::new(password);
+            .context("Cannot persist vault without master password in memory")?
+            .to_string();
         let json = serde_json::to_string_pretty(&guard.secrets)?;
-        let bytes = storage.encrypt(&json)?;
-        if let Some(parent) = self.vault_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        std::fs::write(&self.vault_path, bytes)?;
-        Ok(())
+        let vault_path = self.vault_path.clone();
+
+        run_blocking_or_direct(move || -> Result<()> {
+            let storage = EncryptedStorage::new(&password);
+            let bytes = storage.encrypt(&json)?;
+            atomic_write_file(&vault_path, &bytes)?;
+            Ok(())
+        })
     }
 
     /// Set or update the master password, re-encrypting all existing secrets on disk.

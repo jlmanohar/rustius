@@ -37,10 +37,18 @@
   let copiedDetails = $state(false);
 
   let conn = $derived(appState.findConnection(session.connectionId));
+  let isActiveTab = $derived(appState.activeTabId === session.id);
+
+  $effect(() => {
+    if (!isActiveTab) {
+      releaseAllKeys();
+    }
+  });
 
   let webglRenderer: RdpWebGlRenderer | null = null;
   let useWebGl = $state(false);
   let canvasCtx: CanvasRenderingContext2D | null = null;
+  let initFailed = false;
   let pendingMouseMove: { x: number; y: number } | null = null;
   let mouseMoveRafId: number | null = null;
   let cursorCanvas: HTMLCanvasElement | null = null;
@@ -133,7 +141,7 @@
   let frameRafId: number | null = null;
 
   function initRenderer(): boolean {
-    if (!canvasRef) return false;
+    if (!canvasRef || initFailed) return false;
     if (useWebGl && webglRenderer) return true;
     if (canvasCtx) return false;
 
@@ -153,6 +161,9 @@
     useWebGl = false;
     webglRenderer = null;
     canvasCtx = canvasRef.getContext('2d', { alpha: false });
+    if (!canvasCtx) {
+      initFailed = true;
+    }
     return false;
   }
 
@@ -206,6 +217,9 @@
         dataLen === width * height * 4
       ) {
         const slice = new Uint8Array(buf, byteOffset + offset, dataLen);
+        if (pendingTiles.length >= 256) {
+          pendingTiles.splice(0, pendingTiles.length - 255);
+        }
         pendingTiles.push({ x, y, width, height, slice });
       }
       offset += dataLen;
@@ -227,11 +241,13 @@
     if (canvasRef.width !== pendingDesktopWidth || canvasRef.height !== pendingDesktopHeight) {
       canvasRef.width = pendingDesktopWidth;
       canvasRef.height = pendingDesktopHeight;
-      if (useWebGl && webglRenderer) {
-        webglRenderer.ensureSize(pendingDesktopWidth, pendingDesktopHeight);
-      } else if (!useWebGl) {
+      if (!useWebGl) {
         canvasCtx = canvasRef.getContext('2d', { alpha: false });
       }
+    }
+
+    if (useWebGl && webglRenderer && pendingDesktopWidth > 0 && pendingDesktopHeight > 0) {
+      webglRenderer.ensureSize(pendingDesktopWidth, pendingDesktopHeight);
     }
 
     const tilesToRender = pendingTiles;
@@ -339,8 +355,8 @@
     let dy = e.deltaY;
     let dx = e.deltaX;
     if (e.deltaMode === 1) {
-      dy *= 20;
-      dx *= 20;
+      dy *= 100;
+      dx *= 100;
     } else if (e.deltaMode === 2) {
       dy *= 100;
       dx *= 100;
@@ -349,31 +365,27 @@
     const isVertical = Math.abs(dy) >= Math.abs(dx);
     if (isVertical) {
       accumulatedWheelY -= dy;
-      if (Math.abs(accumulatedWheelY) >= 20) {
-        const notches = Math.trunc(accumulatedWheelY / 40);
-        if (notches !== 0) {
-          const rotationUnits = notches * 120;
-          accumulatedWheelY -= notches * 40;
-          invoke('ironrdp_mouse_wheel', {
-            tabId: session.id,
-            isVertical: true,
-            rotationUnits,
-          }).catch(() => {});
-        }
+      const notches = Math.trunc(accumulatedWheelY / 100);
+      if (notches !== 0) {
+        const rotationUnits = notches * 120;
+        accumulatedWheelY -= notches * 100;
+        invoke('ironrdp_mouse_wheel', {
+          tabId: session.id,
+          isVertical: true,
+          rotationUnits,
+        }).catch(() => {});
       }
     } else {
       accumulatedWheelX -= dx;
-      if (Math.abs(accumulatedWheelX) >= 20) {
-        const notches = Math.trunc(accumulatedWheelX / 40);
-        if (notches !== 0) {
-          const rotationUnits = notches * 120;
-          accumulatedWheelX -= notches * 40;
-          invoke('ironrdp_mouse_wheel', {
-            tabId: session.id,
-            isVertical: false,
-            rotationUnits,
-          }).catch(() => {});
-        }
+      const notches = Math.trunc(accumulatedWheelX / 100);
+      if (notches !== 0) {
+        const rotationUnits = notches * 120;
+        accumulatedWheelX -= notches * 100;
+        invoke('ironrdp_mouse_wheel', {
+          tabId: session.id,
+          isVertical: false,
+          rotationUnits,
+        }).catch(() => {});
       }
     }
   }
@@ -748,6 +760,11 @@
       }
       sessionDisposables.trackEventListener(window, 'resize', handleIronRdpResize);
       sessionDisposables.trackEventListener(window, 'blur', releaseAllKeys);
+      sessionDisposables.trackEventListener(window, 'mouseup', (e: MouseEvent) => {
+        if (isConnected) {
+          handleMouseUp(e);
+        }
+      });
       sessionDisposables.trackEventListener(document, 'visibilitychange', () => {
         if (document.hidden) {
           releaseAllKeys();

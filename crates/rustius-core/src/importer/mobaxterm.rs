@@ -333,6 +333,7 @@ fn parse_session_entry(
         notes: None,
         created_at: now.clone(),
         updated_at: now,
+        last_connected: None,
         ssh_config,
         rdp_config,
         credential_id: None,

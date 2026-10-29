@@ -104,6 +104,7 @@ This is not theoretical; every link is implemented today.
   ```json
   "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
   ```
+  *(Note on Rustius compatibility: In Windows WebView2, setting a strict CSP blocks local `@font-face` WOFF2 fonts and distorts xterm.js character cell geometry. As long as DOMPurify sanitization is strictly applied and secrets are not exposed to the webview, `csp` is intentionally set to `null` to avoid breaking font loading and terminal rendering).*
   Test dev and production builds; Tauri injects nonces for its own bootstrap
   scripts, and xterm needs inline styles. Tighten `style-src` later if possible.
 - Stop returning plaintext secrets to the webview (finding #2). A sanitizer is

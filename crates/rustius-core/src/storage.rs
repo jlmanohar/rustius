@@ -25,6 +25,55 @@ pub trait ConfigStorage: Send + Sync {
     }
 }
 
+/// Atomically replace `dest` with `src`.
+///
+/// On Windows, if `dest` exists, uses `ReplaceFileW` to atomically replace without a window
+/// where `dest` is missing. If `dest` does not exist, uses standard `rename`.
+/// On Unix, uses `rename` which is atomic and replaces `dest` if it exists.
+pub fn atomic_replace_file(src: &Path, dest: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let to_wide = |p: &Path| -> Vec<u16> {
+            p.as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
+        };
+
+        if dest.exists() {
+            let target_wide = to_wide(dest);
+            let tmp_wide = to_wide(src);
+            let res = unsafe {
+                windows_sys::Win32::Storage::FileSystem::ReplaceFileW(
+                    target_wide.as_ptr(),
+                    tmp_wide.as_ptr(),
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            let _ = std::fs::remove_file(src);
+            if res == 0 {
+                return Err(anyhow::anyhow!(
+                    "Failed to atomically replace file on Windows: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        } else {
+            std::fs::rename(src, dest)?;
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::fs::rename(src, dest)?;
+    }
+
+    Ok(())
+}
+
 /// Atomically write bytes to a file.
 ///
 /// On Windows, creates a temporary file in the same directory, flushes to disk via sync_all(),
@@ -46,47 +95,7 @@ pub fn atomic_write_file(path: &Path, bytes: &[u8]) -> Result<()> {
         file.sync_all()?;
     }
 
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        let to_wide = |p: &Path| -> Vec<u16> {
-            p.as_os_str()
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect()
-        };
-
-        if path.exists() {
-            let target_wide = to_wide(path);
-            let tmp_wide = to_wide(&tmp_path);
-            let res = unsafe {
-                windows_sys::Win32::Storage::FileSystem::ReplaceFileW(
-                    target_wide.as_ptr(),
-                    tmp_wide.as_ptr(),
-                    std::ptr::null(),
-                    0,
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                )
-            };
-            let _ = std::fs::remove_file(&tmp_path);
-            if res == 0 {
-                return Err(anyhow::anyhow!(
-                    "Failed to atomically replace file on Windows: {}",
-                    std::io::Error::last_os_error()
-                ));
-            }
-        } else {
-            std::fs::rename(&tmp_path, path)?;
-        }
-    }
-
-    #[cfg(not(windows))]
-    {
-        std::fs::rename(&tmp_path, path)?;
-    }
-
-    Ok(())
+    atomic_replace_file(&tmp_path, path)
 }
 
 /// Plain configuration files on disk with atomic writes.

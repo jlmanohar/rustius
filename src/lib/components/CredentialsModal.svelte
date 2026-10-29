@@ -33,6 +33,25 @@
   let formKeyPath = $state('');
   let formPassphrase = $state('');
   let existingSecretRef = $state<any>(undefined);
+  let initialAuthType = $state<'password' | 'keyfile'>('password');
+
+  function setFormType(type: 'domain' | 'password' | 'keyfile') {
+    if (formType === type) return;
+    formType = type;
+    const baseAuth = type === 'keyfile' ? 'keyfile' : 'password';
+    if (baseAuth !== initialAuthType) {
+      existingSecretRef = undefined;
+    } else if (editingId) {
+      const orig = appState.config.credentials?.find((p: CredentialProfile) => p.id === editingId);
+      existingSecretRef = orig && 'secret_ref' in orig.auth ? orig.auth.secret_ref : undefined;
+    }
+  }
+
+  function clearSavedSecret() {
+    existingSecretRef = undefined;
+    formPassword = '';
+    formPassphrase = '';
+  }
 
   // Password visibility & copying
   let revealedPasswords = $state<Record<string, string>>({});
@@ -209,6 +228,7 @@
     editingId = null;
     formName = '';
     formType = 'domain';
+    initialAuthType = 'password';
     formDomain = '';
     formUsername = '';
     formPassword = '';
@@ -225,6 +245,7 @@
     formName = cred.name;
     formDomain = cred.domain || '';
     existingSecretRef = 'secret_ref' in cred.auth ? cred.auth.secret_ref : undefined;
+    initialAuthType = cred.auth.type === 'keyfile' ? 'keyfile' : 'password';
     showFormPassword = false;
     showFormPassphrase = false;
 
@@ -521,21 +542,21 @@
         <div class="type-selector">
           <button
             class="type-btn {formType === 'domain' ? 'active' : ''}"
-            onclick={() => (formType = 'domain')}
+            onclick={() => setFormType('domain')}
           >
             <Monitor size={13} />
             <span>Windows Domain (RDP)</span>
           </button>
           <button
             class="type-btn {formType === 'password' ? 'active' : ''}"
-            onclick={() => (formType = 'password')}
+            onclick={() => setFormType('password')}
           >
             <Lock size={13} />
             <span>Linux / Password</span>
           </button>
           <button
             class="type-btn {formType === 'keyfile' ? 'active' : ''}"
-            onclick={() => (formType = 'keyfile')}
+            onclick={() => setFormType('keyfile')}
           >
             <Key size={13} />
             <span>SSH Key Pair</span>
@@ -567,22 +588,35 @@
             <div class="form-cell col-2">
               <div class="field-label-row">
                 <label for="cred-pass">Domain Password</label>
-                {#if formPassword || editingId}
-                  <button
-                    type="button"
-                    class="field-copy-btn"
-                    title="Copy Password"
-                    onclick={copyFormPassword}
-                  >
-                    {#if copiedFormPassword}
-                      <Check size={11} />
-                      <span>Copied</span>
-                    {:else}
-                      <Copy size={11} />
-                      <span>Copy</span>
-                    {/if}
-                  </button>
-                {/if}
+                <div style="display: flex; gap: 6px; align-items: center;">
+                  {#if existingSecretRef}
+                    <button
+                      type="button"
+                      class="field-copy-btn"
+                      title="Clear saved password"
+                      onclick={clearSavedSecret}
+                    >
+                      <X size={11} />
+                      <span>Clear saved</span>
+                    </button>
+                  {/if}
+                  {#if formPassword || editingId}
+                    <button
+                      type="button"
+                      class="field-copy-btn"
+                      title="Copy Password"
+                      onclick={copyFormPassword}
+                    >
+                      {#if copiedFormPassword}
+                        <Check size={11} />
+                        <span>Copied</span>
+                      {:else}
+                        <Copy size={11} />
+                        <span>Copy</span>
+                      {/if}
+                    </button>
+                  {/if}
+                </div>
               </div>
               <div class="password-input-wrapper">
                 <input
@@ -620,22 +654,35 @@
             <div class="form-cell col-1">
               <div class="field-label-row">
                 <label for="cred-pass">Password</label>
-                {#if formPassword || editingId}
-                  <button
-                    type="button"
-                    class="field-copy-btn"
-                    title="Copy Password"
-                    onclick={copyFormPassword}
-                  >
-                    {#if copiedFormPassword}
-                      <Check size={11} />
-                      <span>Copied</span>
-                    {:else}
-                      <Copy size={11} />
-                      <span>Copy</span>
-                    {/if}
-                  </button>
-                {/if}
+                <div style="display: flex; gap: 6px; align-items: center;">
+                  {#if existingSecretRef}
+                    <button
+                      type="button"
+                      class="field-copy-btn"
+                      title="Clear saved password"
+                      onclick={clearSavedSecret}
+                    >
+                      <X size={11} />
+                      <span>Clear saved</span>
+                    </button>
+                  {/if}
+                  {#if formPassword || editingId}
+                    <button
+                      type="button"
+                      class="field-copy-btn"
+                      title="Copy Password"
+                      onclick={copyFormPassword}
+                    >
+                      {#if copiedFormPassword}
+                        <Check size={11} />
+                        <span>Copied</span>
+                      {:else}
+                        <Copy size={11} />
+                        <span>Copy</span>
+                      {/if}
+                    </button>
+                  {/if}
+                </div>
               </div>
               <div class="password-input-wrapper">
                 <input
@@ -683,22 +730,35 @@
             <div class="form-cell col-2">
               <div class="field-label-row">
                 <label for="cred-passphrase">Passphrase (optional)</label>
-                {#if formPassphrase || editingId}
-                  <button
-                    type="button"
-                    class="field-copy-btn"
-                    title="Copy Passphrase"
-                    onclick={copyFormPassphrase}
-                  >
-                    {#if copiedFormPassphrase}
-                      <Check size={11} />
-                      <span>Copied</span>
-                    {:else}
-                      <Copy size={11} />
-                      <span>Copy</span>
-                    {/if}
-                  </button>
-                {/if}
+                <div style="display: flex; gap: 6px; align-items: center;">
+                  {#if existingSecretRef}
+                    <button
+                      type="button"
+                      class="field-copy-btn"
+                      title="Clear saved passphrase"
+                      onclick={clearSavedSecret}
+                    >
+                      <X size={11} />
+                      <span>Clear saved</span>
+                    </button>
+                  {/if}
+                  {#if formPassphrase || editingId}
+                    <button
+                      type="button"
+                      class="field-copy-btn"
+                      title="Copy Passphrase"
+                      onclick={copyFormPassphrase}
+                    >
+                      {#if copiedFormPassphrase}
+                        <Check size={11} />
+                        <span>Copied</span>
+                      {:else}
+                        <Copy size={11} />
+                        <span>Copy</span>
+                      {/if}
+                    </button>
+                  {/if}
+                </div>
               </div>
               <div class="password-input-wrapper">
                 <input

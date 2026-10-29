@@ -374,7 +374,8 @@ This project uses **Svelte 5**. Do not use:
 
 ### 4.3 Configuration
 
-- **`tauri.conf.json`** — keep the window config, CSP, and bundle settings here. Current CSP is `null` (permissive) — tighten for production.
+- **`tauri.conf.json`** — keep the window config and bundle settings here.
+- **CSP (`csp: null`)** — `csp` is intentionally set to `null`. In Windows WebView2, active CSP directives (even with `'self'` / `data:`) interfere with local `@font-face` WOFF2 font loading and xterm.js character measurement in both development and production webview asset schemes. Injection security is instead enforced at the application boundary via strict `DOMPurify` HTML sanitization for all rendered markdown and user-supplied descriptions.
 - **Capabilities** — define minimal IPC permissions in `src-tauri/capabilities/`.
 - **SPA mode** — the frontend is built with `adapter-static` and `fallback: "index.html"`. No SSR.
 
@@ -614,5 +615,5 @@ const result = await invoke<MyResponse>('my_command', { tabId });
 - **Credential storage** — OS Keychain and local encrypted vault supported; continues to undergo cross-platform validation.
 - **RDP** — Pure-Rust IronRDP (HTML5 Canvas & WebGL2 GPU) with bidirectional clipboard and file copy.
 - **IronRDP MS-RDPEGFX Graphics Pipeline (TODO)** — The graphics pipeline extension (`MS-RDPEGFX`) is currently disabled by default (`with_graphics_pipeline(false)`) due to an upstream RemoteFX progressive tile decoder limitation in `ironrdp-egfx` (`rfx progressive decode failed` on `WireToSurface2Pdu`). Standard planar bitmap decoding is active and fully stable. When upstream Devolutions/IronRDP fixes progressive wavelet tile decoding, re-enable `with_graphics_pipeline(true)` by default to activate ClearCodec font rendering, H.264/AVC hardware decoding, and 60 FPS frame-pacing.
-- **CSP** — `tauri.conf.json` has `"csp": null`. Tighten before production release.
+- **CSP** — `csp` is intentionally set to `null` in `tauri.conf.json` due to Windows WebView2 `@font-face` asset resolution and xterm.js terminal metric conflicts; XSS is mitigated via DOMPurify across all notes/descriptions.
 - **Cross-platform testing** — local PTY uses `powershell.exe` on Windows, `$SHELL` on Unix. Ensure both paths are tested.

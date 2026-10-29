@@ -78,7 +78,13 @@
       aria-labelledby="dialog-title"
       tabindex="-1"
       onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
+      onkeydown={(e) => {
+        if (e.key === 'Escape' || e.key === 'Enter') {
+          handleKeyDown(e);
+        } else {
+          e.stopPropagation();
+        }
+      }}
     >
       <!-- Header -->
       <div class="dialog-header">

@@ -77,9 +77,7 @@
 
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
-      if (!isSetupMode) {
-        appState.isVaultUnlockModalOpen = false;
-      }
+      appState.isVaultUnlockModalOpen = false;
       e.stopPropagation();
     }
   }
@@ -90,9 +88,7 @@
     class="modal-scrim"
     role="presentation"
     onclick={() => {
-      if (!isSetupMode) {
-        appState.isVaultUnlockModalOpen = false;
-      }
+      appState.isVaultUnlockModalOpen = false;
     }}
   >
     <div
@@ -203,7 +199,15 @@
         {/if}
 
         <div class="actions-row {isSetupMode ? 'actions-row-setup' : ''}">
-          {#if !isSetupMode}
+          {#if isSetupMode}
+            <button
+              type="button"
+              class="btn btn-secondary"
+              onclick={() => (appState.isVaultUnlockModalOpen = false)}
+            >
+              Skip (Use OS Keyring)
+            </button>
+          {:else}
             <button
               type="button"
               class="btn btn-secondary"
@@ -214,7 +218,7 @@
           {/if}
           <button
             type="submit"
-            class="btn btn-primary {isSetupMode ? 'btn-full' : ''}"
+            class="btn btn-primary"
             disabled={isSubmitting}
           >
             {#if isSubmitting}
@@ -445,11 +449,7 @@
     transition: all 0.15s ease;
   }
 
-  .btn-full {
-    width: 100%;
-    justify-content: center;
-    padding: 10px 16px;
-  }
+
 
   .btn-secondary {
     background: transparent;

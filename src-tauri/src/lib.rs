@@ -52,8 +52,29 @@ pub fn run() {
     let app_state = match AppState::new() {
         Ok(state) => state,
         Err(err) => {
-            eprintln!("Failed to initialize app state: {err}");
-            panic!("Cannot start Rustius without valid state");
+            tracing::error!("Failed to initialize primary app state: {err}. Attempting fallback...");
+            let fallback_dir = std::env::temp_dir().join("rustius-recovery");
+            let _ = std::fs::create_dir_all(&fallback_dir);
+            let storage = Box::new(rustius_core::storage::PlaintextStorage);
+            match rustius_core::config::ConfigManager::new_with_portable(fallback_dir.clone(), true, storage) {
+                Ok(cm) => {
+                    tracing::warn!("Initialized Rustius in safe-mode recovery state.");
+                    AppState {
+                        config_manager: std::sync::Arc::new(cm),
+                        local_terminals: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+                        ssh_sessions: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+                        sftp_sessions: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+                        ironrdp_sessions: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+                        data_dir: fallback_dir,
+                        is_portable: true,
+                    }
+                }
+                Err(fatal) => {
+                    tracing::error!("Fatal: cannot initialize fallback state: {fatal}");
+                    eprintln!("Fatal error starting Rustius: {fatal}");
+                    return;
+                }
+            }
         }
     };
 
@@ -92,16 +113,40 @@ pub fn run() {
                 let state = window.state::<AppState>();
                 let ironrdp = state.ironrdp_sessions.clone();
                 let pty = state.local_terminals.clone();
-                if let Ok(mut guard) = ironrdp.try_write() {
-                    for (_, session) in guard.drain() {
-                        session.disconnect();
+                let ssh = state.ssh_sessions.clone();
+                let sftp = state.sftp_sessions.clone();
+                // Spawn async cleanup task to properly acquire locks and drain all session maps
+                tokio::spawn(async move {
+                    // Drain IronRDP sessions
+                    {
+                        let mut guard = ironrdp.write().await;
+                        for (_, session) in guard.drain() {
+                            session.disconnect();
+                        }
                     }
-                };
-                if let Ok(mut guard) = pty.try_write() {
-                    for (_, session) in guard.drain() {
-                        session.close();
+                    // Drain local PTY sessions
+                    {
+                        let mut guard = pty.write().await;
+                        for (_, session) in guard.drain() {
+                            session.close();
+                        }
                     }
-                };
+                    // Drain SSH sessions
+                    {
+                        let mut guard = ssh.write().await;
+                        for (_, session) in guard.drain() {
+                            let _ = session.disconnect().await;
+                        }
+                    }
+                    // Drain SFTP sessions
+                    {
+                        let mut guard = sftp.write().await;
+                        for (_, session) in guard.drain() {
+                            let _ = session.disconnect().await;
+                        }
+                    }
+                    tracing::info!("All sessions cleaned up on window destroy");
+                });
             }
         })
         .manage(app_state)

@@ -5,7 +5,7 @@ export type SecretRef =
   | { type: 'vault'; key: string }
   | { type: 'plaintext'; value: string }
   | { type: 'ask_on_connect' }
-  | { type: 'external'; provider: string; vault_id?: string; item_id: string };
+  | { type: 'external'; provider: string; id: string; vault_id?: string; item_id?: string };
 
 export type VaultBackend = 'auto' | 'master_password' | 'keyring';
 
@@ -43,8 +43,10 @@ export interface PortForward {
 }
 
 export interface SshConfig {
-  keepalive_interval_secs: number;
-  connect_timeout_secs: number;
+  allow_legacy_algorithms?: boolean;
+  terminal_type?: string;
+  keepalive_interval_secs?: number;
+  connect_timeout_secs?: number;
   legacy_ciphers: boolean;
   legacy_kex: boolean;
   port_forwards: PortForward[];

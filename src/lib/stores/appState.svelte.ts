@@ -108,10 +108,7 @@ export class AppStore {
         await this.loadConfig();
         const status = await this.fetchVaultStatus();
         if (status) {
-          if (!status.has_vault_file) {
-            // App onboarding: Master password must always be set on initial run
-            this.isVaultUnlockModalOpen = true;
-          } else if (
+          if (
             status.effective_backend === 'master_password' &&
             !status.is_unlocked
           ) {
@@ -558,9 +555,13 @@ export class AppStore {
     try {
       await invoke('save_app_settings', { settings });
       this.config.app_settings = settings;
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to save settings via Tauri:', err);
-      this.config.app_settings = settings;
+      await this.alert({
+        title: 'Failed to Save Settings',
+        message: err?.message || String(err),
+      });
+      throw err;
     }
   }
 

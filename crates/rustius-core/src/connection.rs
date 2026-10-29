@@ -241,6 +241,8 @@ struct ConnectionRaw {
     created_at: String,
     #[serde(default = "default_timestamp")]
     updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_connected: Option<String>,
     #[serde(default)]
     ssh_config: Option<SshConfig>,
     #[serde(default)]
@@ -268,6 +270,7 @@ impl From<ConnectionRaw> for Connection {
             notes: raw.notes,
             created_at: raw.created_at,
             updated_at: raw.updated_at,
+            last_connected: raw.last_connected,
             ssh_config: raw.ssh_config,
             rdp_config: raw.rdp_config,
             credential_id: raw.credential_id,
@@ -297,6 +300,8 @@ pub struct Connection {
     pub created_at: String,
     #[serde(default = "default_timestamp")]
     pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_connected: Option<String>,
     /// Optional SSH-specific settings.
     pub ssh_config: Option<SshConfig>,
     /// Optional RDP-specific settings.
@@ -588,14 +593,40 @@ fn default_rdp_resolution_mode() -> String {
     "auto".to_string()
 }
 
+fn default_theme() -> String {
+    "dark".into()
+}
+
+fn default_font_family() -> String {
+    "Geist Mono".into()
+}
+
+fn default_font_size() -> u16 {
+    13
+}
+
+fn default_terminal_type() -> String {
+    "xterm-256color".into()
+}
+
+fn default_sidebar_width() -> u32 {
+    280
+}
+
 /// Application-wide settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
+    #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default = "default_font_family")]
     pub font_family: String,
+    #[serde(default = "default_font_size")]
     pub font_size: u16,
+    #[serde(default = "default_terminal_type")]
     pub default_terminal_type: String,
+    #[serde(default = "default_true")]
     pub show_sidebar: bool,
+    #[serde(default = "default_sidebar_width")]
     pub sidebar_width: u32,
     #[serde(default)]
     pub close_tab_on_exit: bool,
@@ -623,12 +654,12 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            theme: "dark".into(),
-            font_family: "Geist Mono".into(),
-            font_size: 13,
-            default_terminal_type: "xterm-256color".into(),
+            theme: default_theme(),
+            font_family: default_font_family(),
+            font_size: default_font_size(),
+            default_terminal_type: default_terminal_type(),
             show_sidebar: true,
-            sidebar_width: 280,
+            sidebar_width: default_sidebar_width(),
             close_tab_on_exit: false,
             sftp_follow_terminal_folder: true,
             vault_backend: VaultBackend::default(),
@@ -654,25 +685,43 @@ impl Default for RustiusConfig {
 impl RustiusConfig {
     /// Strip all plaintext passwords and passphrases so credentials are never leaked over IPC.
     pub fn sanitize_for_ipc(&mut self) {
+        fn sanitize_auth(auth: &mut AuthMethod) {
+            match auth {
+                AuthMethod::Password {
+                    password,
+                    secret_ref,
+                    ..
+                } => {
+                    *password = None;
+                    if matches!(secret_ref, Some(SecretRef::Plaintext { .. })) {
+                        *secret_ref = None;
+                    }
+                }
+                AuthMethod::KeyFile {
+                    passphrase,
+                    secret_ref,
+                    ..
+                } => {
+                    *passphrase = None;
+                    if matches!(secret_ref, Some(SecretRef::Plaintext { .. })) {
+                        *secret_ref = None;
+                    }
+                }
+                _ => {}
+            }
+        }
+
         fn sanitize_nodes(nodes: &mut [TreeNode]) {
             for node in nodes {
                 match node {
-                    TreeNode::Connection(c) => match &mut c.auth {
-                        AuthMethod::Password { password, .. } => *password = None,
-                        AuthMethod::KeyFile { passphrase, .. } => *passphrase = None,
-                        _ => {}
-                    },
+                    TreeNode::Connection(c) => sanitize_auth(&mut c.auth),
                     TreeNode::Folder(f) => sanitize_nodes(&mut f.children),
                 }
             }
         }
         sanitize_nodes(&mut self.tree);
         for cred in &mut self.credentials {
-            match &mut cred.auth {
-                AuthMethod::Password { password, .. } => *password = None,
-                AuthMethod::KeyFile { passphrase, .. } => *passphrase = None,
-                _ => {}
-            }
+            sanitize_auth(&mut cred.auth);
         }
     }
 }
@@ -700,6 +749,7 @@ impl Connection {
             notes: None,
             created_at: now.clone(),
             updated_at: now,
+            last_connected: None,
             ssh_config: None,
             rdp_config: None,
             credential_id: None,
@@ -1050,6 +1100,7 @@ mod tests {
             notes: None,
             created_at: default_timestamp(),
             updated_at: default_timestamp(),
+            last_connected: None,
             ssh_config: None,
             rdp_config: None,
             credential_id: None,
@@ -1088,5 +1139,58 @@ mod tests {
             conn.rdp_config.as_ref().and_then(|r| r.domain.as_deref()),
             Some("CORP")
         );
+    }
+
+    #[test]
+    fn test_app_settings_empty_json_deserializes_with_defaults() {
+        let empty_json = "{}";
+        let settings: AppSettings = serde_json::from_str(empty_json).expect("Should deserialize with defaults");
+        assert_eq!(settings.theme, "dark");
+        assert_eq!(settings.font_family, "Geist Mono");
+        assert_eq!(settings.font_size, 13);
+        assert_eq!(settings.default_terminal_type, "xterm-256color");
+        assert!(settings.show_sidebar);
+        assert_eq!(settings.sidebar_width, 280);
+    }
+
+    #[test]
+    fn test_sanitize_for_ipc_strips_plaintext_secret_ref() {
+        let mut config = RustiusConfig::default();
+        let conn = Connection {
+            id: Uuid::new_v4(),
+            name: "Plain Conn".into(),
+            connection_type: ConnectionType::Ssh,
+            host: "host".into(),
+            port: 22,
+            auth: AuthMethod::Password {
+                username: "admin".into(),
+                password: Some("secret123".into()),
+                secret_ref: Some(SecretRef::Plaintext {
+                    value: "secret123".into(),
+                }),
+            },
+            tags: vec![],
+            environment: None,
+            description: None,
+            notes: None,
+            created_at: default_timestamp(),
+            updated_at: default_timestamp(),
+            last_connected: None,
+            ssh_config: None,
+            rdp_config: None,
+            credential_id: None,
+        };
+        config.tree.push(TreeNode::Connection(conn));
+
+        config.sanitize_for_ipc();
+
+        if let TreeNode::Connection(c) = &config.tree[0] {
+            if let AuthMethod::Password { password, secret_ref, .. } = &c.auth {
+                assert!(password.is_none());
+                assert!(secret_ref.is_none());
+            } else {
+                panic!("Expected password auth");
+            }
+        }
     }
 }

@@ -274,7 +274,9 @@ pub async fn vault_unlock(password: String, state: State<'_, AppState>) -> Resul
         .map_err(|e| e.to_string())?;
 
     if unlocked {
-        let _ = state.config_manager.secure_all_unencrypted_secrets().await;
+        if let Err(e) = state.config_manager.secure_all_unencrypted_secrets().await {
+            tracing::warn!("Failed to secure unencrypted secrets after vault unlock: {}", e);
+        }
     }
     Ok(unlocked)
 }

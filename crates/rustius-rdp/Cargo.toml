@@ -15,6 +15,7 @@ serde_json.workspace = true
 base64.workspace = true
 sha2.workspace = true
 parking_lot = "0.12"
+uuid.workspace = true
 
 ironrdp = { git = "https://github.com/Devolutions/IronRDP", features = ["input", "client", "rustls", "graphics", "core"] }
 ironrdp-client = { git = "https://github.com/Devolutions/IronRDP", default-features = false, features = ["rustls", "clipboard"] }

@@ -54,13 +54,15 @@ pub async fn ssh_connect(
         .map_err(|e| e.to_string())?;
     let session = Arc::new(session);
 
-    {
+    let old_session = {
         let mut sessions = state.ssh_sessions.write().await;
-        if let Some(old) = sessions.remove(&tab_id) {
-            info!("Disconnecting previous SSH session for tab: {}", tab_id);
-            let _ = old.disconnect().await;
-        }
-        sessions.insert(tab_id.clone(), session);
+        let old = sessions.remove(&tab_id);
+        sessions.insert(tab_id.clone(), session.clone());
+        old
+    };
+    if let Some(old) = old_session {
+        info!("Disconnecting previous SSH session for tab: {}", tab_id);
+        let _ = old.disconnect().await;
     }
 
     let exit_event = format!("terminal-exit-{}", tab_id);
@@ -68,6 +70,7 @@ pub async fn ssh_connect(
     let tab_id_clone = tab_id.clone();
     let sessions_map = state.ssh_sessions.clone();
     let sftp_sessions_map = state.sftp_sessions.clone();
+    let session_for_cleanup = session.clone();
 
     tokio::spawn(async move {
         loop {
@@ -92,16 +95,30 @@ pub async fn ssh_connect(
             }
         }
         // Evict session from AppState and disconnect underlying transport cleanly
-        {
+        let ssh_was_current = {
             let mut sessions = sessions_map.write().await;
-            if let Some(s) = sessions.remove(&tab_id_clone) {
-                let _ = s.disconnect().await;
+            if let Some(s) = sessions.get(&tab_id_clone) {
+                if Arc::ptr_eq(s, &session_for_cleanup) {
+                    let removed = sessions.remove(&tab_id_clone);
+                    drop(sessions); // Release lock before disconnect
+                    if let Some(r) = removed {
+                        let _ = r.disconnect().await;
+                    }
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
             }
-        }
-        // Evict and disconnect any associated SFTP session for this tab
-        {
-            let mut sftp_sessions = sftp_sessions_map.write().await;
-            if let Some(sftp) = sftp_sessions.remove(&tab_id_clone) {
+        };
+        // Evict and disconnect any associated SFTP session for this tab only if this SSH session was still the active session
+        if ssh_was_current {
+            let sftp = {
+                let mut sftp_sessions = sftp_sessions_map.write().await;
+                sftp_sessions.remove(&tab_id_clone)
+            };
+            if let Some(sftp) = sftp {
                 let _ = sftp.disconnect().await;
             }
         }

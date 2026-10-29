@@ -21,7 +21,10 @@
         gfm: true,
         breaks: true,
       }) as string;
-      return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+      return DOMPurify.sanitize(raw, {
+        USE_PROFILES: { html: true },
+        FORBID_TAGS: ['style', 'form', 'input', 'button', 'template', 'slot'],
+      });
     } catch (e) {
       console.error('Failed to parse Markdown:', e);
       return `<p class="error-msg">Failed to parse notes markdown</p>`;

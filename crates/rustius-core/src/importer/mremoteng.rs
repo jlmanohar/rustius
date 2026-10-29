@@ -160,6 +160,13 @@ pub fn parse_mremoteng_xml(
     let mut root_nodes: Vec<TreeNode> = Vec::new();
     let mut folder_stack: Vec<Folder> = Vec::new();
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum NodeKind {
+        Container,
+        Connection,
+    }
+    let mut node_stack: Vec<NodeKind> = Vec::new();
+
     let mut buf = Vec::new();
 
     loop {
@@ -179,6 +186,7 @@ pub fn parse_mremoteng_xml(
                         .unwrap_or(false);
 
                     if is_container {
+                        node_stack.push(NodeKind::Container);
                         let name = attrs
                             .get("Name")
                             .cloned()
@@ -192,7 +200,8 @@ pub fn parse_mremoteng_xml(
                             expanded: true,
                         });
                     } else {
-                        // Leaf connection started as container (unlikely, but handle gracefully)
+                        node_stack.push(NodeKind::Connection);
+                        // Leaf connection started with open tag <Node>...</Node>
                         let conn =
                             build_connection(&attrs, master_password, block_cipher_mode.as_deref());
                         if let Some(top) = folder_stack.last_mut() {
@@ -249,11 +258,15 @@ pub fn parse_mremoteng_xml(
             Ok(Event::End(ref e)) => {
                 let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 if tag_name.eq_ignore_ascii_case("Node") {
-                    if let Some(finished_folder) = folder_stack.pop() {
-                        if let Some(parent) = folder_stack.last_mut() {
-                            parent.children.push(TreeNode::Folder(finished_folder));
-                        } else {
-                            root_nodes.push(TreeNode::Folder(finished_folder));
+                    if let Some(node_kind) = node_stack.pop() {
+                        if node_kind == NodeKind::Container {
+                            if let Some(finished_folder) = folder_stack.pop() {
+                                if let Some(parent) = folder_stack.last_mut() {
+                                    parent.children.push(TreeNode::Folder(finished_folder));
+                                } else {
+                                    root_nodes.push(TreeNode::Folder(finished_folder));
+                                }
+                            }
                         }
                     }
                 }
@@ -400,6 +413,7 @@ fn build_connection(
         notes: description,
         created_at: now.clone(),
         updated_at: now,
+        last_connected: None,
         ssh_config,
         rdp_config,
         credential_id: None,
@@ -522,6 +536,36 @@ mod tests {
                 assert_eq!(c.port, 2222);
             }
             _ => panic!("Expected standalone connection"),
+        }
+    }
+
+    #[test]
+    fn test_mremoteng_explicit_closed_connection_node() {
+        let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<Connections Name="Connections" Export="False">
+    <Node Name="Nested Group" Type="Container" Expanded="True">
+        <Node Name="Conn 1" Type="Connection" Hostname="10.0.0.1" Port="22" Protocol="SSH2" Username="root" Password=""></Node>
+        <Node Name="Conn 2" Type="Connection" Hostname="10.0.0.2" Port="22" Protocol="SSH2" Username="root" Password="" />
+    </Node>
+</Connections>"#;
+
+        let nodes = parse_mremoteng_xml(xml, None).unwrap();
+        assert_eq!(nodes.len(), 1, "Should have 1 root node (Nested Group)");
+
+        match &nodes[0] {
+            TreeNode::Folder(f) => {
+                assert_eq!(f.name, "Nested Group");
+                assert_eq!(f.children.len(), 2, "Folder should retain both Conn 1 and Conn 2");
+                match &f.children[0] {
+                    TreeNode::Connection(c) => assert_eq!(c.name, "Conn 1"),
+                    _ => panic!("Expected Conn 1"),
+                }
+                match &f.children[1] {
+                    TreeNode::Connection(c) => assert_eq!(c.name, "Conn 2"),
+                    _ => panic!("Expected Conn 2"),
+                }
+            }
+            _ => panic!("Expected folder node"),
         }
     }
 }

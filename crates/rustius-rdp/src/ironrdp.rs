@@ -11,7 +11,7 @@ use ironrdp_client::rdp::{RdpClient, RdpInputEvent, RdpInputSender, RdpOutputEve
 use ironrdp_cliprdr::backend::{ClipboardMessage, ClipboardMessageProxy};
 use ironrdp_pdu::rdp::capability_sets::MajorPlatformType;
 
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
@@ -40,6 +40,8 @@ pub struct IronRdpConfig {
     pub clipboard_sharing: Option<bool>,
     #[serde(default)]
     pub known_hosts_path: Option<PathBuf>,
+    #[serde(default)]
+    pub session_id: Option<uuid::Uuid>,
 }
 
 /// Verifies peer TLS certificate fingerprint against rdp_known_hosts store (TOFU policy).
@@ -268,9 +270,10 @@ impl ClipboardMessageProxy for SessionClipboardProxy {
 
 /// Active IronRDP session controlling connection lifecycle and input injection.
 pub struct IronRdpSession {
+    pub id: uuid::Uuid,
+    staging_dir: PathBuf,
     input_sender: RdpInputSender,
     input_database: Mutex<Database>,
-    desktop_size: RwLock<(u16, u16)>,
     #[cfg(windows)]
     clipboard_thread_id: std::sync::atomic::AtomicU32,
 }
@@ -378,7 +381,12 @@ impl IronRdpSession {
                 sender: input_sender.clone(),
                 is_ready: Arc::clone(&is_ready),
             });
-        let staging_dir = std::env::temp_dir().join("rustius").join("clipboard");
+        let session_id = config.session_id.unwrap_or_else(uuid::Uuid::new_v4);
+        let staging_dir = std::env::temp_dir()
+            .join("rustius")
+            .join("clipboard")
+            .join(session_id.to_string());
+        let _ = std::fs::create_dir_all(&staging_dir);
 
         #[cfg(windows)]
         let (clipboard_factory, clipboard_thread_id) = if clipboard_enabled {
@@ -553,8 +561,6 @@ impl IronRdpSession {
             info!("Attached CLIPRDR backend factory to IronRDP client");
         }
 
-        let initial_width = config.width;
-        let initial_height = config.height;
 
         let on_event = Arc::new(on_event);
         let on_event_loop = Arc::clone(&on_event);
@@ -693,9 +699,10 @@ impl IronRdpSession {
         });
 
         Ok(Self {
+            id: session_id,
+            staging_dir,
             input_sender,
             input_database: Mutex::new(Database::default()),
-            desktop_size: RwLock::new((initial_width, initial_height)),
             #[cfg(windows)]
             clipboard_thread_id: std::sync::atomic::AtomicU32::new(clipboard_thread_id),
         })
@@ -765,14 +772,13 @@ impl IronRdpSession {
                 scale_factor,
                 physical_size: None,
             })
-            .map_err(|e| format!("Failed to send resize event: {}", e))?;
-        *self.desktop_size.write() = (width, height);
-        Ok(())
+            .map_err(|e| format!("Failed to send resize event: {}", e))
     }
 
     /// Request session shutdown
     pub fn disconnect(&self) {
         self.input_sender.request_close();
+        let _ = std::fs::remove_dir_all(&self.staging_dir);
         #[cfg(windows)]
         {
             let tid = self
@@ -824,12 +830,36 @@ fn handle_non_desktop_event(event: RdpOutputEvent, on_event: &impl Fn(IronRdpEve
         }
         RdpOutputEvent::ConnectionFailure(error) => {
             error!("IronRDP connection failed: {:?}", error);
+            let error_debug = format!("{:?}", error);
+            let error_display = format!("{}", error);
+            // Detect authentication/NLA failures to show appropriate UI recovery options
+            let severity = if error_debug.contains("Authentication")
+                || error_debug.contains("Nla")
+                || error_debug.contains("NLA")
+                || error_debug.contains("CredSsp")
+                || error_debug.contains("credssp")
+                || error_debug.contains("Logon")
+                || error_debug.contains("logon")
+                || error_display.contains("authentication")
+                || error_display.contains("password")
+                || error_display.contains("credential")
+            {
+                "auth".to_string()
+            } else if error_debug.contains("Tls")
+                || error_debug.contains("Certificate")
+                || error_debug.contains("certificate")
+                || error_debug.contains("ServerCertificate")
+            {
+                "security".to_string()
+            } else {
+                "error".to_string()
+            };
             let diag = RdpExitDiagnostic {
                 code: -1,
                 title: "Connection Failed".to_string(),
                 message: format!("IronRDP connection failure: {}", error),
-                severity: "error".to_string(),
-                raw_error: Some(format!("{:?}", error)),
+                severity,
+                raw_error: Some(error_debug),
             };
             on_event(IronRdpEvent::Terminated(diag));
             true

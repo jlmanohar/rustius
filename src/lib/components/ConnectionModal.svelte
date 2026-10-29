@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { marked } from 'marked';
   import DOMPurify from 'dompurify';
   import { invoke } from '@tauri-apps/api/core';
@@ -42,11 +43,29 @@
 
   // Auth
   let authType = $state<'password' | 'keyfile'>('password');
+  let initialAuthType = $state<'password' | 'keyfile'>('password');
   let username = $state('');
   let password = $state('');
   let keyPath = $state('');
   let passphrase = $state('');
   let existingSecretRef = $state<SecretRef | undefined>(undefined);
+
+  function setAuthType(type: 'password' | 'keyfile') {
+    if (authType === type) return;
+    authType = type;
+    if (authType !== initialAuthType) {
+      existingSecretRef = undefined;
+    } else {
+      const c = appState.editingConnection;
+      existingSecretRef = c && 'secret_ref' in c.auth ? c.auth.secret_ref : undefined;
+    }
+  }
+
+  function clearSavedSecret() {
+    existingSecretRef = undefined;
+    password = '';
+    passphrase = '';
+  }
   let domain = $state('');
   let selectedCredentialId = $state('');
 
@@ -174,78 +193,90 @@
     return appState.config.credentials?.find((p) => p.id === selectedCredentialId) || null;
   });
 
+  let lastEditingConnId = $state.raw<string | null | undefined>(undefined);
+
   $effect(() => {
-    if (appState.editingConnection) {
-      const c = appState.editingConnection;
-      connType = c.connection_type || c.conn_type || 'ssh';
-      name = c.name;
-      host = c.host;
-      port = c.port;
-      environment = c.environment || 'Production';
-      description = c.description || '';
-      tagsStr = c.tags ? c.tags.join(', ') : '';
-      notes = c.notes || '';
-      notesTab = 'write';
-      selectedCredentialId = c.credential_id || '';
-      if (c.auth.type === 'keyfile') {
-        authType = 'keyfile';
-        username = c.auth.username;
-        keyPath = c.auth.key_path;
-        passphrase = c.auth.passphrase || '';
-        existingSecretRef = c.auth.secret_ref;
-      } else if (c.auth.type === 'password') {
-        authType = 'password';
-        username = c.auth.username;
-        password = c.auth.password || '';
-        existingSecretRef = c.auth.secret_ref;
-      }
-      if (c.ssh_config) {
-        keepalive = c.ssh_config.keepalive_interval_secs ?? 30;
-        connectTimeout = c.ssh_config.connect_timeout_secs ?? 15;
-        legacyCiphers = c.ssh_config.legacy_ciphers;
-        legacyKex = c.ssh_config.legacy_kex;
-      }
-      if (c.rdp_config) {
-        rdpWidth = c.rdp_config.width || 1920;
-        rdpHeight = c.rdp_config.height || 1080;
-        clipboardSharing = c.rdp_config.clipboard_sharing ?? (appState.config.app_settings?.default_rdp_clipboard_sharing ?? true);
-        domain = c.rdp_config.domain || '';
-        rdpResolutionMode = (c.rdp_config.resolution_mode as any) || (appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto');
-        rdpScaleFactor = c.rdp_config.scale_factor ?? (appState.config.app_settings?.default_rdp_scale_factor ?? 0);
-        rdpEgfx = c.rdp_config.egfx ?? (appState.config.app_settings?.default_rdp_egfx ?? false);
-        overrideRdpSettings = !!(
-          c.rdp_config.resolution_mode ||
-          (c.rdp_config.scale_factor !== undefined && c.rdp_config.scale_factor > 0) ||
-          c.rdp_config.egfx !== undefined
-        );
+    const currentId = appState.editingConnection?.id ?? null;
+    if (currentId === lastEditingConnId && lastEditingConnId !== undefined) {
+      return;
+    }
+    lastEditingConnId = currentId;
+
+    untrack(() => {
+      if (appState.editingConnection) {
+        const c = appState.editingConnection;
+        connType = c.connection_type || c.conn_type || 'ssh';
+        name = c.name;
+        host = c.host;
+        port = c.port;
+        environment = c.environment || 'Production';
+        description = c.description || '';
+        tagsStr = c.tags ? c.tags.join(', ') : '';
+        notes = c.notes || '';
+        notesTab = 'write';
+        selectedCredentialId = c.credential_id || '';
+        if (c.auth.type === 'keyfile') {
+          authType = 'keyfile';
+          initialAuthType = 'keyfile';
+          username = c.auth.username;
+          keyPath = c.auth.key_path;
+          passphrase = c.auth.passphrase || '';
+          existingSecretRef = c.auth.secret_ref;
+        } else if (c.auth.type === 'password') {
+          authType = 'password';
+          initialAuthType = 'password';
+          username = c.auth.username;
+          password = c.auth.password || '';
+          existingSecretRef = c.auth.secret_ref;
+        }
+        if (c.ssh_config) {
+          keepalive = c.ssh_config.keepalive_interval_secs ?? 30;
+          connectTimeout = c.ssh_config.connect_timeout_secs ?? 15;
+          legacyCiphers = c.ssh_config.legacy_ciphers;
+          legacyKex = c.ssh_config.legacy_kex;
+        }
+        if (c.rdp_config) {
+          rdpWidth = c.rdp_config.width || 1920;
+          rdpHeight = c.rdp_config.height || 1080;
+          clipboardSharing = c.rdp_config.clipboard_sharing ?? (appState.config.app_settings?.default_rdp_clipboard_sharing ?? true);
+          domain = c.rdp_config.domain || '';
+          rdpResolutionMode = (c.rdp_config.resolution_mode as any) || (appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto');
+          rdpScaleFactor = c.rdp_config.scale_factor ?? (appState.config.app_settings?.default_rdp_scale_factor ?? 0);
+          rdpEgfx = c.rdp_config.egfx ?? (appState.config.app_settings?.default_rdp_egfx ?? false);
+          overrideRdpSettings = !!(
+            c.rdp_config.resolution_mode ||
+            (c.rdp_config.scale_factor !== undefined && c.rdp_config.scale_factor > 0) ||
+            c.rdp_config.egfx !== undefined
+          );
+        } else {
+          overrideRdpSettings = false;
+          domain = '';
+          rdpResolutionMode = appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto';
+          rdpScaleFactor = appState.config.app_settings?.default_rdp_scale_factor ?? 0;
+          rdpEgfx = appState.config.app_settings?.default_rdp_egfx ?? false;
+          clipboardSharing = appState.config.app_settings?.default_rdp_clipboard_sharing ?? true;
+        }
+        if (connType === 'rdp' && !domain && username.includes('\\')) {
+          const parts = username.split('\\');
+          if (parts.length === 2 && parts[0]) {
+            domain = parts[0];
+            username = parts[1];
+          }
+        }
       } else {
-        overrideRdpSettings = false;
+        existingSecretRef = undefined;
         domain = '';
+        selectedCredentialId = '';
+        description = '';
+        notes = '';
+        notesTab = 'write';
+        overrideRdpSettings = false;
         rdpResolutionMode = appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto';
         rdpScaleFactor = appState.config.app_settings?.default_rdp_scale_factor ?? 0;
         rdpEgfx = appState.config.app_settings?.default_rdp_egfx ?? false;
         clipboardSharing = appState.config.app_settings?.default_rdp_clipboard_sharing ?? true;
       }
-      if (connType === 'rdp' && !domain && username.includes('\\')) {
-        const parts = username.split('\\');
-        if (parts.length === 2 && parts[0]) {
-          domain = parts[0];
-          username = parts[1];
-        }
-      }
-    } else {
-      existingSecretRef = undefined;
-      domain = '';
-      selectedCredentialId = '';
-      description = '';
-      notes = '';
-      notesTab = 'write';
-      overrideRdpSettings = false;
-      rdpResolutionMode = appState.config.app_settings?.default_rdp_resolution_mode ?? 'auto';
-      rdpScaleFactor = appState.config.app_settings?.default_rdp_scale_factor ?? 0;
-      rdpEgfx = appState.config.app_settings?.default_rdp_egfx ?? false;
-      clipboardSharing = appState.config.app_settings?.default_rdp_clipboard_sharing ?? true;
-    }
+    });
   });
 
   // SSH advanced
@@ -379,11 +410,16 @@
     }
   }
 
+  let isSaving = $state(false);
+
   function renderMarkdown(md: string): string {
     if (!md || !md.trim()) return '';
     try {
       const raw = marked.parse(md, { gfm: true, breaks: true }) as string;
-      return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+      return DOMPurify.sanitize(raw, {
+        USE_PROFILES: { html: true },
+        FORBID_TAGS: ['style', 'form', 'input', 'button', 'template', 'slot'],
+      });
     } catch {
       return '';
     }
@@ -407,6 +443,7 @@
   }
 
   async function handleSave(connectNow: boolean = false) {
+    if (isSaving) return;
     if (!name.trim() || !host.trim()) {
       await appState.alert({
         title: 'Missing Required Fields',
@@ -414,6 +451,7 @@
       });
       return;
     }
+    isSaving = true;
 
     const tags = tagsStr
       .split(',')
@@ -522,6 +560,8 @@
         title: 'Failed to Save Connection',
         message: err?.message || String(err),
       });
+    } finally {
+      isSaving = false;
     }
   }
 </script>
@@ -724,7 +764,7 @@
         <div class="auth-tabs">
           <button
             class="auth-tab {authType === 'password' ? 'auth-tab-active' : ''}"
-            onclick={() => (authType = 'password')}
+            onclick={() => setAuthType('password')}
             disabled={!!selectedProfile}
           >
             <Lock size={12} />
@@ -732,7 +772,7 @@
           </button>
           <button
             class="auth-tab {authType === 'keyfile' ? 'auth-tab-active' : ''}"
-            onclick={() => (authType = 'keyfile')}
+            onclick={() => setAuthType('keyfile')}
             disabled={!!selectedProfile}
           >
             <Key size={12} />
@@ -771,22 +811,35 @@
           <div class="form-cell {connType === 'rdp' ? 'col-1' : 'col-2'}">
             <div class="label-row">
               <label for="conn-pass">Password</label>
-              {#if password || existingSecretRef?.type === 'keyring' || (selectedProfile && selectedProfile.auth.type === 'password')}
-                <button
-                  type="button"
-                  class="field-copy-btn"
-                  title="Copy password to clipboard"
-                  onclick={copyPasswordToClipboard}
-                >
-                  {#if copiedPassword}
-                    <Check size={11} />
-                    <span>Copied</span>
-                  {:else}
-                    <Copy size={11} />
-                    <span>Copy</span>
-                  {/if}
-                </button>
-              {/if}
+              <div class="label-actions" style="display: flex; gap: 6px; align-items: center;">
+                {#if existingSecretRef && !selectedProfile}
+                  <button
+                    type="button"
+                    class="field-copy-btn"
+                    title="Clear saved password from connection"
+                    onclick={clearSavedSecret}
+                  >
+                    <X size={11} />
+                    <span>Clear saved</span>
+                  </button>
+                {/if}
+                {#if password || existingSecretRef?.type === 'keyring' || (selectedProfile && selectedProfile.auth.type === 'password')}
+                  <button
+                    type="button"
+                    class="field-copy-btn"
+                    title="Copy password to clipboard"
+                    onclick={copyPasswordToClipboard}
+                  >
+                    {#if copiedPassword}
+                      <Check size={11} />
+                      <span>Copied</span>
+                    {:else}
+                      <Copy size={11} />
+                      <span>Copy</span>
+                    {/if}
+                  </button>
+                {/if}
+              </div>
             </div>
             <div class="password-input-wrapper">
               <input
@@ -830,22 +883,35 @@
         <div class="form-cell">
           <div class="label-row">
             <label for="conn-passphrase">Passphrase (optional)</label>
-            {#if passphrase || existingSecretRef?.type === 'keyring'}
-              <button
-                type="button"
-                class="field-copy-btn"
-                title="Copy passphrase to clipboard"
-                onclick={copyPassphraseToClipboard}
-              >
-                {#if copiedPassphrase}
-                  <Check size={11} />
-                  <span>Copied</span>
-                {:else}
-                  <Copy size={11} />
-                  <span>Copy</span>
-                {/if}
-              </button>
-            {/if}
+            <div class="label-actions" style="display: flex; gap: 6px; align-items: center;">
+              {#if existingSecretRef && !selectedProfile}
+                <button
+                  type="button"
+                  class="field-copy-btn"
+                  title="Clear saved passphrase from connection"
+                  onclick={clearSavedSecret}
+                >
+                  <X size={11} />
+                  <span>Clear saved</span>
+                </button>
+              {/if}
+              {#if passphrase || existingSecretRef?.type === 'keyring'}
+                <button
+                  type="button"
+                  class="field-copy-btn"
+                  title="Copy passphrase to clipboard"
+                  onclick={copyPassphraseToClipboard}
+                >
+                  {#if copiedPassphrase}
+                    <Check size={11} />
+                    <span>Copied</span>
+                  {:else}
+                    <Copy size={11} />
+                    <span>Copy</span>
+                  {/if}
+                </button>
+              {/if}
+            </div>
           </div>
           <div class="password-input-wrapper">
             <input
@@ -1089,15 +1155,16 @@
     <div class="modal-bottom">
       <button
         class="btn btn-secondary"
+        disabled={isSaving}
         onclick={() => (appState.isConnectionModalOpen = false)}
       >
         Cancel
       </button>
-      <button class="btn btn-secondary" onclick={() => handleSave(false)}>
-        Save
+      <button class="btn btn-secondary" disabled={isSaving} onclick={() => handleSave(false)}>
+        {isSaving ? 'Saving...' : 'Save'}
       </button>
-      <button class="btn btn-primary" onclick={() => handleSave(true)}>
-        Connect
+      <button class="btn btn-primary" disabled={isSaving} onclick={() => handleSave(true)}>
+        {isSaving ? 'Connecting...' : 'Connect'}
       </button>
     </div>
   </div>

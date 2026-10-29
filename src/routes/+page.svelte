@@ -171,7 +171,16 @@
                     badge: 'POWERSHELL',
                   });
                 }}
-                onkeydown={(e) => e.key === 'Enter' && {}}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') {
+                    appState.openTab({
+                      title: 'Local Shell',
+                      type: 'local_terminal',
+                      status: 'connected',
+                      badge: 'POWERSHELL',
+                    });
+                  }
+                }}
               >
                 <div class="card-head">
                   <Cpu size={16} />

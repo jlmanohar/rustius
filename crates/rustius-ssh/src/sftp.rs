@@ -190,13 +190,10 @@ impl SftpClient {
         local_file.flush().await?;
         drop(local_file);
 
-        #[cfg(windows)]
-        {
-            if std::path::Path::new(local_path).exists() {
-                let _ = tokio::fs::remove_file(local_path).await;
-            }
-        }
-        tokio::fs::rename(&part_path, local_path).await?;
+        rustius_core::storage::atomic_replace_file(
+            std::path::Path::new(&part_path),
+            std::path::Path::new(local_path),
+        )?;
         Ok(())
     }
 

@@ -25,8 +25,12 @@ pub async fn pty_spawn(
     let (output_tx, mut output_rx) = mpsc::channel::<Vec<u8>>(128);
     let (exit_tx, mut exit_rx) = mpsc::channel::<u32>(1);
 
-    let terminal =
-        LocalTerminal::spawn(cols, rows, output_tx, exit_tx).map_err(|e| e.to_string())?;
+    let terminal = tokio::task::spawn_blocking(move || {
+        LocalTerminal::spawn(cols, rows, output_tx, exit_tx)
+    })
+    .await
+    .map_err(|e| format!("Failed to spawn PTY task: {}", e))?
+    .map_err(|e| e.to_string())?;
     let terminal = Arc::new(terminal);
 
     // Save in state (closing any previous session for this tab)
@@ -36,7 +40,7 @@ pub async fn pty_spawn(
             info!("Closing previous PTY session for tab: {}", tab_id);
             old.close();
         }
-        terminals.insert(tab_id.clone(), terminal);
+        terminals.insert(tab_id.clone(), terminal.clone());
     }
 
     // Spawn async background task to forward bytes to Tauri Channel
@@ -44,6 +48,7 @@ pub async fn pty_spawn(
     let app_clone = app.clone();
     let tab_id_clone = tab_id.clone();
     let local_terminals = state.local_terminals.clone();
+    let terminal_for_cleanup = terminal.clone();
 
     tokio::spawn(async move {
         loop {
@@ -69,7 +74,11 @@ pub async fn pty_spawn(
         }
         {
             let mut terminals = local_terminals.write().await;
-            terminals.remove(&tab_id_clone);
+            if let Some(t) = terminals.get(&tab_id_clone) {
+                if Arc::ptr_eq(t, &terminal_for_cleanup) {
+                    terminals.remove(&tab_id_clone);
+                }
+            }
         }
         debug!(
             "PTY output forwarding loop exited for tab: {}",
@@ -93,7 +102,13 @@ pub async fn pty_write(
     };
 
     if let Some(term) = terminal {
-        term.write(&data).map_err(|e| e.to_string())?;
+        let term_clone = term.clone();
+        tokio::task::spawn_blocking(move || {
+            term_clone.write(&data)
+        })
+        .await
+        .map_err(|e| format!("Failed to execute PTY write task: {}", e))?
+        .map_err(|e| e.to_string())?;
         Ok(())
     } else {
         Err(format!("PTY session not found for tab: {}", tab_id))

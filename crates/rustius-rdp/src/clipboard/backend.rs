@@ -97,7 +97,7 @@ impl RustiusCliprdrBackend {
             self.current_file_index += 1;
             let stream_id = (index + 1) as u32;
             let chunk_size = 256 * 1024;
-            let max_ceiling = 100 * 1024 * 1024 * 1024;
+            let max_ceiling = 256 * 1024 * 1024; // 256 MiB safety cap to prevent OOM from hostile servers
 
             let mut fetch = if let Some(size) = file_info.file_size {
                 ChunkedFetch::new(
@@ -255,13 +255,24 @@ impl CliprdrBackend for RustiusCliprdrBackend {
     }
 
     fn on_remote_file_list(&mut self, files: &[FileDescriptor], clip_data_id: Option<u32>) {
+        const MAX_CLIPBOARD_FILES: usize = 100;
+        let accepted = if files.len() > MAX_CLIPBOARD_FILES {
+            warn!(
+                total = files.len(),
+                max = MAX_CLIPBOARD_FILES,
+                "Remote desktop offered too many clipboard files; truncating to limit"
+            );
+            &files[..MAX_CLIPBOARD_FILES]
+        } else {
+            files
+        };
         info!(
-            file_count = files.len(),
+            file_count = accepted.len(),
             ?clip_data_id,
             "Remote desktop offered files via clipboard"
         );
 
-        self.remote_file_queue = files.iter().cloned().collect();
+        self.remote_file_queue = accepted.iter().cloned().collect();
         self.downloaded_paths.clear();
         self.current_file_index = 0;
         self.current_clip_data_id = clip_data_id;

@@ -8,10 +8,27 @@ use crate::storage::ConfigStorage;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
+
+fn backend_to_u8(b: VaultBackend) -> u8 {
+    match b {
+        VaultBackend::Auto => 0,
+        VaultBackend::MasterPassword => 1,
+        VaultBackend::Keyring => 2,
+    }
+}
+
+fn u8_to_backend(u: u8) -> VaultBackend {
+    match u {
+        1 => VaultBackend::MasterPassword,
+        2 => VaultBackend::Keyring,
+        _ => VaultBackend::Auto,
+    }
+}
 
 /// Lightweight store structure for connections and credential profiles on disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +62,7 @@ pub struct ConfigManager {
     config: Arc<RwLock<RustiusConfig>>,
     pub secret_manager: Arc<SecretManager>,
     pub is_portable: bool,
+    cached_vault_backend: Arc<AtomicU8>,
 }
 
 impl ConfigManager {
@@ -68,25 +86,52 @@ impl ConfigManager {
             info!("Loading modular config from: {:?}", config_dir);
             // 1. Load settings.json
             let app_settings = if storage.exists(&settings_path) {
-                let s_str = storage.read(&settings_path)?;
-                serde_json::from_str::<AppSettings>(&s_str).unwrap_or_default()
+                match storage.read(&settings_path) {
+                    Ok(s_str) => match serde_json::from_str::<AppSettings>(&s_str) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            warn!("Corrupted settings.json detected: {e}. Backing up and using defaults.");
+                            let ts = chrono::Utc::now().timestamp();
+                            let backup_path = config_dir.join(format!("settings.json.corrupt.{ts}"));
+                            let _ = storage.write(&backup_path, &s_str);
+                            AppSettings::default()
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Failed to read settings.json: {e}. Using defaults.");
+                        AppSettings::default()
+                    }
+                }
             } else {
                 AppSettings::default()
             };
 
             // 2. Load connections.json
-            let c_str = storage.read(&connections_path)?;
-            let mut store: ConnectionsStore =
-                serde_json::from_str(&c_str).context("Failed to parse connections.json")?;
-
-            // 3. Load Markdown runbooks from notes/ directory
-            Self::populate_notes_in_tree(&mut store.tree, &notes_dir, storage.as_ref());
+            let (store_version, credentials, tree) = match storage.read(&connections_path) {
+                Ok(c_str) => match serde_json::from_str::<ConnectionsStore>(&c_str) {
+                    Ok(mut store) => {
+                        Self::populate_notes_in_tree(&mut store.tree, &notes_dir, storage.as_ref());
+                        (store.version, store.credentials, store.tree)
+                    }
+                    Err(e) => {
+                        error!("Corrupted connections.json detected: {e}. Backing up file to prevent crash.");
+                        let ts = chrono::Utc::now().timestamp();
+                        let backup_path = config_dir.join(format!("connections.json.corrupt.{ts}"));
+                        let _ = storage.write(&backup_path, &c_str);
+                        ("1.0.0".to_string(), Vec::new(), Vec::new())
+                    }
+                },
+                Err(e) => {
+                    error!("Failed to read connections.json: {e}. Starting with empty tree.");
+                    ("1.0.0".to_string(), Vec::new(), Vec::new())
+                }
+            };
 
             RustiusConfig {
-                version: store.version,
+                version: store_version,
                 app_settings,
-                credentials: store.credentials,
-                tree: store.tree,
+                credentials,
+                tree,
             }
         } else if storage.exists(&legacy_toml_path) {
             info!(
@@ -142,6 +187,7 @@ impl ConfigManager {
         };
 
         let vault_path = config_dir.join("vault.enc");
+        let cached_vault_backend = Arc::new(AtomicU8::new(backend_to_u8(config.app_settings.vault_backend)));
         Ok(Self {
             config_dir,
             settings_path,
@@ -151,6 +197,7 @@ impl ConfigManager {
             config: Arc::new(RwLock::new(config)),
             secret_manager: Arc::new(SecretManager::new("rustius", vault_path)),
             is_portable,
+            cached_vault_backend,
         })
     }
 
@@ -161,11 +208,8 @@ impl ConfigManager {
 
     /// Resolve the active effective credential backend synchronously.
     pub fn effective_vault_backend_sync(&self) -> VaultBackend {
-        let backend = if let Ok(guard) = self.config.try_read() {
-            guard.app_settings.vault_backend
-        } else {
-            VaultBackend::Auto
-        };
+        let raw = self.cached_vault_backend.load(Ordering::Relaxed);
+        let backend = u8_to_backend(raw);
         match backend {
             VaultBackend::Auto => {
                 if self.is_portable {
@@ -242,9 +286,12 @@ impl ConfigManager {
 
         // If linked to a CredentialProfile, inherit the profile's authentication & domain
         if let Some(cred_id) = conn.credential_id {
-            let config = self.config.read().await;
-            if let Some(profile) = config.credentials.iter().find(|c| c.id == cred_id) {
-                let resolved_profile = self.resolve_credential(profile)?;
+            let profile = {
+                let config = self.config.read().await;
+                config.credentials.iter().find(|c| c.id == cred_id).cloned()
+            };
+            if let Some(profile) = profile {
+                let resolved_profile = self.resolve_credential(&profile)?;
                 resolved.auth = resolved_profile.auth;
 
                 // For RDP, if the profile defines a domain and connection does not explicitly override it, inherit domain
@@ -408,10 +455,6 @@ impl ConfigManager {
 
     /// Delete a credential profile and clean up associated secrets.
     pub async fn delete_credential(&self, id: Uuid) -> Result<()> {
-        let key = format!("credential:{}", id);
-        let _ = self.secret_manager.delete_secret(&key);
-        let _ = self.secret_manager.delete_vault_secret(&key);
-
         self.update_config(|config| {
             config.credentials.retain(|c| c.id != id);
             // Detach any connections that referenced this profile
@@ -432,6 +475,10 @@ impl ConfigManager {
             detach_in_nodes(&mut config.tree, id);
         })
         .await?;
+
+        let key = format!("credential:{}", id);
+        let _ = self.secret_manager.delete_secret(&key);
+        let _ = self.secret_manager.delete_vault_secret(&key);
         info!("Deleted credential profile: {}", id);
         Ok(())
     }
@@ -544,15 +591,26 @@ impl ConfigManager {
     ///
     /// The closure `f` receives a mutable reference to the config.
     /// After the closure returns, the config is automatically saved to disk.
+    /// If disk persistence fails, the in-memory config is rolled back to its prior state.
     pub async fn update_config<F>(&self, f: F) -> Result<()>
     where
         F: FnOnce(&mut RustiusConfig),
     {
-        {
+        let snapshot = {
             let mut config = self.config.write().await;
+            let snap = config.clone();
             f(&mut config);
+            snap
+        };
+        if let Err(e) = self.save().await {
+            let mut config = self.config.write().await;
+            *config = snapshot;
+            return Err(e);
         }
-        self.save().await
+        let backend = self.config.read().await.app_settings.vault_backend;
+        self.cached_vault_backend
+            .store(backend_to_u8(backend), Ordering::Relaxed);
+        Ok(())
     }
 
     /// Add or update a connection in the tree, securing credentials via OS Keyring.
@@ -616,6 +674,11 @@ impl ConfigManager {
             let config = self.config.read().await;
             Self::collect_connection_ids_in_node(&config.tree, node_id)
         };
+        self.update_config(|config| {
+            Self::remove_from_tree(&mut config.tree, node_id);
+        })
+        .await?;
+
         for id in conn_ids {
             let key = format!("connection:{}", id);
             let _ = self.secret_manager.delete_secret(&key);
@@ -623,10 +686,7 @@ impl ConfigManager {
             let note_path = self.notes_dir.join(format!("{}.md", id));
             let _ = self.storage.delete(&note_path);
         }
-        self.update_config(|config| {
-            Self::remove_from_tree(&mut config.tree, node_id);
-        })
-        .await
+        Ok(())
     }
 
     /// Move a node (connection or folder) to a new position in the tree hierarchy.
@@ -716,65 +776,67 @@ impl ConfigManager {
                 self.secret_manager.unlock_vault(&pwd)?;
             }
 
-            self.update_config(|config| {
-                let mut vault_batch = Vec::new();
-                let mut keyring_keys_to_delete = Vec::new();
+            let mut vault_batch = Vec::new();
+            let mut keyring_keys_to_delete = Vec::new();
 
-                fn migrate_auth_to_vault(
-                    auth: &mut AuthMethod,
+            // Read current config to collect secrets
+            {
+                let config = self.config.read().await;
+
+                fn collect_auth_for_vault(
+                    auth: &AuthMethod,
                     key: &str,
                     sm: &SecretManager,
                     batch: &mut Vec<(String, String)>,
                     to_delete: &mut Vec<String>,
                 ) {
-                    let (secret_opt, target_ref) = match auth {
+                    match auth {
                         AuthMethod::Password {
                             password,
                             secret_ref,
                             ..
-                        } => (password, secret_ref),
+                        } => {
+                            if let Some(plain) = password {
+                                if !plain.is_empty() {
+                                    batch.push((key.to_string(), plain.clone()));
+                                    return;
+                                }
+                            }
+                            if let Some(SecretRef::Keyring { key: k }) = secret_ref {
+                                if let Ok(Some(secret)) = sm.get_secret(k) {
+                                    batch.push((k.clone(), secret));
+                                    to_delete.push(k.clone());
+                                }
+                            } else if let Some(SecretRef::Plaintext { value }) = secret_ref {
+                                batch.push((key.to_string(), value.clone()));
+                            }
+                        }
                         AuthMethod::KeyFile {
                             passphrase,
                             secret_ref,
                             ..
-                        } => (passphrase, secret_ref),
-                        _ => return,
-                    };
-
-                    // 1. Plaintext password or passphrase directly on struct
-                    if let Some(plain) = secret_opt.take() {
-                        if !plain.is_empty() {
-                            batch.push((key.to_string(), plain));
-                            *target_ref = Some(SecretRef::Vault {
-                                key: key.to_string(),
-                            });
-                            return;
+                        } => {
+                            if let Some(plain) = passphrase {
+                                if !plain.is_empty() {
+                                    batch.push((key.to_string(), plain.clone()));
+                                    return;
+                                }
+                            }
+                            if let Some(SecretRef::Keyring { key: k }) = secret_ref {
+                                if let Ok(Some(secret)) = sm.get_secret(k) {
+                                    batch.push((k.clone(), secret));
+                                    to_delete.push(k.clone());
+                                }
+                            } else if let Some(SecretRef::Plaintext { value }) = secret_ref {
+                                batch.push((key.to_string(), value.clone()));
+                            }
                         }
-                    }
-
-                    // 2. Existing Keyring secret
-                    if let Some(SecretRef::Keyring { key: k }) = target_ref.as_ref() {
-                        let k = k.clone();
-                        if let Ok(Some(secret)) = sm.get_secret(&k) {
-                            batch.push((k.clone(), secret));
-                            to_delete.push(k.clone());
-                            *target_ref = Some(SecretRef::Vault { key: k });
-                            return;
-                        }
-                    }
-
-                    // 3. Plaintext SecretRef
-                    if let Some(SecretRef::Plaintext { value }) = target_ref.as_ref() {
-                        let val = value.clone();
-                        batch.push((key.to_string(), val));
-                        *target_ref = Some(SecretRef::Vault {
-                            key: key.to_string(),
-                        });
+                        _ => {}
                     }
                 }
 
-                fn collect_node_secrets_for_vault(
-                    nodes: &mut [TreeNode],
+                fn collect_tree_for_vault(
+                    nodes: &[TreeNode],
                     sm: &SecretManager,
                     batch: &mut Vec<(String, String)>,
                     to_delete: &mut Vec<String>,
@@ -783,142 +845,261 @@ impl ConfigManager {
                         match node {
                             TreeNode::Connection(c) => {
                                 let key = format!("connection:{}", c.id);
-                                migrate_auth_to_vault(&mut c.auth, &key, sm, batch, to_delete);
+                                collect_auth_for_vault(&c.auth, &key, sm, batch, to_delete);
                             }
                             TreeNode::Folder(f) => {
-                                collect_node_secrets_for_vault(
-                                    &mut f.children,
-                                    sm,
-                                    batch,
-                                    to_delete,
-                                );
+                                collect_tree_for_vault(&f.children, sm, batch, to_delete);
                             }
                         }
                     }
                 }
 
-                // 1. Reusable credentials
-                for cred in &mut config.credentials {
+                for cred in &config.credentials {
                     let key = format!("credential:{}", cred.id);
-                    migrate_auth_to_vault(
-                        &mut cred.auth,
+                    collect_auth_for_vault(
+                        &cred.auth,
                         &key,
                         &self.secret_manager,
                         &mut vault_batch,
                         &mut keyring_keys_to_delete,
                     );
                 }
-
-                // 2. Tree connections
-                collect_node_secrets_for_vault(
-                    &mut config.tree,
+                collect_tree_for_vault(
+                    &config.tree,
                     &self.secret_manager,
                     &mut vault_batch,
                     &mut keyring_keys_to_delete,
                 );
+            }
 
+            // Phase 1: Write all new secrets into the vault and verify success
+            if !vault_batch.is_empty() {
                 let batch_refs: Vec<(&str, &str)> = vault_batch
                     .iter()
                     .map(|(k, v)| (k.as_str(), v.as_str()))
                     .collect();
-                if let Err(e) = self.secret_manager.set_vault_secrets_batch(&batch_refs) {
-                    warn!(
-                        "Failed to batch write secrets to vault during migration: {}",
-                        e
-                    );
-                }
-                for k in keyring_keys_to_delete {
-                    let _ = self.secret_manager.delete_secret(&k);
-                }
+                self.secret_manager
+                    .set_vault_secrets_batch(&batch_refs)
+                    .context("Failed to write secrets to vault during migration")?;
+            }
 
-                config.app_settings.vault_backend = target_backend;
-            })
-            .await?;
-        } else {
-            // Migrating to Keyring
+            // Phase 2: Update configuration in memory and save to disk
             self.update_config(|config| {
-                fn migrate_auth_to_keyring(auth: &mut AuthMethod, key: &str, sm: &SecretManager) {
-                    let (secret_opt, target_ref) = match auth {
+                fn rewrite_auth_for_vault(auth: &mut AuthMethod, key: &str) {
+                    match auth {
                         AuthMethod::Password {
                             password,
                             secret_ref,
                             ..
-                        } => (password, secret_ref),
+                        } => {
+                            *password = None;
+                            *secret_ref = Some(SecretRef::Vault {
+                                key: key.to_string(),
+                            });
+                        }
                         AuthMethod::KeyFile {
                             passphrase,
                             secret_ref,
                             ..
-                        } => (passphrase, secret_ref),
-                        _ => return,
-                    };
-
-                    // 1. Plaintext password or passphrase directly on struct
-                    if let Some(plain) = secret_opt.take() {
-                        if !plain.is_empty() {
-                            if let Err(e) = sm.set_secret(key, &plain) {
-                                warn!("Failed to write secret to keyring for key {key}: {e}");
-                                *secret_opt = Some(plain);
-                            } else {
-                                *target_ref = Some(SecretRef::Keyring {
-                                    key: key.to_string(),
-                                });
-                            }
-                            return;
-                        }
-                    }
-
-                    // 2. Existing Vault secret
-                    if let Some(SecretRef::Vault { key: k }) = target_ref.as_ref() {
-                        let k = k.clone();
-                        if let Ok(Some(secret)) = sm.get_vault_secret(&k) {
-                            if let Err(e) = sm.set_secret(&k, &secret) {
-                                warn!("Failed to write secret to keyring for key {k}: {e}");
-                            } else {
-                                let _ = sm.delete_vault_secret(&k);
-                                *target_ref = Some(SecretRef::Keyring { key: k });
-                            }
-                            return;
-                        }
-                    }
-
-                    // 3. Plaintext SecretRef
-                    if let Some(SecretRef::Plaintext { value }) = target_ref.as_ref() {
-                        let val = value.clone();
-                        if let Err(e) = sm.set_secret(key, &val) {
-                            warn!("Failed to write plaintext secret to keyring for key {key}: {e}");
-                        } else {
-                            *target_ref = Some(SecretRef::Keyring {
+                        } => {
+                            *passphrase = None;
+                            *secret_ref = Some(SecretRef::Vault {
                                 key: key.to_string(),
                             });
                         }
+                        _ => {}
                     }
                 }
 
-                fn migrate_tree_to_keyring(nodes: &mut [TreeNode], sm: &SecretManager) {
+                fn rewrite_tree_for_vault(nodes: &mut [TreeNode]) {
                     for node in nodes {
                         match node {
                             TreeNode::Connection(c) => {
                                 let key = format!("connection:{}", c.id);
-                                migrate_auth_to_keyring(&mut c.auth, &key, sm);
+                                rewrite_auth_for_vault(&mut c.auth, &key);
                             }
                             TreeNode::Folder(f) => {
-                                migrate_tree_to_keyring(&mut f.children, sm);
+                                rewrite_tree_for_vault(&mut f.children);
                             }
                         }
                     }
                 }
 
-                // 1. Reusable credentials
                 for cred in &mut config.credentials {
                     let key = format!("credential:{}", cred.id);
-                    migrate_auth_to_keyring(&mut cred.auth, &key, &self.secret_manager);
+                    rewrite_auth_for_vault(&mut cred.auth, &key);
                 }
-
-                // 2. Tree connections
-                migrate_tree_to_keyring(&mut config.tree, &self.secret_manager);
+                rewrite_tree_for_vault(&mut config.tree);
                 config.app_settings.vault_backend = target_backend;
             })
-            .await?;
+            .await
+            .context("Failed to save updated config during vault migration")?;
+
+            // Phase 3: Only after disk save succeeds, delete old keyring entries
+            for k in keyring_keys_to_delete {
+                let _ = self.secret_manager.delete_secret(&k);
+            }
+        } else {
+            // Migrating to Keyring
+            let mut keyring_batch = Vec::new();
+            let mut vault_keys_to_delete = Vec::new();
+
+            // Read current config to collect secrets
+            {
+                let config = self.config.read().await;
+
+                fn collect_auth_for_keyring(
+                    auth: &AuthMethod,
+                    key: &str,
+                    sm: &SecretManager,
+                    batch: &mut Vec<(String, String)>,
+                    to_delete: &mut Vec<String>,
+                ) {
+                    match auth {
+                        AuthMethod::Password {
+                            password,
+                            secret_ref,
+                            ..
+                        } => {
+                            if let Some(plain) = password {
+                                if !plain.is_empty() {
+                                    batch.push((key.to_string(), plain.clone()));
+                                    return;
+                                }
+                            }
+                            if let Some(SecretRef::Vault { key: k }) = secret_ref {
+                                if let Ok(Some(secret)) = sm.get_vault_secret(k) {
+                                    batch.push((k.clone(), secret));
+                                    to_delete.push(k.clone());
+                                }
+                            } else if let Some(SecretRef::Plaintext { value }) = secret_ref {
+                                batch.push((key.to_string(), value.clone()));
+                            }
+                        }
+                        AuthMethod::KeyFile {
+                            passphrase,
+                            secret_ref,
+                            ..
+                        } => {
+                            if let Some(plain) = passphrase {
+                                if !plain.is_empty() {
+                                    batch.push((key.to_string(), plain.clone()));
+                                    return;
+                                }
+                            }
+                            if let Some(SecretRef::Vault { key: k }) = secret_ref {
+                                if let Ok(Some(secret)) = sm.get_vault_secret(k) {
+                                    batch.push((k.clone(), secret));
+                                    to_delete.push(k.clone());
+                                }
+                            } else if let Some(SecretRef::Plaintext { value }) = secret_ref {
+                                batch.push((key.to_string(), value.clone()));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                fn collect_tree_for_keyring(
+                    nodes: &[TreeNode],
+                    sm: &SecretManager,
+                    batch: &mut Vec<(String, String)>,
+                    to_delete: &mut Vec<String>,
+                ) {
+                    for node in nodes {
+                        match node {
+                            TreeNode::Connection(c) => {
+                                let key = format!("connection:{}", c.id);
+                                collect_auth_for_keyring(&c.auth, &key, sm, batch, to_delete);
+                            }
+                            TreeNode::Folder(f) => {
+                                collect_tree_for_keyring(&f.children, sm, batch, to_delete);
+                            }
+                        }
+                    }
+                }
+
+                for cred in &config.credentials {
+                    let key = format!("credential:{}", cred.id);
+                    collect_auth_for_keyring(
+                        &cred.auth,
+                        &key,
+                        &self.secret_manager,
+                        &mut keyring_batch,
+                        &mut vault_keys_to_delete,
+                    );
+                }
+                collect_tree_for_keyring(
+                    &config.tree,
+                    &self.secret_manager,
+                    &mut keyring_batch,
+                    &mut vault_keys_to_delete,
+                );
+            }
+
+            // Phase 1: Write all secrets to OS keyring
+            for (key, secret) in &keyring_batch {
+                self.secret_manager
+                    .set_secret(key, secret)
+                    .with_context(|| format!("Failed to write secret to OS keyring for key {key}"))?;
+            }
+
+            // Phase 2: Update configuration in memory and save to disk
+            self.update_config(|config| {
+                fn rewrite_auth_for_keyring(auth: &mut AuthMethod, key: &str) {
+                    match auth {
+                        AuthMethod::Password {
+                            password,
+                            secret_ref,
+                            ..
+                        } => {
+                            *password = None;
+                            *secret_ref = Some(SecretRef::Keyring {
+                                key: key.to_string(),
+                            });
+                        }
+                        AuthMethod::KeyFile {
+                            passphrase,
+                            secret_ref,
+                            ..
+                        } => {
+                            *passphrase = None;
+                            *secret_ref = Some(SecretRef::Keyring {
+                                key: key.to_string(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+
+                fn rewrite_tree_for_keyring(nodes: &mut [TreeNode]) {
+                    for node in nodes {
+                        match node {
+                            TreeNode::Connection(c) => {
+                                let key = format!("connection:{}", c.id);
+                                rewrite_auth_for_keyring(&mut c.auth, &key);
+                            }
+                            TreeNode::Folder(f) => {
+                                rewrite_tree_for_keyring(&mut f.children);
+                            }
+                        }
+                    }
+                }
+
+                for cred in &mut config.credentials {
+                    let key = format!("credential:{}", cred.id);
+                    rewrite_auth_for_keyring(&mut cred.auth, &key);
+                }
+                rewrite_tree_for_keyring(&mut config.tree);
+                config.app_settings.vault_backend = target_backend;
+            })
+            .await
+            .context("Failed to save updated config during keyring migration")?;
+
+            // Phase 3: Only after disk save succeeds, delete old vault secrets
+            for k in vault_keys_to_delete {
+                let _ = self.secret_manager.delete_vault_secret(&k);
+            }
         }
 
         info!(
@@ -937,143 +1118,160 @@ impl ConfigManager {
             return Ok(());
         }
 
-        self.update_config(|config| {
-            let mut vault_batch = Vec::new();
+        let mut vault_batch = Vec::new();
+        let mut keyring_batch = Vec::new();
 
-            fn secure_node_plaintext(
-                nodes: &mut [TreeNode],
-                sm: &SecretManager,
+        {
+            let config = self.config.read().await;
+
+            fn collect_plaintext(
+                auth: &AuthMethod,
+                key: &str,
                 backend: VaultBackend,
-                batch: &mut Vec<(String, String)>,
+                v_batch: &mut Vec<(String, String)>,
+                k_batch: &mut Vec<(String, String)>,
+            ) {
+                let (plain_opt, target_ref) = match auth {
+                    AuthMethod::Password {
+                        password,
+                        secret_ref,
+                        ..
+                    } => (password.as_deref(), secret_ref.as_ref()),
+                    AuthMethod::KeyFile {
+                        passphrase,
+                        secret_ref,
+                        ..
+                    } => (passphrase.as_deref(), secret_ref.as_ref()),
+                    _ => return,
+                };
+                let text = plain_opt
+                    .filter(|p| !p.is_empty())
+                    .or_else(|| {
+                        if let Some(SecretRef::Plaintext { value }) = target_ref {
+                            Some(value.as_str())
+                        } else {
+                            None
+                        }
+                    });
+                if let Some(t) = text {
+                    match backend {
+                        VaultBackend::MasterPassword => {
+                            v_batch.push((key.to_string(), t.to_string()))
+                        }
+                        _ => k_batch.push((key.to_string(), t.to_string())),
+                    }
+                }
+            }
+
+            fn collect_node_plaintext(
+                nodes: &[TreeNode],
+                backend: VaultBackend,
+                v_batch: &mut Vec<(String, String)>,
+                k_batch: &mut Vec<(String, String)>,
             ) {
                 for node in nodes {
                     match node {
                         TreeNode::Connection(c) => {
                             let key = format!("connection:{}", c.id);
-                            let (secret_opt, target_ref) = match &mut c.auth {
-                                AuthMethod::Password {
-                                    password,
-                                    secret_ref,
-                                    ..
-                                } => (password, secret_ref),
-                                AuthMethod::KeyFile {
-                                    passphrase,
-                                    secret_ref,
-                                    ..
-                                } => (passphrase, secret_ref),
-                                _ => continue,
-                            };
-                            if let Some(plain) = secret_opt.take() {
-                                if !plain.is_empty() {
-                                    match backend {
-                                        VaultBackend::MasterPassword => {
-                                            batch.push((key.clone(), plain));
-                                            *target_ref = Some(SecretRef::Vault { key });
-                                        }
-                                        _ => {
-                                            if sm.set_secret(&key, &plain).is_ok() {
-                                                *target_ref = Some(SecretRef::Keyring { key });
-                                            } else {
-                                                *secret_opt = Some(plain);
-                                            }
-                                        }
-                                    }
-                                }
-                            } else if let Some(SecretRef::Plaintext { value }) = target_ref.as_ref()
-                            {
-                                let val = value.clone();
-                                match backend {
-                                    VaultBackend::MasterPassword => {
-                                        batch.push((key.clone(), val));
-                                        *target_ref = Some(SecretRef::Vault { key });
-                                    }
-                                    _ => {
-                                        if sm.set_secret(&key, &val).is_ok() {
-                                            *target_ref = Some(SecretRef::Keyring { key });
-                                        }
-                                    }
-                                }
-                            }
+                            collect_plaintext(&c.auth, &key, backend, v_batch, k_batch);
                         }
                         TreeNode::Folder(f) => {
-                            secure_node_plaintext(&mut f.children, sm, backend, batch);
+                            collect_node_plaintext(&f.children, backend, v_batch, k_batch);
                         }
                     }
                 }
             }
 
-            // 1. Credentials
-            for cred in &mut config.credentials {
+            for cred in &config.credentials {
                 let key = format!("credential:{}", cred.id);
-                let (secret_opt, target_ref) = match &mut cred.auth {
+                collect_plaintext(
+                    &cred.auth,
+                    &key,
+                    backend,
+                    &mut vault_batch,
+                    &mut keyring_batch,
+                );
+            }
+            collect_node_plaintext(&config.tree, backend, &mut vault_batch, &mut keyring_batch);
+        }
+
+        // Store secrets first
+        if !vault_batch.is_empty() {
+            let batch_refs: Vec<(&str, &str)> = vault_batch
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            self.secret_manager
+                .set_vault_secrets_batch(&batch_refs)
+                .context("Failed to batch write plaintext secrets to vault")?;
+        }
+        for (key, secret) in &keyring_batch {
+            self.secret_manager
+                .set_secret(key, secret)
+                .with_context(|| format!("Failed to store secret in OS keyring for key {key}"))?;
+        }
+
+        // Update config references
+        self.update_config(|config| {
+            fn rewrite_unencrypted(auth: &mut AuthMethod, key: &str, backend: VaultBackend) {
+                match auth {
                     AuthMethod::Password {
                         password,
                         secret_ref,
                         ..
-                    } => (password, secret_ref),
+                    } => {
+                        *password = None;
+                        *secret_ref = Some(match backend {
+                            VaultBackend::MasterPassword => SecretRef::Vault {
+                                key: key.to_string(),
+                            },
+                            _ => SecretRef::Keyring {
+                                key: key.to_string(),
+                            },
+                        });
+                    }
                     AuthMethod::KeyFile {
                         passphrase,
                         secret_ref,
                         ..
-                    } => (passphrase, secret_ref),
-                    _ => continue,
-                };
-                if let Some(plain) = secret_opt.take() {
-                    if !plain.is_empty() {
-                        match backend {
-                            VaultBackend::MasterPassword => {
-                                vault_batch.push((key.clone(), plain));
-                                *target_ref = Some(SecretRef::Vault { key });
-                            }
-                            _ => {
-                                if self.secret_manager.set_secret(&key, &plain).is_ok() {
-                                    *target_ref = Some(SecretRef::Keyring { key });
-                                } else {
-                                    *secret_opt = Some(plain);
-                                }
-                            }
-                        }
+                    } => {
+                        *passphrase = None;
+                        *secret_ref = Some(match backend {
+                            VaultBackend::MasterPassword => SecretRef::Vault {
+                                key: key.to_string(),
+                            },
+                            _ => SecretRef::Keyring {
+                                key: key.to_string(),
+                            },
+                        });
                     }
-                } else if let Some(SecretRef::Plaintext { value }) = target_ref.as_ref() {
-                    let val = value.clone();
-                    match backend {
-                        VaultBackend::MasterPassword => {
-                            vault_batch.push((key.clone(), val));
-                            *target_ref = Some(SecretRef::Vault { key });
+                    _ => {}
+                }
+            }
+
+            fn rewrite_nodes(nodes: &mut [TreeNode], backend: VaultBackend) {
+                for node in nodes {
+                    match node {
+                        TreeNode::Connection(c) => {
+                            let key = format!("connection:{}", c.id);
+                            rewrite_unencrypted(&mut c.auth, &key, backend);
                         }
-                        _ => {
-                            if self.secret_manager.set_secret(&key, &val).is_ok() {
-                                *target_ref = Some(SecretRef::Keyring { key });
-                            }
+                        TreeNode::Folder(f) => {
+                            rewrite_nodes(&mut f.children, backend);
                         }
                     }
                 }
             }
 
-            // 2. Tree
-            secure_node_plaintext(
-                &mut config.tree,
-                &self.secret_manager,
-                backend,
-                &mut vault_batch,
-            );
-
-            if !vault_batch.is_empty() {
-                let batch_refs: Vec<(&str, &str)> = vault_batch
-                    .iter()
-                    .map(|(k, v)| (k.as_str(), v.as_str()))
-                    .collect();
-                if let Err(e) = self.secret_manager.set_vault_secrets_batch(&batch_refs) {
-                    warn!("Failed to batch write plaintext secrets to vault: {}", e);
-                } else {
-                    info!(
-                        "Successfully secured {} plaintext secrets into vault",
-                        vault_batch.len()
-                    );
-                }
+            for cred in &mut config.credentials {
+                let key = format!("credential:{}", cred.id);
+                rewrite_unencrypted(&mut cred.auth, &key, backend);
             }
+            rewrite_nodes(&mut config.tree, backend);
         })
-        .await
+        .await?;
+
+        Ok(())
     }
 
     /// Find a connection by ID anywhere in the tree.
@@ -1084,17 +1282,18 @@ impl ConfigManager {
     }
 
     /// Recursively secures all connections in a slice of tree nodes.
-    pub fn secure_tree_nodes(&self, nodes: &mut [TreeNode]) {
+    pub fn secure_tree_nodes(&self, nodes: &mut [TreeNode]) -> Result<()> {
         for node in nodes {
             match node {
                 TreeNode::Connection(conn) => {
-                    let _ = self.secure_connection(conn);
+                    self.secure_connection(conn)?;
                 }
                 TreeNode::Folder(folder) => {
-                    self.secure_tree_nodes(&mut folder.children);
+                    self.secure_tree_nodes(&mut folder.children)?;
                 }
             }
         }
+        Ok(())
     }
 
     /// Import a list of tree nodes (folders and connections), securing all credentials
@@ -1104,7 +1303,7 @@ impl ConfigManager {
         mut nodes: Vec<TreeNode>,
         parent_folder_id: Option<Uuid>,
     ) -> Result<crate::importer::ImportSummary> {
-        self.secure_tree_nodes(&mut nodes);
+        self.secure_tree_nodes(&mut nodes)?;
         let summary = crate::importer::count_imported(&nodes);
 
         self.update_config(|config| {
