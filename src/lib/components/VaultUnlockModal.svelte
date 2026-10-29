@@ -25,6 +25,24 @@
     }
   });
 
+  async function handleSkipSetup() {
+    isSubmitting = true;
+    try {
+      if (appState.config?.app_settings) {
+        await appState.saveAppSettings({
+          ...appState.config.app_settings,
+          vault_backend: 'keyring',
+        });
+      }
+      await appState.fetchVaultStatus();
+    } catch (err: any) {
+      console.warn('Failed to persist Keyring preference on skip:', err);
+    } finally {
+      isSubmitting = false;
+      appState.isVaultUnlockModalOpen = false;
+    }
+  }
+
   async function handleSubmit(e: SubmitEvent) {
     e.preventDefault();
     errorMessage = '';
@@ -203,7 +221,8 @@
             <button
               type="button"
               class="btn btn-secondary"
-              onclick={() => (appState.isVaultUnlockModalOpen = false)}
+              disabled={isSubmitting}
+              onclick={handleSkipSetup}
             >
               Skip (Use OS Keyring)
             </button>
@@ -211,6 +230,7 @@
             <button
               type="button"
               class="btn btn-secondary"
+              disabled={isSubmitting}
               onclick={() => (appState.isVaultUnlockModalOpen = false)}
             >
               Skip for now

@@ -53,6 +53,29 @@
     <!-- Session Tabs -->
     <TabBar />
 
+    {#if appState.config?.recovery_notice}
+      <div class="recovery-notice-banner" role="alert">
+        <div class="recovery-notice-text">
+          <Shield size={14} />
+          <span>{appState.config.recovery_notice}</span>
+        </div>
+        <button
+          class="btn-banner-dismiss"
+          onclick={async () => {
+            if (appState.config) {
+              appState.config.recovery_notice = undefined;
+            }
+            try {
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('clear_recovery_notice');
+            } catch (_) {}
+          }}
+        >
+          Dismiss
+        </button>
+      </div>
+    {/if}
+
     <!-- Content Workspace -->
     <div class="workspace-panel">
       {#if appState.tabs.length > 0}
@@ -266,6 +289,42 @@
     height: 100%;
     min-width: 0;
     overflow: hidden;
+  }
+
+  .recovery-notice-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 16px;
+    background: rgba(245, 158, 11, 0.12);
+    border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+    color: #f59e0b;
+    font-size: 12px;
+    z-index: 10;
+  }
+
+  .recovery-notice-text {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    line-height: 1.4;
+  }
+
+  .btn-banner-dismiss {
+    background: transparent;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    color: #f59e0b;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+  }
+
+  .btn-banner-dismiss:hover {
+    background: rgba(245, 158, 11, 0.2);
   }
 
   .workspace-panel {

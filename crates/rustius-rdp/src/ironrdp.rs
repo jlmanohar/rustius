@@ -386,7 +386,8 @@ impl IronRdpSession {
             .join("rustius")
             .join("clipboard")
             .join(session_id.to_string());
-        let _ = std::fs::create_dir_all(&staging_dir);
+        // Note: staging_dir is created on-demand in RustiusCliprdrBackend when files arrive,
+        // avoiding dangling empty temporary directories if connection setup fails.
 
         #[cfg(windows)]
         let (clipboard_factory, clipboard_thread_id) = if clipboard_enabled {

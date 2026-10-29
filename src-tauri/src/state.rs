@@ -69,7 +69,7 @@ fn get_system_data_dir() -> PathBuf {
 /// 2. If a `data` or `rustius-data` directory exists alongside the executable, activates PORTABLE mode.
 /// 3. If a `.portable` marker file exists alongside the executable, activates PORTABLE mode (using `data`).
 /// 4. Otherwise, falls back to the OS user profile AppData (INSTALLED mode).
-fn resolve_data_dir() -> (PathBuf, bool) {
+pub(crate) fn resolve_data_dir() -> (PathBuf, bool) {
     if cfg!(debug_assertions) {
         return (PathBuf::from("rustius-data"), true);
     }

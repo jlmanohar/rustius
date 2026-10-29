@@ -10,6 +10,12 @@ pub async fn get_config(state: State<'_, AppState>) -> Result<RustiusConfig, Str
 }
 
 #[tauri::command]
+pub async fn clear_recovery_notice(state: State<'_, AppState>) -> Result<(), String> {
+    state.config_manager.clear_corruption_notice().await;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn save_app_settings(
     settings: AppSettings,
     state: State<'_, AppState>,

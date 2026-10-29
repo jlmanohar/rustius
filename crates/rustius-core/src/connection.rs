@@ -574,6 +574,9 @@ pub struct RustiusConfig {
     /// Root-level tree nodes (folders and connections).
     #[serde(default)]
     pub tree: Vec<TreeNode>,
+    /// Ephemeral recovery notice or corruption alert (surfaced over IPC, not persisted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_notice: Option<String>,
 }
 
 /// The credential storage backend selected by the user.
@@ -678,6 +681,7 @@ impl Default for RustiusConfig {
             app_settings: AppSettings::default(),
             credentials: Vec::new(),
             tree: Vec::new(),
+            recovery_notice: None,
         }
     }
 }
@@ -789,6 +793,7 @@ mod tests {
             app_settings: AppSettings::default(),
             credentials: Vec::new(),
             tree: vec![node],
+            recovery_notice: None,
         };
 
         // Serialize to TOML
@@ -888,6 +893,7 @@ mod tests {
             app_settings: AppSettings::default(),
             credentials: Vec::new(),
             tree: vec![TreeNode::Connection(conn)],
+            recovery_notice: None,
         };
 
         let toml_str = toml::to_string_pretty(&config).expect("Failed to serialize to TOML");

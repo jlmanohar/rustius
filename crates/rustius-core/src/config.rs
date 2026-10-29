@@ -63,6 +63,8 @@ pub struct ConfigManager {
     pub secret_manager: Arc<SecretManager>,
     pub is_portable: bool,
     cached_vault_backend: Arc<AtomicU8>,
+    save_mutex: Arc<tokio::sync::Mutex<()>>,
+    corruption_notice: Arc<tokio::sync::RwLock<Option<String>>>,
 }
 
 impl ConfigManager {
@@ -82,6 +84,8 @@ impl ConfigManager {
         let notes_dir = config_dir.join("notes");
         let legacy_toml_path = config_dir.join("config.toml");
 
+        let mut initial_corruption_notice: Option<String> = None;
+
         let config = if storage.exists(&connections_path) {
             info!("Loading modular config from: {:?}", config_dir);
             // 1. Load settings.json
@@ -94,16 +98,33 @@ impl ConfigManager {
                             let ts = chrono::Utc::now().timestamp();
                             let backup_path = config_dir.join(format!("settings.json.corrupt.{ts}"));
                             let _ = storage.write(&backup_path, &s_str);
-                            AppSettings::default()
+                            let mut s = AppSettings::default();
+                            // If vault.enc exists, preserve MasterPassword backend
+                            if storage.exists(&config_dir.join("vault.enc")) {
+                                s.vault_backend = VaultBackend::MasterPassword;
+                            }
+                            initial_corruption_notice = Some(format!(
+                                "Corrupted settings.json detected. Backup saved to: {}. Defaults were applied.",
+                                backup_path.display()
+                            ));
+                            s
                         }
                     },
                     Err(e) => {
                         warn!("Failed to read settings.json: {e}. Using defaults.");
-                        AppSettings::default()
+                        let mut s = AppSettings::default();
+                        if storage.exists(&config_dir.join("vault.enc")) {
+                            s.vault_backend = VaultBackend::MasterPassword;
+                        }
+                        s
                     }
                 }
             } else {
-                AppSettings::default()
+                let mut s = AppSettings::default();
+                if storage.exists(&config_dir.join("vault.enc")) {
+                    s.vault_backend = VaultBackend::MasterPassword;
+                }
+                s
             };
 
             // 2. Load connections.json
@@ -118,6 +139,14 @@ impl ConfigManager {
                         let ts = chrono::Utc::now().timestamp();
                         let backup_path = config_dir.join(format!("connections.json.corrupt.{ts}"));
                         let _ = storage.write(&backup_path, &c_str);
+                        let notice = format!(
+                            "Corrupted connections.json detected. Backup saved to: {}. Started with empty tree.",
+                            backup_path.display()
+                        );
+                        initial_corruption_notice = match initial_corruption_notice {
+                            Some(prev) => Some(format!("{}\n{}", prev, notice)),
+                            None => Some(notice),
+                        };
                         ("1.0.0".to_string(), Vec::new(), Vec::new())
                     }
                 },
@@ -132,6 +161,7 @@ impl ConfigManager {
                 app_settings,
                 credentials,
                 tree,
+                recovery_notice: None,
             }
         } else if storage.exists(&legacy_toml_path) {
             info!(
@@ -188,6 +218,8 @@ impl ConfigManager {
 
         let vault_path = config_dir.join("vault.enc");
         let cached_vault_backend = Arc::new(AtomicU8::new(backend_to_u8(config.app_settings.vault_backend)));
+        let save_mutex = Arc::new(tokio::sync::Mutex::new(()));
+        let corruption_notice = Arc::new(tokio::sync::RwLock::new(initial_corruption_notice));
         Ok(Self {
             config_dir,
             settings_path,
@@ -198,7 +230,26 @@ impl ConfigManager {
             secret_manager: Arc::new(SecretManager::new("rustius", vault_path)),
             is_portable,
             cached_vault_backend,
+            save_mutex,
+            corruption_notice,
         })
+    }
+
+    /// Retrieve any active corruption or recovery notice.
+    pub async fn get_corruption_notice(&self) -> Option<String> {
+        self.corruption_notice.read().await.clone()
+    }
+
+    /// Set or update the active corruption or recovery notice.
+    pub async fn set_corruption_notice(&self, notice: impl Into<String>) {
+        let mut guard = self.corruption_notice.write().await;
+        *guard = Some(notice.into());
+    }
+
+    /// Clear the active corruption or recovery notice.
+    pub async fn clear_corruption_notice(&self) {
+        let mut guard = self.corruption_notice.write().await;
+        *guard = None;
     }
 
     /// Check if currently configured in portable mode.
@@ -496,7 +547,11 @@ impl ConfigManager {
 
     /// Get a clone of the current configuration (read-only snapshot).
     pub async fn get_config(&self) -> RustiusConfig {
-        self.config.read().await.clone()
+        let mut cfg = self.config.read().await.clone();
+        if let Some(notice) = self.corruption_notice.read().await.as_ref() {
+            cfg.recovery_notice = Some(notice.clone());
+        }
+        cfg
     }
 
     /// Persist the current in-memory config to modular files on disk.
@@ -596,21 +651,44 @@ impl ConfigManager {
     where
         F: FnOnce(&mut RustiusConfig),
     {
-        let snapshot = {
+        self.update_config_fallible(|cfg| {
+            f(cfg);
+            Ok(())
+        })
+        .await
+    }
+
+    /// Apply a fallible mutation to the config and save it.
+    ///
+    /// Holds the internal `save_mutex` across mutation, save, and potential rollback,
+    /// preventing concurrent mutations from being discarded or overwritten on failure.
+    pub async fn update_config_fallible<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&mut RustiusConfig) -> Result<R>,
+    {
+        let _save_guard = self.save_mutex.lock().await;
+        let (snapshot, res) = {
             let mut config = self.config.write().await;
             let snap = config.clone();
-            f(&mut config);
-            snap
+            match f(&mut config) {
+                Ok(r) => (snap, r),
+                Err(err) => {
+                    *config = snap;
+                    return Err(err);
+                }
+            }
         };
+
         if let Err(e) = self.save().await {
             let mut config = self.config.write().await;
             *config = snapshot;
             return Err(e);
         }
+
         let backend = self.config.read().await.app_settings.vault_backend;
         self.cached_vault_backend
             .store(backend_to_u8(backend), Ordering::Relaxed);
-        Ok(())
+        Ok(res)
     }
 
     /// Add or update a connection in the tree, securing credentials via OS Keyring.
@@ -708,9 +786,7 @@ impl ConfigManager {
             }
         }
 
-        {
-            let mut config = self.config.write().await;
-
+        self.update_config_fallible(|config| {
             // 1. Verify cycle if moving a folder
             if let Some(target_parent) = target_parent_id {
                 if let Some(folder) = Self::find_folder_ref(&config.tree, node_id) {
@@ -746,9 +822,10 @@ impl ConfigManager {
                 let idx = target_index.min(config.tree.len());
                 config.tree.insert(idx, extracted);
             }
-        }
 
-        self.save().await
+            Ok(())
+        })
+        .await
     }
 
     /// Migrate secrets between OS Keyring and Encrypted Master Password Vault.
@@ -1146,12 +1223,11 @@ impl ConfigManager {
                 };
                 let text = plain_opt
                     .filter(|p| !p.is_empty())
-                    .or_else(|| {
-                        if let Some(SecretRef::Plaintext { value }) = target_ref {
+                    .or(match target_ref {
+                        Some(SecretRef::Plaintext { value }) if !value.is_empty() => {
                             Some(value.as_str())
-                        } else {
-                            None
                         }
+                        _ => None,
                     });
                 if let Some(t) = text {
                     match backend {
@@ -1195,6 +1271,16 @@ impl ConfigManager {
             collect_node_plaintext(&config.tree, backend, &mut vault_batch, &mut keyring_batch);
         }
 
+        let secured_keys: std::collections::HashSet<String> = vault_batch
+            .iter()
+            .map(|(k, _)| k.clone())
+            .chain(keyring_batch.iter().map(|(k, _)| k.clone()))
+            .collect();
+
+        if secured_keys.is_empty() {
+            return Ok(());
+        }
+
         // Store secrets first
         if !vault_batch.is_empty() {
             let batch_refs: Vec<(&str, &str)> = vault_batch
@@ -1211,9 +1297,30 @@ impl ConfigManager {
                 .with_context(|| format!("Failed to store secret in OS keyring for key {key}"))?;
         }
 
-        // Update config references
+        // Update config references ONLY for keys that were actually secured
         self.update_config(|config| {
-            fn rewrite_unencrypted(auth: &mut AuthMethod, key: &str, backend: VaultBackend) {
+            fn rewrite_unencrypted(
+                auth: &mut AuthMethod,
+                key: &str,
+                backend: VaultBackend,
+                secured: &std::collections::HashSet<String>,
+            ) {
+                if !secured.contains(key) {
+                    // Check if there was an empty Plaintext secret_ref that should be stripped
+                    match auth {
+                        AuthMethod::Password { secret_ref, .. }
+                        | AuthMethod::KeyFile { secret_ref, .. } => {
+                            if let Some(SecretRef::Plaintext { value }) = secret_ref {
+                                if value.is_empty() {
+                                    *secret_ref = None;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    return;
+                }
+
                 match auth {
                     AuthMethod::Password {
                         password,
@@ -1249,15 +1356,19 @@ impl ConfigManager {
                 }
             }
 
-            fn rewrite_nodes(nodes: &mut [TreeNode], backend: VaultBackend) {
+            fn rewrite_nodes(
+                nodes: &mut [TreeNode],
+                backend: VaultBackend,
+                secured: &std::collections::HashSet<String>,
+            ) {
                 for node in nodes {
                     match node {
                         TreeNode::Connection(c) => {
                             let key = format!("connection:{}", c.id);
-                            rewrite_unencrypted(&mut c.auth, &key, backend);
+                            rewrite_unencrypted(&mut c.auth, &key, backend, secured);
                         }
                         TreeNode::Folder(f) => {
-                            rewrite_nodes(&mut f.children, backend);
+                            rewrite_nodes(&mut f.children, backend, secured);
                         }
                     }
                 }
@@ -1265,9 +1376,9 @@ impl ConfigManager {
 
             for cred in &mut config.credentials {
                 let key = format!("credential:{}", cred.id);
-                rewrite_unencrypted(&mut cred.auth, &key, backend);
+                rewrite_unencrypted(&mut cred.auth, &key, backend, &secured_keys);
             }
-            rewrite_nodes(&mut config.tree, backend);
+            rewrite_nodes(&mut config.tree, backend, &secured_keys);
         })
         .await?;
 
@@ -2234,6 +2345,219 @@ password = "secretpassword"
         }
 
         // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_secure_all_unencrypted_secrets_preserves_existing_refs() {
+        let dir = test_config_dir();
+        let test_service = format!("rustius-test-{}", Uuid::new_v4());
+        let manager = ConfigManager::new_with_portable(dir.clone(), true, Box::new(PlaintextStorage))
+            .expect("Failed to create ConfigManager")
+            .with_secret_manager(Arc::new(SecretManager::new(
+                test_service,
+                dir.join("vault.enc"),
+            )));
+
+        manager.secret_manager.unlock_vault("MasterPassword123!").unwrap();
+
+        // 1. Connection with unencrypted plaintext password
+        let conn_plain = Connection::new(
+            "Plaintext Conn".into(),
+            ConnectionType::Ssh,
+            "10.0.0.1".into(),
+            22,
+            AuthMethod::password("user_plain", Some("secret_plain".into())),
+        );
+        let id_plain = conn_plain.id;
+
+        // 2. Connection with existing Keyring ref
+        let conn_keyring = Connection::new(
+            "Keyring Conn".into(),
+            ConnectionType::Ssh,
+            "10.0.0.2".into(),
+            22,
+            AuthMethod::Password {
+                username: "user_keyring".into(),
+                password: None,
+                secret_ref: Some(SecretRef::Keyring {
+                    key: "existing_keyring_key".into(),
+                }),
+            },
+        );
+        let id_keyring = conn_keyring.id;
+
+        // 3. Connection with existing Vault ref
+        let conn_vault = Connection::new(
+            "Vault Conn".into(),
+            ConnectionType::Ssh,
+            "10.0.0.3".into(),
+            22,
+            AuthMethod::Password {
+                username: "user_vault".into(),
+                password: None,
+                secret_ref: Some(SecretRef::Vault {
+                    key: "existing_vault_key".into(),
+                }),
+            },
+        );
+        let id_vault = conn_vault.id;
+
+        // 4. Connection with AskOnConnect ref
+        let conn_ask = Connection::new(
+            "Ask Conn".into(),
+            ConnectionType::Ssh,
+            "10.0.0.4".into(),
+            22,
+            AuthMethod::Password {
+                username: "user_ask".into(),
+                password: None,
+                secret_ref: Some(SecretRef::AskOnConnect),
+            },
+        );
+        let id_ask = conn_ask.id;
+
+        // 5. Connection with NO password and NO secret ref
+        let conn_none = Connection::new(
+            "No Secret Conn".into(),
+            ConnectionType::Ssh,
+            "10.0.0.5".into(),
+            22,
+            AuthMethod::Password {
+                username: "user_none".into(),
+                password: None,
+                secret_ref: None,
+            },
+        );
+        let id_none = conn_none.id;
+
+        manager
+            .update_config(|config| {
+                config.tree.push(TreeNode::Connection(conn_plain));
+                config.tree.push(TreeNode::Connection(conn_keyring));
+                config.tree.push(TreeNode::Connection(conn_vault));
+                config.tree.push(TreeNode::Connection(conn_ask));
+                config.tree.push(TreeNode::Connection(conn_none));
+            })
+            .await
+            .unwrap();
+
+        // Run secure_all_unencrypted_secrets
+        manager.secure_all_unencrypted_secrets().await.unwrap();
+
+        // 1. Plaintext conn must be secured into vault
+        let res_plain = manager.get_connection(id_plain).await.unwrap();
+        if let AuthMethod::Password { password, secret_ref, .. } = res_plain.auth {
+            assert!(password.is_none());
+            assert_eq!(
+                secret_ref,
+                Some(SecretRef::Vault {
+                    key: format!("connection:{}", id_plain)
+                })
+            );
+        } else {
+            panic!("Expected password auth");
+        }
+
+        // 2. Keyring conn must NOT be rewritten
+        let res_keyring = manager.get_connection(id_keyring).await.unwrap();
+        if let AuthMethod::Password { password, secret_ref, .. } = res_keyring.auth {
+            assert!(password.is_none());
+            assert_eq!(
+                secret_ref,
+                Some(SecretRef::Keyring {
+                    key: "existing_keyring_key".into()
+                })
+            );
+        } else {
+            panic!("Expected password auth");
+        }
+
+        // 3. Vault conn must NOT be rewritten
+        let res_vault = manager.get_connection(id_vault).await.unwrap();
+        if let AuthMethod::Password { password, secret_ref, .. } = res_vault.auth {
+            assert!(password.is_none());
+            assert_eq!(
+                secret_ref,
+                Some(SecretRef::Vault {
+                    key: "existing_vault_key".into()
+                })
+            );
+        } else {
+            panic!("Expected password auth");
+        }
+
+        // 4. AskOnConnect conn must NOT be rewritten
+        let res_ask = manager.get_connection(id_ask).await.unwrap();
+        if let AuthMethod::Password { password, secret_ref, .. } = res_ask.auth {
+            assert!(password.is_none());
+            assert_eq!(secret_ref, Some(SecretRef::AskOnConnect));
+        } else {
+            panic!("Expected password auth");
+        }
+
+        // 5. No-secret conn must NOT gain any secret_ref
+        let res_none = manager.get_connection(id_none).await.unwrap();
+        if let AuthMethod::Password { password, secret_ref, .. } = res_none.auth {
+            assert!(password.is_none());
+            assert!(secret_ref.is_none());
+        } else {
+            panic!("Expected password auth");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_corrupt_settings_preserves_vault_backend_and_surfaces_notice() {
+        let dir = test_config_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let storage = Box::new(PlaintextStorage);
+
+        // Pre-create vault.enc to simulate an existing master password setup
+        std::fs::write(dir.join("vault.enc"), b"fake_vault_data").unwrap();
+
+        // Write corrupt settings.json
+        std::fs::write(dir.join("settings.json"), b"{ this is corrupt json").unwrap();
+
+        // Write valid connections.json
+        let connections_store = ConnectionsStore {
+            version: "1.0.0".into(),
+            credentials: Vec::new(),
+            tree: Vec::new(),
+        };
+        let c_json = serde_json::to_string_pretty(&connections_store).unwrap();
+        std::fs::write(dir.join("connections.json"), c_json).unwrap();
+
+        // Load ConfigManager in installed mode (is_portable: false)
+        let manager = ConfigManager::new_with_portable(dir.clone(), false, storage)
+            .expect("ConfigManager must recover gracefully");
+
+        let config = manager.get_config().await;
+        // Even though settings were corrupted and reset to defaults,
+        // because vault.enc exists, vault_backend must be preserved as MasterPassword!
+        assert_eq!(
+            config.app_settings.vault_backend,
+            VaultBackend::MasterPassword,
+            "Must infer MasterPassword when vault.enc exists"
+        );
+
+        // Corruption notice must be surfaced
+        let notice = manager.get_corruption_notice().await;
+        assert!(notice.is_some(), "Corruption notice must be present");
+        assert!(
+            notice.unwrap().contains("Corrupted settings.json detected"),
+            "Notice must describe settings corruption"
+        );
+
+        // Check that corrupt backup was written
+        let files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string()))
+            .filter(|name| name.starts_with("settings.json.corrupt."))
+            .collect();
+        assert_eq!(files.len(), 1, "Must have exactly 1 corrupt backup file");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

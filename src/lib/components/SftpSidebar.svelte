@@ -118,7 +118,7 @@
 
   async function handleReconnect() {
     if (onreconnect && isTerminalDisconnected) {
-      wasDisconnected = false;
+      wasDisconnected = true;
       onreconnect();
     } else {
       await initSession();

@@ -1020,7 +1020,6 @@
         tabindex="0"
         onmousemove={handleMouseMove}
         onmousedown={handleMouseDown}
-        onmouseup={handleMouseUp}
         oncontextmenu={handleContextMenu}
         onwheel={handleWheel}
         onkeydown={handleKeyDown}

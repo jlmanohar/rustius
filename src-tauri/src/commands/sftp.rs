@@ -426,7 +426,7 @@ fn validate_safe_canonical_path(canon: &Path) -> Result<(), String> {
 
         // Also check if the first directory component immediately under a drive root is a system folder
         let mut comps = canon.components();
-        while let Some(c) = comps.next() {
+        for c in comps.by_ref() {
             if matches!(c, std::path::Component::RootDir) {
                 break;
             }

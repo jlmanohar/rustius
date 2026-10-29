@@ -54,13 +54,13 @@ pub fn atomic_replace_file(src: &Path, dest: &Path) -> Result<()> {
                     std::ptr::null_mut(),
                 )
             };
-            let _ = std::fs::remove_file(src);
             if res == 0 {
                 return Err(anyhow::anyhow!(
                     "Failed to atomically replace file on Windows: {}",
                     std::io::Error::last_os_error()
                 ));
             }
+            let _ = std::fs::remove_file(src);
         } else {
             std::fs::rename(src, dest)?;
         }
@@ -149,5 +149,27 @@ mod tests {
         let storage = PlaintextStorage;
         let path = PathBuf::from("/nonexistent/path/config.toml");
         assert!(!storage.exists(&path));
+    }
+
+    #[test]
+    fn test_atomic_replace_file_preserves_temp_on_failure() {
+        let dir = std::env::temp_dir().join(format!("rustius_replace_test_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&dir);
+
+        let src_file = dir.join("download.part");
+        std::fs::write(&src_file, b"valuable data").unwrap();
+
+        // Destination is a directory, which causes ReplaceFileW / rename to fail
+        let dest_dir = dir.join("dest_dir");
+        let _ = std::fs::create_dir_all(&dest_dir);
+
+        let res = atomic_replace_file(&src_file, &dest_dir);
+        assert!(res.is_err(), "Replacement against a directory must fail");
+
+        // The temporary source file MUST NOT have been deleted
+        assert!(src_file.exists(), "Source temporary file must be preserved on replacement failure");
+        assert_eq!(std::fs::read(&src_file).unwrap(), b"valuable data");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

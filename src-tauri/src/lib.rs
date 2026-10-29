@@ -2,10 +2,10 @@ pub mod commands;
 pub mod state;
 
 use commands::config::{
-    add_connection, add_credential, add_folder, delete_credential, get_config,
-    get_connection_password, get_credential_password, import_sessions, import_sessions_content,
-    move_node, remove_node, save_app_settings, update_credential, vault_change_backend,
-    vault_get_status, vault_lock, vault_set_master_password, vault_unlock,
+    add_connection, add_credential, add_folder, clear_recovery_notice, delete_credential,
+    get_config, get_connection_password, get_credential_password, import_sessions,
+    import_sessions_content, move_node, remove_node, save_app_settings, update_credential,
+    vault_change_backend, vault_get_status, vault_lock, vault_set_master_password, vault_unlock,
 };
 use commands::rdp::{
     ironrdp_connect, ironrdp_disconnect, ironrdp_key_event, ironrdp_mouse_button,
@@ -49,6 +49,7 @@ pub fn run() {
         tracing_subscriber::fmt().with_env_filter(filter).init();
     }
 
+    let (data_dir, is_portable) = state::resolve_data_dir();
     let app_state = match AppState::new() {
         Ok(state) => state,
         Err(err) => {
@@ -56,9 +57,16 @@ pub fn run() {
             let fallback_dir = std::env::temp_dir().join("rustius-recovery");
             let _ = std::fs::create_dir_all(&fallback_dir);
             let storage = Box::new(rustius_core::storage::PlaintextStorage);
-            match rustius_core::config::ConfigManager::new_with_portable(fallback_dir.clone(), true, storage) {
+            match rustius_core::config::ConfigManager::new_with_portable(fallback_dir.clone(), is_portable, storage) {
                 Ok(cm) => {
                     tracing::warn!("Initialized Rustius in safe-mode recovery state.");
+                    let notice = format!(
+                        "Warning: Failed to load configuration from {:?}: {err}. Rustius started in temporary recovery mode.",
+                        data_dir
+                    );
+                    tauri::async_runtime::block_on(async {
+                        cm.set_corruption_notice(notice).await;
+                    });
                     AppState {
                         config_manager: std::sync::Arc::new(cm),
                         local_terminals: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
@@ -66,7 +74,7 @@ pub fn run() {
                         sftp_sessions: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
                         ironrdp_sessions: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
                         data_dir: fallback_dir,
-                        is_portable: true,
+                        is_portable,
                     }
                 }
                 Err(fatal) => {
@@ -116,7 +124,7 @@ pub fn run() {
                 let ssh = state.ssh_sessions.clone();
                 let sftp = state.sftp_sessions.clone();
                 // Spawn async cleanup task to properly acquire locks and drain all session maps
-                tokio::spawn(async move {
+                tauri::async_runtime::spawn(async move {
                     // Drain IronRDP sessions
                     {
                         let mut guard = ironrdp.write().await;
@@ -152,6 +160,7 @@ pub fn run() {
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             get_config,
+            clear_recovery_notice,
             save_app_settings,
             add_connection,
             add_folder,

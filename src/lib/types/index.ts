@@ -5,7 +5,7 @@ export type SecretRef =
   | { type: 'vault'; key: string }
   | { type: 'plaintext'; value: string }
   | { type: 'ask_on_connect' }
-  | { type: 'external'; provider: string; id: string; vault_id?: string; item_id?: string };
+  | { type: 'external'; provider: string; id: string };
 
 export type VaultBackend = 'auto' | 'master_password' | 'keyring';
 
@@ -143,6 +143,7 @@ export interface RustiusConfig {
   app_settings: AppSettings;
   credentials?: CredentialProfile[];
   tree: TreeNode[];
+  recovery_notice?: string;
 }
 
 export type TabType = 'ssh' | 'sftp' | 'rdp' | 'local_terminal';
